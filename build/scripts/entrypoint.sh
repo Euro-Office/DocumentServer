@@ -66,8 +66,8 @@ fi
 [ -n "$ALLOW_PRIVATE_IP_ADDRESS" ] && \
   jq_filter="$jq_filter | .services.CoAuthoring[\"request-filtering-agent\"].allowPrivateIPAddress = true"
 
-[ -n "$ALLOW_META_IP_ADDRESS" ] &&\
-  jq_filter="$jq_filter | .services.CoAuthoring["request-filtering-agent"].allowMetaIPAddress = true"
+[ -n "$ALLOW_META_IP_ADDRESS" ] && \
+  jq_filter="$jq_filter | .services.CoAuthoring[\"request-filtering-agent\"].allowMetaIPAddress = true"
 
 if [ "$jq_filter" != "." ]; then
   jq \
