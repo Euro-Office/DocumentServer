@@ -1,13 +1,13 @@
 # Euro-Office Document Server
 
-Docker image where we are experimenting with building the OnlyOffice Document Server.
+Docker image where we are experimenting with building the Euro-Office Document Server.
 
 ## Building the Image
 
 First, clone the repositories for the core-fonts, sdkjs, web-apps, and server components:
 
 ```sh
-git clone --recurse-submodules https://github.com/Euro-Office/fork.git
+git clone --recurse-submodules https://github.com/Euro-Office/DocumentServer.git
 ```
 
 If the repo was cloned without --recurse-submodules, initialize and download the submodules with:
@@ -18,14 +18,14 @@ git submodule update --init --recursive
 Then, you can build the full image by running:
 
 ```sh
-cd fork/build
+cd DocumentServer/build
 make build-image
 ```
 
 or the development image with:
 
 ```sh
-cd fork/build
+cd DocumentServer/build
 make build
 ```
 
@@ -68,7 +68,7 @@ The version is read from the `VERSION` file at the repo root. An optional
 ### Basic build
 
 ```sh
-cd fork/build
+cd DocumentServer/build
 make packages
 ```
 

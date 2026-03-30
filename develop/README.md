@@ -4,12 +4,12 @@
 The docker compose environment in this directory allows to run document server built from our code base. It runs a container called develop, which just adds the development (i.e., build) tooling to the finalubuntu container. This lets you build pieces on the fly directly inside the container, saving build time when developing:
 
 - Follow the repo cloning steps in the build readme
-- In fork/develop, start the containers and get into eo bash with either: 
+- In DocumentServer/develop, start the containers and get into eo bash with either: 
   - `make` to use the image that is currently available locally
   - `make pull` to use the latest image from github
   - `make build` to build the image locally from scratch
   
-  You may need to generate a PAT first, as described in https://github.com/Euro-Office/fork/pkgs/container/documentserver
+  You may need to generate a PAT first, as described in https://github.com/Euro-Office/DocumentServer/pkgs/container/documentserver
 - In docker-compose.yml, for the eo service, ensure that `target` is set to `develop`
 
 #### Using the image:
