@@ -34,7 +34,7 @@ jobs:
           - ONLYOFFICE-data/build_tools_data
 
     steps:
-    - name: Checkout runner workspace
+    - name: Mirror upstream repository
       run: |
         # Split repo name into owner and repo parts
         IFS='/' read -r owner repo <<< "${{ matrix.repo }}"
@@ -51,3 +51,72 @@ jobs:
         git push eurooffice --tags
       env:
         GITHUB_TOKEN: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN }}
+
+    - name: Update contributors list in README.md
+      run: |
+        IFS='/' read -r owner repo <<< "${{ matrix.repo }}"
+        
+        # Clone the target repo default branch to update README
+        git clone --depth 1 "https://x-access-token:${{ env.GITHUB_TOKEN }}@github.com/Euro-Office/${repo}.git" "target-${repo}"
+        cd "target-${repo}"
+        
+        # Identify README file
+        README_FILE=$(find . -maxdepth 1 -iname "readme.md" -print -quit)
+        [ -z "$README_FILE" ] && README_FILE="README.md"
+        [ ! -f "$README_FILE" ] && touch "$README_FILE"
+        
+        # Remove existing contributors section and append updated list
+        sed -i '/## Contributors/,$d' "$README_FILE"
+        {
+          echo ""
+          echo "## Contributors"
+          echo "A huge thank you to all the contributors of the upstream repository!"
+          echo ""
+          gh api "repos/${{ matrix.repo }}/contributors" --jq '.[] | select(.type != "Bot") | "- [" + .login + "](" + .html_url + ")"'
+        } >> "$README_FILE"
+        
+        # Commit and push changes
+        git config user.name "Euro-Office Robot"
+        git config user.email "eo-robot@users.noreply.github.com"
+        git add "$README_FILE"
+        if ! git diff --cached --quiet; then
+          git commit -m "chore: update contributors list in $README_FILE"
+          git push origin HEAD
+        fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN }}
+
+  update-main-readme:
+    needs: build
+    runs-on: self-hosted
+    steps:
+      - name: Checkout DocumentServer
+        uses: actions/checkout@v3
+        with:
+          token: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN }}
+
+      - name: Update contributors list in main README.md
+        run: |
+          README_FILE=$(find . -maxdepth 1 -iname "readme.md" -print -quit)
+          [ -z "$README_FILE" ] && README_FILE="README.md"
+          
+          # Remove existing contributors section and append updated list
+          sed -i '/## Contributors/,$d' "$README_FILE"
+          {
+            echo ""
+            echo "## Contributors"
+            echo "A huge thank you to all the contributors of Euro-Office!"
+            echo ""
+            gh api "repos/${{ github.repository }}/contributors" --jq '.[] | select(.type != "Bot") | "- [" + .login + "](" + .html_url + ")"'
+          } >> "$README_FILE"
+          
+          # Commit and push changes
+          git config user.name "Euro-Office Robot"
+          git config user.email "eo-robot@users.noreply.github.com"
+          git add "$README_FILE"
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update contributors list in $README_FILE"
+            git push origin HEAD
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN }}
