@@ -1,32 +1,32 @@
 [submodule "server"]
 	path = server
-	url = git@github.com:Euro-Office/server.git
+	url = https://github.com/Euro-Office/server.git
 [submodule "web-apps"]
 	path = web-apps
-	url = git@github.com:Euro-Office/web-apps.git
+	url = https://github.com/Euro-Office/web-apps.git
 [submodule "sdkjs"]
 	path = sdkjs
-	url = git@github.com:Euro-Office/sdkjs.git
+	url = https://github.com/Euro-Office/sdkjs.git
 [submodule "core-fonts"]
 	path = core-fonts
-	url = git@github.com:Euro-Office/core-fonts.git
+	url = https://github.com/Euro-Office/core-fonts.git
 [submodule "core"]
 	path = core
-	url = git@github.com:Euro-Office/core.git
+	url = https://github.com/Euro-Office/core.git
 [submodule "document-server-integration"]
 	path = document-server-integration
-	url = git@github.com:Euro-Office/document-server-integration.git
+	url = https://github.com/Euro-Office/document-server-integration.git
 [submodule "dictionaries"]
 	path = dictionaries
-	url = git@github.com:Euro-Office/dictionaries.git
+	url = https://github.com/Euro-Office/dictionaries.git
 	branch = master
 [submodule "document-templates"]
 	path = document-templates
-	url = git@github.com:Euro-Office/document-templates.git
+	url = https://github.com/Euro-Office/document-templates.git
 	branch = master
 [submodule "document-server-package"]
 	path = document-server-package
-	url = git@github.com:Euro-Office/document-server-package.git
+	url = https://github.com/Euro-Office/document-server-package.git
 [submodule "sdkjs-forms"]
 	path = sdkjs-forms
 	url = https://github.com/Euro-Office/sdkjs-forms.git
