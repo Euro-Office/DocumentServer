@@ -35,6 +35,9 @@ RUN useradd -r -s /bin/false ds || true
 
 COPY build/configs/postgres ${EO_ROOT}/server/schema/postgresql
 
+# Create default PostgreSQL cluster (required before starting the service)
+RUN pg_createcluster 16 main || true
+
 RUN service postgresql start && \
     sudo -u postgres psql -c "CREATE USER onlyoffice WITH password 'onlyoffice';" && \
     sudo -u postgres psql -c "CREATE DATABASE onlyoffice OWNER onlyoffice;" && \
