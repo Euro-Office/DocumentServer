@@ -17,9 +17,13 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: main
-          submodules: recursive
+          # Submodule contents are NOT needed: we only resolve each submodule's
+          # latest branch tip via `git ls-remote` and update the gitlink in the
+          # index. Cloning the (large) submodules would dominate the runtime.
+          submodules: false
           token: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN }}
-          fetch-depth: 0
+          # A shallow checkout is enough to create the PR branch.
+          fetch-depth: 1
 
       - name: Configure git identity
         run: |
@@ -44,16 +48,21 @@ jobs:
 
           for path in "${!BRANCHES[@]}"; do
             branch="${BRANCHES[$path]}"
-            if [ ! -d "$path" ]; then
-              echo "Skipping $path — directory not found"
+            url="$(git config -f .gitmodules --get "submodule.$path.url" || true)"
+            if [ -z "$url" ]; then
+              echo "Skipping $path — not declared in .gitmodules"
               continue
             fi
-            echo "Updating $path → $branch"
-            pushd "$path" > /dev/null
-            git fetch origin
-            git checkout "$branch"
-            git reset --hard "origin/$branch"
-            popd > /dev/null
+            # Resolve the branch tip without cloning the submodule.
+            # Auth is provided by the credentials checkout persisted for github.com.
+            sha="$(git ls-remote "$url" "refs/heads/$branch" | awk '{print $1}')"
+            if [ -z "$sha" ]; then
+              echo "Skipping $path — no '$branch' branch on $url"
+              continue
+            fi
+            echo "Updating $path → $branch ($sha)"
+            # Update the gitlink directly in the index — no working-tree checkout needed.
+            git update-index --cacheinfo "160000,$sha,$path"
           done
 
       - name: Open PR if submodule pointers changed
