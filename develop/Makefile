@@ -19,6 +19,23 @@ endif
 HOST_LAN_IP ?=
 export HOST_LAN_IP
 
+# --- Front hot-reload (source mode) ---
+# All paths below are INSIDE the eo container. The repo root is bind-mounted at /develop
+# (docker-compose.yml: `../:/develop`), which is why source paths are /develop/develop/... .
+EO_REPO        := /develop
+LIVERELOAD_DIR := $(EO_REPO)/develop/setup/livereload-tools
+LIVERELOAD_SRV := $(LIVERELOAD_DIR)/server.js
+LIVERELOAD_PAT := $(LIVERELOAD_DIR)/[s]erver.js
+NGINX_CONF     := /etc/nginx/includes/ds-docservice.conf
+NGINX_CONF_BAK := $(NGINX_CONF).prod.bak
+DEV_CONF_SRC   := $(EO_REPO)/develop/setup/ds-docservice-dev.conf
+SDK_SENTINEL   := $(EO_REPO)/sdkjs/common/AllFonts.js
+# Canonical published docs (from documentation/brand.yml: brand.docs_url).
+DOCS_HOTRELOAD := https://docs.euro-office.com/development/hot-reload/
+
+.PHONY: local mobile next next-mobile pull wipe-nc wipe-next build \
+        front-dev front-prod front-dev-live sdkjs-dev refresh-urls print-nc-version
+
 local:
 	@echo ""
 	@echo "   ███████╗ ██████╗"
@@ -111,6 +128,77 @@ build:
 	(cd ../build && docker buildx bake develop) && \
 	(docker compose up -d) && \
 	(docker compose exec eo bash || true)
+
+# Front hot-reload: serves /web-apps from the SOURCE tree (/develop) with no cache, so that
+# editing + reloading the browser (Ctrl+Shift+R) reflects the change WITHOUT a rebuild.
+# The SDK is also served from source via its develop loader (run `make sdkjs-dev` once;
+# front-dev aborts if it is missing). Reversible with `make front-prod`.
+# Details and limitations: https://docs.euro-office.com/development/hot-reload/
+front-dev:
+	@docker compose exec -u root eo bash -lc '\
+	  if [ ! -f $(SDK_SENTINEL) ] || [ ! -d $(EO_REPO)/sdkjs/develop/sdkjs ]; then \
+	    echo "ERROR: SDK develop loader missing — run: make sdkjs-dev"; \
+	    echo "       Docs: $(DOCS_HOTRELOAD)"; \
+	    exit 1; \
+	  fi; \
+	  [ -f $(NGINX_CONF_BAK) ] || cp $(NGINX_CONF) $(NGINX_CONF_BAK); \
+	  cp $(DEV_CONF_SRC) $(NGINX_CONF); \
+	  if nginx_err=$$(nginx -t 2>&1); then \
+	    nginx -s reload && sleep 3; \
+	  else \
+	    echo "ERROR: dev nginx config is invalid — rolling back to production config."; \
+	    echo "$$nginx_err"; \
+	    cp $(NGINX_CONF_BAK) $(NGINX_CONF) && nginx -s reload 2>/dev/null || true; \
+	    exit 1; \
+	  fi'
+	@echo ""
+	@echo "   SOURCE mode active (front hot-reload)."
+	@echo "   Edit under web-apps/apps/.../ and hard-reload the browser (Ctrl+Shift+R)."
+	@echo "   Back to production: make front-prod"
+	@echo ""
+
+front-prod:
+	@docker compose exec -u root eo bash -lc "pkill -f '$(LIVERELOAD_PAT)' 2>/dev/null; true"
+	@docker compose exec -u root eo bash -lc '\
+	  if [ -f $(NGINX_CONF_BAK) ]; then \
+	    cp $(NGINX_CONF_BAK) $(NGINX_CONF); \
+	    nginx -t && nginx -s reload && sleep 3; \
+	    echo "PRODUCTION mode restored (compiled bundle + versioned cache)."; \
+	  else echo "No backup found; the container is already in production mode."; fi'
+
+# Like front-dev, but also starts the live-reload server: saving a file under web-apps/
+# auto-reloads the editor tab (no browser action). The livereload client is injected via
+# nginx (sub_filter) and proxied through :8080. Node deps install automatically on first
+# run (npm ci, idempotent). Details: https://docs.euro-office.com/development/hot-reload/
+front-dev-live: front-dev
+	@docker compose exec -u root eo bash -lc "pkill -f '$(LIVERELOAD_PAT)' 2>/dev/null; true"
+	@docker compose exec eo bash -lc '\
+	  if [ ! -d $(LIVERELOAD_DIR)/node_modules ]; then \
+	    echo "Installing live-reload dependencies (one-time)..."; \
+	    cd $(LIVERELOAD_DIR) && npm ci --no-audit --no-fund; \
+	  fi'
+	@docker compose exec -d eo bash -lc 'node $(LIVERELOAD_SRV) > /tmp/livereload.log 2>&1'
+	@sleep 2
+	@docker compose exec eo bash -lc 'curl -sf http://127.0.0.1:35729/livereload.js >/dev/null' \
+	  && echo "Live-reload server running (:35729, polling)." \
+	  || { echo "ERROR: live-reload server did not start. Log follows:"; \
+	       docker compose exec eo cat /tmp/livereload.log; \
+	       exit 1; }
+	@echo ""
+	@echo "   Auto live-reload ACTIVE. Edit under web-apps/ and save:"
+	@echo "   the editor tab reloads on its own (no commands)."
+	@echo "   Stop: make front-prod"
+	@echo "   Note: if you restart the eo container, re-run this command to restore live-reload."
+	@echo ""
+
+# One-time SDK setup for source mode. Generates the SDK "develop loader"
+# (sdkjs/develop/sdkjs/*/scripts.js) in the SOURCE tree and places the generated
+# AllFonts.js there, so /develop/sdkjs serves a complete SDK coherent with the front.
+# Re-run only when you change the sdkjs submodule. Then use `make front-dev-live`.
+sdkjs-dev:
+	@docker compose exec eo bash -lc 'cd $(EO_REPO)/sdkjs/build && npm install --no-audit --no-fund && grunt develop'
+	@docker compose exec eo bash -lc 'cp $$EO_ROOT/sdkjs/common/AllFonts.js $(SDK_SENTINEL)'
+	@echo "SDK develop loader generated under $(EO_REPO)/sdkjs. Next: make front-dev-live"
 
 # Align Euro-Office URLs and trusted_domains with the current mode.
 # - If HOST_LAN_IP is set: mobile/LAN mode (DocumentServerUrl = http://<ip>:8080/, trusted_domains[2] = <ip>).

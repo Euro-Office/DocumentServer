@@ -1,0 +1,7 @@
+{
+  "name": "eo-livereload",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Live-reload server for front hot-reload (source mode)",
+  "dependencies": { "livereload": "^0.9.3" }
+}
