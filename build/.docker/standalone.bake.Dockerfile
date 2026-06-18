@@ -30,7 +30,7 @@ RUN apt-get -y update && \
     ACCEPT_EULA=Y apt-get -yq install \
         postgresql postgresql-client redis-server rabbitmq-server \
         nginx sudo gdb nginx-extras supervisor jq util-linux \
-        netcat-openbsd xxd openssl && \
+        netcat-openbsd xxd openssl tini && \
     rm -rf /var/lib/apt/lists/*
 
 # Create the 'ds' user that is required by OnlyOffice scripts

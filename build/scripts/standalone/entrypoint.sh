@@ -448,4 +448,9 @@ fi
 # --------------------------------------------------------------------
 [ -n "$JWT_MESSAGE" ] && echo "$JWT_MESSAGE"
 
-exec /usr/bin/supervisord
+# Hand off to supervisord under tini. tini becomes PID 1 and acts as the init
+# zombie-reaper: it silently reaps orphaned children of the bundled daemons
+# (postgres, redis, nginx, rabbitmq) and of the node services. Without it,
+# supervisord would run as PID 1 and log every reaped orphan as a noisy
+# "reaped unknown pid" INFO message.
+exec /usr/bin/tini -- /usr/bin/supervisord
