@@ -242,6 +242,18 @@ if [ "$METRICS_ENABLED" = "true" ]; then
   jq_set '.statsd.prefix     = $metricsPrefix'
 fi
 
+# FileConverter limits
+[ -n "${CONVERTER_MAX_DOWNLOAD_BYTES:-}" ] && \
+  jq_set '.FileConverter.converter.maxDownloadBytes = ($converterMaxDownloadBytes | tonumber)'
+[ -n "${CONVERTER_INPUT_LIMIT_DOCX:-}" ] && \
+  jq_set '.FileConverter.converter.inputLimits |= map(if .type == "docx;dotx;docm;dotm" then .zip.uncompressed = $converterInputLimitDocx else . end)'
+[ -n "${CONVERTER_INPUT_LIMIT_XLSX:-}" ] && \
+  jq_set '.FileConverter.converter.inputLimits |= map(if .type == "xlsx;xltx;xlsm;xltm" then .zip.uncompressed = $converterInputLimitXlsx else . end)'
+[ -n "${CONVERTER_INPUT_LIMIT_PPTX:-}" ] && \
+  jq_set '.FileConverter.converter.inputLimits |= map(if .type == "pptx;ppsx;potx;pptm;ppsm;potm" then .zip.uncompressed = $converterInputLimitPptx else . end)'
+[ -n "${CONVERTER_INPUT_LIMIT_VSDX:-}" ] && \
+  jq_set '.FileConverter.converter.inputLimits |= map(if .type == "vsdx;vstx;vssx;vsdm;vstm;vssm" then .zip.uncompressed = $converterInputLimitVsdx else . end)'
+
 # Construct the AMQP URI value (may be unused if AMQP_HOST=localhost and AMQP_URI unset).
 # AMQP_VHOST is a vhost name (e.g. "myvhost"); normalize to a leading slash before
 # appending to the URI so values without it still produce a valid amqp:// URI.
@@ -282,6 +294,11 @@ jq \
   --arg metricsHost      "$METRICS_HOST" \
   --arg metricsPort      "$METRICS_PORT" \
   --arg metricsPrefix    "$METRICS_PREFIX" \
+  --arg converterMaxDownloadBytes "${CONVERTER_MAX_DOWNLOAD_BYTES:-}" \
+  --arg converterInputLimitDocx   "${CONVERTER_INPUT_LIMIT_DOCX:-}" \
+  --arg converterInputLimitXlsx   "${CONVERTER_INPUT_LIMIT_XLSX:-}" \
+  --arg converterInputLimitPptx   "${CONVERTER_INPUT_LIMIT_PPTX:-}" \
+  --arg converterInputLimitVsdx   "${CONVERTER_INPUT_LIMIT_VSDX:-}" \
   "$jq_filter" \
   "$CONFIG_FILE" > "${CONFIG_FILE}.tmp"
 mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
