@@ -250,7 +250,7 @@ FROM ds-base AS docs
     CMD ["docservice"]
 
 
-FROM node:20-alpine3.19 AS example
+FROM node:22-alpine3.19 AS example
     LABEL maintainer Euro-Office
 
     ENV LANG=en_US.UTF-8 \
@@ -323,7 +323,7 @@ FROM python:3.11-slim-bookworm AS utils
         -L -s https://dl.k8s.io/release/stable.txt`/bin/linux/${TARGETARCH}/kubectl && \
         chmod +x ./kubectl && \
         mv ./kubectl /usr/local/bin/kubectl && \
-        mkdir /oracle/sqlplus /dameng /scripts && \
+        mkdir /oracle/sqlplus /scripts && \
         wget -O /oracle/sqlplus/sqlplus.zip https://download.oracle.com/otn_software/linux/instantclient/2370000/instantclient-sqlplus-linux.x64-23.7.0.25.01.zip && \
         unzip -o /oracle/sqlplus/sqlplus.zip -d /oracle/sqlplus && \
         mv /oracle/sqlplus/instantclient_23_7/* /oracle/instantclient/ && \
@@ -334,8 +334,6 @@ FROM python:3.11-slim-bookworm AS utils
         chmod +x /usr/local/bin/dumb-init && \
         rm -rf /var/lib/apt/lists/*
     COPY build/scripts/orchestrated/sqlplus /usr/bin/sqlplus
-    COPY build/scripts/orchestrated/disql /usr/bin/disql
-    COPY --from=onlyoffice/damengdb:8.1.2 /opt/dmdbms/bin /dameng
     USER ds
 
 FROM statsd/statsd AS metrics

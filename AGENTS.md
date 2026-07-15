@@ -45,6 +45,24 @@ Troubleshooting: if `make` fails with `Makefile: No such file or directory`, the
 - **Conversion check**: opening a `.docx`/`.xlsx` in the example app exercises FileConverter + x2t; watch `converter/out.log` for errors.
 - **Nextcloud connector flow** (only when testing the integration): `docker compose up -d`, then `make refresh-urls` to wait for install and wire URLs/JWT; Nextcloud at `http://localhost:8081/` (admin/admin).
 
+### Running instances (`eo.sh`)
+
+`develop/eo.sh` runs one or more test servers as self-contained containers from the same image — current tree mounted at `/develop`, auto-assigned port. Starts detached (agent-friendly, unlike `make local`):
+
+```sh
+cd develop
+./eo.sh up <name>                  # start; waits for /healthcheck; prints URL + per-type editor URLs
+./eo.sh build <name> web-apps-dev  # in-container make targets (sdkjs, core/x2t, server/docservice, …)
+./eo.sh exec <name> <cmd…>         # run inside (TTY-aware)
+./eo.sh ls | logs <name> | down <name>|--all   # manage; `up --force` to recreate
+```
+
+Run a building instance from its own git worktree so builds don't share `node_modules`; a fresh worktree needs `git submodule update --init --recursive` first. JWT (secret `euro-office-dev-jwt-secret-key-2026`), `EXAMPLE_ENABLED` and `WOPI_ENABLED` are on, so the example app works out of the box.
+
+### Verify in a browser (Playwright MCP)
+
+Don't trust HTTP 200 — the editor shell can load while the document download fails. `browser_navigate` to a create-new URL (`…/example/editor?fileExt=docx|xlsx|pptx|pdf`; `?fileName=` expects an existing file and fails), `browser_wait_for` a few seconds, then `browser_snapshot`/`browser_take_screenshot` to confirm the toolbar and page render with no error dialog, plus `browser_console_messages` at level `error`. If it won't open, check `ds-example_out.log` (JWT) and `converter/out.log` (download 403) — usually a JWT secret mismatch.
+
 ## Commits
 
 - Commit messages must follow the Conventional Commits v1.0.0 specification — e.g. feat(chat): add voice message playback, fix(call): handle MCU disconnect gracefully.

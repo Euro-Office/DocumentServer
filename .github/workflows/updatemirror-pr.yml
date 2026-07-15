@@ -30,7 +30,7 @@ jobs:
         echo "repo=${repo}" >> $GITHUB_OUTPUT
         echo "upstream_branch=master" >> $GITHUB_OUTPUT
     - name: Checkout runner workspace
-      uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       with:
         repository: "Euro-Office/${{ steps.repo_name.outputs.repo }}"
         token: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN }}

@@ -12,12 +12,16 @@ Before starting, make sure Docker and your build user are set up: [Build Requisi
   cd ../DocumentServer/develop
   ```
 - Follow the repo cloning steps in the build readme
-- In DocumentServer/develop, start the containers and get into eo bash with either: 
-  - `make` to use the image that is currently available locally
-  - `make pull` to use the latest image from github
-  - `make build` to build the image locally from scratch
+- In DocumentServer/develop, start the containers and get into eo bash. The
+  recommended path on all architectures is to **pull the prebuilt dev image** — a
+  multi-arch `:latest-dev` (amd64 **and** arm64) is published on every merge to `main`,
+  so no local image build is needed, including on Apple Silicon:
+  - `make pull` to pull the latest dev image from GitHub and start (recommended first step)
+  - `make` to use the image already available locally
+  - `make build` to build the dev image locally from scratch — only needed for offline
+    work or when changing the image/toolchain itself (this is the long, full build)
   - `make mobile` for Android emulator / physical LAN device testing (see below)
-  
+
   You may need to generate a PAT first, as described in https://github.com/Euro-Office/DocumentServer/pkgs/container/documentserver
 - In docker-compose.yml, for the eo service, ensure that `target` is set to `develop`
 
@@ -154,7 +158,42 @@ The Docker image and dev Makefile handle ARM64 automatically:
 - **web-apps**: Skips imagemin on arm64 (native binaries are x86_64-only)
 - **server**: `pkg` builds native arm64 binaries
 
-No GHCR arm64 image is available yet, so ARM64 users must build locally with `make build`.
+A multi-arch `:latest-dev` image (amd64 + arm64) is published to GHCR on every merge to `main`, so ARM64 users can `make pull` like everyone else — `make build` is only needed for offline work or to rebuild the image itself.
+
+## Parallel test servers (`eo.sh`)
+
+The `make` workflow above runs a single Nextcloud-integrated stack with fixed
+container names and ports — use it for interactive, integration-style testing.
+
+When you instead need **several throwaway document servers at once** — e.g. a coding
+agent spinning one up per branch/worktree to verify a change and run build steps —
+use `./eo.sh`. Each instance is a single, fully self-contained container (its own
+Postgres, Redis, RabbitMQ, Nginx, supervisord) from the same `:latest-dev` image, so
+there is no shared state and no full build:
+
+```sh
+./eo.sh up <name> [port]        # start eo-<name>; auto host port if omitted; waits for /healthcheck, prints URL
+./eo.sh build <name> <target>   # run an in-container make target: web-apps-dev | sdkjs | server/docservice | core/x2t | …
+./eo.sh exec <name> [cmd…]      # shell (default) or command inside the container
+./eo.sh logs <name>             # follow logs
+./eo.sh ls                      # list running instances with host ports
+./eo.sh down <name>… | --all    # stop and remove instance(s)
+```
+
+Each instance mounts the **current git working tree** at `/develop`, so the build
+targets operate on your local changes. Run each *building* instance from its own git
+worktree so parallel builds don't share (and clobber) `node_modules`.
+
+Instances start with `EXAMPLE_ENABLED=true` (test editor at `/example/`) and
+`WOPI_ENABLED=true`. JWT is **enabled** with a shared dev secret
+(`EO_JWT_SECRET`, default `euro-office-dev-jwt-secret-key-2026`) — the bundled example
+app always requires JWT, so this is what lets documents actually open. These are local
+test servers — **do not expose them publicly**. Override the image with `EO_IMAGE=…`
+(must be a `-dev` image; the production `:latest` lacks the build toolchain).
+
+To create and open a document, use the example app's **Create new → Document** (which
+hits `editor?fileExt=docx`). Opening `editor?fileName=new.docx` directly will fail —
+that form expects an already-existing file.
 
 ## Development Builds
 

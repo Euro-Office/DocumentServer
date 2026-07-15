@@ -143,7 +143,7 @@ if [ "$WOPI_ENABLED" = "true" ]; then
   fi
   WOPI_MODULUS=$(openssl rsa -pubin -inform "MS PUBLICKEYBLOB" -modulus -noout -in "$WOPI_PUBLIC_KEY" | sed 's/Modulus=//' | xxd -r -p | openssl base64 -A)
   WOPI_EXPONENT=$(openssl rsa -pubin -inform "MS PUBLICKEYBLOB" -text -noout -in "$WOPI_PUBLIC_KEY" | grep -oP '(?<=Exponent: )\d+')
-  WOPI_PRIVATE_KEY_DATA=$(awk '{printf "%s\\n", $0}' "$WOPI_PRIVATE_KEY")
+  WOPI_PRIVATE_KEY_DATA=$(cat "$WOPI_PRIVATE_KEY")
   WOPI_PUBLIC_KEY_DATA=$(openssl base64 -in "$WOPI_PUBLIC_KEY" -A)
 fi
 

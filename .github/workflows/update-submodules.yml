@@ -14,7 +14,7 @@ jobs:
 
     steps:
       - name: Checkout fork repo (main)
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: main
           submodules: recursive
@@ -26,21 +26,9 @@ jobs:
           git config user.name  "Euro-Office via GitHub Actions"
           git config user.email "actions@github.com"
 
-      - name: Advance each submodule to latest main/master commit
+      - name: Advance each submodule to latest default-branch commit
         run: |
           set -euo pipefail
-
-          # Map of submodule path → branch to track
-          declare -A BRANCHES=(
-            [server]="main"
-            [web-apps]="main"
-            [sdkjs]="main"
-            [core]="main"
-            [core-fonts]="main"
-            [document-server-integration]="main"
-            [dictionaries]="main"
-            [document-templates]="main"
-          )
 
           BODY="$RUNNER_TEMP/pr-body.md"
           {
@@ -50,16 +38,22 @@ jobs:
             echo
           } > "$BODY"
 
-          for path in "${!BRANCHES[@]}"; do
-            branch="${BRANCHES[$path]}"
+          # Enumerate every submodule from .gitmodules so none are missed.
+          mapfile -t paths < <(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | awk '{print $2}')
+
+          for path in "${paths[@]}"; do
             if [ ! -d "$path" ]; then
               echo "Skipping $path — directory not found"
               continue
             fi
-            echo "Updating $path → $branch"
             pushd "$path" > /dev/null
             old_sha="$(git rev-parse HEAD)"
             git fetch origin
+            # Resolve the remote's actual default branch (HEAD), falling back to main.
+            git remote set-head origin --auto > /dev/null 2>&1 || true
+            branch="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@')"
+            [ -z "$branch" ] && branch="main"
+            echo "Updating $path → $branch"
             git checkout "$branch"
             git reset --hard "origin/$branch"
             new_sha="$(git rev-parse HEAD)"
@@ -85,6 +79,11 @@ jobs:
           branch: chore/nightly-submodule-bump
           base: main
           delete-branch: true
-          commit-message: "chore: update submodules to latest main branch"
+          author: "Euro-Office via GitHub Actions <actions@github.com>"
+          committer: "Euro-Office via GitHub Actions <actions@github.com>"
+          commit-message: |
+            chore: update submodules to latest main branch
+
+            Signed-off-by: Euro-Office via GitHub Actions <actions@github.com>
           title: "chore: update submodules to latest main branch"
           body-path: ${{ runner.temp }}/pr-body.md
