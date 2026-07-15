@@ -1,0 +1,12 @@
+---
+description: Euro-Office pipeline — blueprint: onboards gh/Jira on first run, then fetches, investigates, and defines a task (GitHub/Jira/manual) into plan.md with affected repos and Gherkin criteria. Canonical playbook: .agents/skills/blueprint/SKILL.md.
+alwaysApply: false
+---
+
+# blueprint (Euro-Office pipeline) — adapter
+
+Thin adapter for Cursor. The single source of truth is the canonical playbook:
+
+`.agents/skills/blueprint/SKILL.md`
+
+Read and follow that file. Do not duplicate its content here.

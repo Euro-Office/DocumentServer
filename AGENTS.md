@@ -1,3 +1,10 @@
+## AI task pipeline (skills)
+
+This repo ships an assisted, portable AI-agent skill pipeline — fetch/define → plan → implement →
+audit → prepare a PR — under `.agents/skills/` (works in Claude Code, Codex, and Cursor).
+New here? Just run `/blueprint <ref>` — it sets up `gh`/Jira on first use. Full docs:
+[`.agents/skills/README.md`](.agents/skills/README.md).
+
 ## Build & run a test server (Docker)
 
 The dev environment in `develop/` runs a full document server from a prebuilt image. Individual components are rebuilt *inside* the container — never rebuild the docker image to test a change. The repo is bind-mounted at `/develop` in the container, so edits on the host are immediately visible inside.

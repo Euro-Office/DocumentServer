@@ -1,0 +1,12 @@
+---
+description: Euro-Office pipeline — prepare-pr: prepares (never publish) the PR(s) — drafts each repo's PR body from plan.md with an AI-use disclosure and shows the gh pr create command for the human to run. Canonical playbook: .agents/skills/prepare-pr/SKILL.md.
+alwaysApply: false
+---
+
+# prepare-pr (Euro-Office pipeline) — adapter
+
+Thin adapter for Cursor. The single source of truth is the canonical playbook:
+
+`.agents/skills/prepare-pr/SKILL.md`
+
+Read and follow that file. Do not duplicate its content here.

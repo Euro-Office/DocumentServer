@@ -1,0 +1,12 @@
+---
+description: Euro-Office pipeline — apply: ensures the target repo is on the task branch (proposes/creates it interactively; you can rename it), then applies the next tasks.md step and shows the build/lint/test command for the human to run (no build/commit auto-run), and stops. Canonical playbook: .agents/skills/apply/SKILL.md.
+alwaysApply: false
+---
+
+# apply (Euro-Office pipeline) — adapter
+
+Thin adapter for Cursor. The single source of truth is the canonical playbook:
+
+`.agents/skills/apply/SKILL.md`
+
+Read and follow that file. Do not duplicate its content here.

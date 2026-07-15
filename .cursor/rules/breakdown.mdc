@@ -1,0 +1,12 @@
+---
+description: Euro-Office pipeline — breakdown: turns plan.md into tasks.md (atomic ~5-min steps) and proposes a feature/<task-id> branch per affected repo. Canonical playbook: .agents/skills/breakdown/SKILL.md.
+alwaysApply: false
+---
+
+# breakdown (Euro-Office pipeline) — adapter
+
+Thin adapter for Cursor. The single source of truth is the canonical playbook:
+
+`.agents/skills/breakdown/SKILL.md`
+
+Read and follow that file. Do not duplicate its content here.

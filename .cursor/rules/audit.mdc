@@ -1,0 +1,12 @@
+---
+description: Euro-Office pipeline — audit: reviews a diff (task working changes or any open PR) into review.md — security (/security-review + AGPL + memory-leak sweep), code (/code-review), emulated quality gate A–E, and proposed PR comments (drafts for the human to post). Task-mode → .ai/tasks/<task-id>/review.md; PR-mode → .ai/reviews/<repo>-<n>/review.md. Usage: /audit | /audit owner/repo#n | /audit <PR-URL>. Canonical playbook: .agents/skills/audit/SKILL.md.
+alwaysApply: false
+---
+
+# audit (Euro-Office pipeline) — adapter
+
+Thin adapter for Cursor. The single source of truth is the canonical playbook:
+
+`.agents/skills/audit/SKILL.md`
+
+Read and follow that file. Do not duplicate its content here.
