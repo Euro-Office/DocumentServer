@@ -1,13 +1,15 @@
 import { test, expect } from '@playwright/test';
 
-// Canvas id differs by engine: doc/presentation/pdf use #id_viewer, spreadsheet #ws-canvas.
+// Canvas id differs by engine: doc/presentation use #id_viewer, spreadsheet #ws-canvas.
+// PDF excluded: with ?type=mobile, api.js coerces appType to 'word', so a .pdf loads the same
+// documenteditor/mobile bundle as docx — there is no PDF-specific mobile path to smoke, and PDF
+// was not in the #258 regression set. The Document case already covers that bundle.
 // Visio excluded: create-new has no blank vsdx template (fileExt=vsdx 500s). The build-time
 // verify-deploy.mjs check still gates the visio mobile bundle.
 const MOBILE_EDITOR_TYPES = [
   { label: 'Document',     fileExt: 'docx', canvasSelector: '#id_viewer' },
   { label: 'Spreadsheet',  fileExt: 'xlsx', canvasSelector: '#ws-canvas' },
   { label: 'Presentation', fileExt: 'pptx', canvasSelector: '#id_viewer' },
-  { label: 'PDF form',     fileExt: 'pdf',  canvasSelector: '#id_viewer' },
 ] as const;
 
 // Fatal errors surface as an f7 dialog or, for LoadingScriptError, a notification — check both.
