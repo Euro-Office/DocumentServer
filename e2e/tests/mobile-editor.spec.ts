@@ -18,7 +18,7 @@ const ERROR_SURFACE_SELECTOR = '.dialog.modal-in, .notification.modal-in';
 
 // Remit: verify the mobile build is present and actually renders a document (the #258 class of
 // failure). Infra faults such as an unresponsive docservice channel are out of scope — the app
-// can go false-ready over a dead channel; see cm-findings/DocumentServer/pr-262-ws-hang-false-pass.md.
+// can go false-ready over a dead channel, which this smoke test deliberately does not catch.
 test.describe('Mobile editor smoke', () => {
   test.use({ viewport: { width: 414, height: 896 } });
 
