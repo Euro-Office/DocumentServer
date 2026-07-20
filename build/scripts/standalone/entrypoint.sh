@@ -384,7 +384,7 @@ update_welcome_page() {
   sed 's/linux/docker/' -i /etc/nginx/includes/ds-example.conf
 
   [ -f "$EXAMPLE_DISABLED_PAGE" ] && \
-    sed -i 's|sudo systemctl start ds-example|sudo docker exec $(sudo docker ps -q) supervisorctl start ds:example|g' \
+    sed -i 's|sudo systemctl start ds-example|sudo docker exec $(sudo docker ps -q) supervisorctl start example|g' \
         "$EXAMPLE_DISABLED_PAGE"
 
   if [ -e "$WELCOME_PAGE" ]; then
