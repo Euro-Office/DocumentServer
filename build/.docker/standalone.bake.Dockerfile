@@ -8,7 +8,7 @@
 # ==============================================================================
 
 #### FINAL UBUNTU ####
-FROM ubuntu:24.04 AS finalubuntu
+FROM ubuntu:26.04 AS finalubuntu
 ARG PRODUCT_VERSION
 ARG BUILD_NUMBER
 ARG BUILD_ROOT=/package
