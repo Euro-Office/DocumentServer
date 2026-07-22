@@ -309,7 +309,7 @@ FROM python:3.14-slim-bookworm AS utils
     ENV DS_VERSION_HASH=$DS_VERSION_HASH
     COPY --from=ds-base /usr/local/bin/dumb-init /usr/local/bin/dumb-init
     COPY --from=ds-base /opt/oracle/instantclient_23_7 /oracle/instantclient
-    COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+    COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
     RUN apt update && \
         apt-get install -y curl wget gnupg2 lsb-release jq xxd procps libaio1 unzip && \
         echo "deb http://apt.postgresql.org/pub/repos/apt/ $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list && \
