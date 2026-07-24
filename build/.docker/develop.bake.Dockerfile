@@ -9,18 +9,20 @@
 
 FROM finalubuntu AS develop
     ARG PRODUCT_VERSION
+    # Avoid interactive prompts during package install
+    ARG DEBIAN_FRONTEND=noninteractive
     ENV TZ=Etc/UTC
 
     RUN apt-get update && \
         curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-        apt-get install -y nodejs openjdk-21-jdk wget zip brotli && \
+        apt-get install -yq --no-install-recommends nodejs openjdk-21-jdk wget zip brotli && \
         npm install -g @yao-pkg/pkg grunt-cli && \
         rm -rf /var/lib/apt/lists/*
 
     RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone && \
-        apt-get -y update && \
-        apt-get -y upgrade && \
-        apt-get -y install \
+        apt-get update && \
+        apt-get upgrade -y && \
+        apt-get install -yq --no-install-recommends \
                     git \
                     curl \
                     sudo \

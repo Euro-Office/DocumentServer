@@ -21,6 +21,8 @@ FROM ubuntu:24.04 AS package
     ARG BUNDLE_BASE="/build/bundle"
     ARG OUT_DIR="${BUNDLE_BASE}/${COMPANY_NAME_LOW}/documentserver"
     ARG EXAMPLE_OUT="${BUNDLE_BASE}/${COMPANY_NAME_LOW}/documentserver-example"
+    # Avoid interactive prompts during package install
+    ARG DEBIAN_FRONTEND=noninteractive
 
     ENV PRODUCT_VERSION=${PRODUCT_VERSION}
     ENV COMPANY_NAME=${COMPANY_NAME}
@@ -32,11 +34,11 @@ FROM ubuntu:24.04 AS package
     ENV EXAMPLE_OUT=${EXAMPLE_OUT}
 
     RUN apt-get update && \
-        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        apt-get install -yq --no-install-recommends \
             devscripts dpkg-dev build-essential fakeroot debhelper \
             rpm m4 curl ca-certificates gnupg symlinks && \
         curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-        apt-get install -y nodejs && \
+        apt-get install -yq --no-install-recommends nodejs && \
         npm install -g @yao-pkg/pkg && \
         rm -rf /var/lib/apt/lists/*
 

@@ -1,0 +1,47 @@
+name: Request community issue triage
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  request-triage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask two random team members to triage a community issue
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const candidates = ['j-base64', 'MonaAghili', 'Alex-Arsys', 'DmySyz', 'rikled', 'chrip', 'Aiiaiiio', 'moodyjmz', 'emberfiend'];
+            const exclusions = ['HerrRichter', 'juliusknorr'];
+            const count = 2;
+
+            const author = context.payload.issue.user.login;
+            if (candidates.includes(author) || exclusions.includes(author)) {
+              core.info(`Opened by team member ${author}; skipping.`);
+              return;
+            }
+
+            const pool = [...candidates];
+            for (let i = pool.length - 1; i > 0; i--) {
+              const j = Math.floor(Math.random() * (i + 1));
+              [pool[i], pool[j]] = [pool[j], pool[i]];
+            }
+            const picked = pool.slice(0, count);
+
+            if (picked.length === 0) {
+              core.info('No triagers configured.');
+              return;
+            }
+
+            const mentions = picked.map(u => `@${u}`).join(' ');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body: `${mentions} Please triage this community-created issue within 48 hours.`,
+            });
+            core.info(`Requested community triage from: ${picked.join(', ')}`);

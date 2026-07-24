@@ -423,7 +423,7 @@ fi
 # --------------------------------------------------------------------
 [ "$DB_HOST"            = "localhost" ] && service postgresql start
 [ "$AMQP_HOST"          = "localhost" ] && [ -z "${AMQP_URI:-}" ] && \
-  runuser -u rabbitmq -- rabbitmq-server -detached
+  service rabbitmq-server start
 [ "$REDIS_SERVER_HOST"  = "localhost" ] && service redis-server start
 service nginx start
 
