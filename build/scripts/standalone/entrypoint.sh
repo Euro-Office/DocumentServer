@@ -241,10 +241,18 @@ fi
   jq_set '.services.CoAuthoring["request-filtering-agent"].allowMetaIPAddress = true'
 
 # Upload / conversion size limits
+# limits_tempfile_upload and maxDownloadBytes are simple scalars — override via local.json
 jq_set '.services.CoAuthoring.server.limits_tempfile_upload = ($maxFileSize | tonumber? // $maxFileSize)'
 jq_set '.FileConverter.converter.maxDownloadBytes           = ($maxFileSize | tonumber? // $maxFileSize)'
-jq_set '(.FileConverter.converter.inputLimits[] | select(.type | test("xlsx"))       | .zip.uncompressed) = $zipLimitXlsx'
-jq_set '(.FileConverter.converter.inputLimits[] | select(.type | test("xlsx") | not) | .zip.uncompressed) = $zipLimitDoc'
+# inputLimits is an array that only exists in default.json; node-config would replace the
+# whole array if we put it in local.json (losing the 'template' fields), so patch default.json
+# directly with sed — the same approach the original manual recipe used.
+DEFAULT_JSON="${EO_CONF}/default.json"
+if [ -f "$DEFAULT_JSON" ]; then
+  # Replace all three 50MB entries (docx/pptx/vsdx) and the 300MB xlsx entry
+  sed -i "s/\"uncompressed\": \"300MB\"/\"uncompressed\": \"${MAX_ZIP_UNCOMPRESSED_XLSX}\"/g" "$DEFAULT_JSON"
+  sed -i "s/\"uncompressed\": \"50MB\"/\"uncompressed\": \"${MAX_ZIP_UNCOMPRESSED_DOC}\"/g"   "$DEFAULT_JSON"
+fi
 
 # Metrics (statsd)
 if [ "$METRICS_ENABLED" = "true" ]; then
@@ -295,8 +303,6 @@ jq \
   --arg metricsPort      "$METRICS_PORT" \
   --arg metricsPrefix    "$METRICS_PREFIX" \
   --arg maxFileSize      "$MAX_FILE_SIZE" \
-  --arg zipLimitDoc      "$MAX_ZIP_UNCOMPRESSED_DOC" \
-  --arg zipLimitXlsx     "$MAX_ZIP_UNCOMPRESSED_XLSX" \
   "$jq_filter" \
   "$CONFIG_FILE" > "${CONFIG_FILE}.tmp"
 mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
@@ -447,6 +453,44 @@ fi
   service rabbitmq-server start
 [ "$REDIS_SERVER_HOST"  = "localhost" ] && service redis-server start
 service nginx start
+
+# --------------------------------------------------------------------
+# Apply Postgres schema on first boot (idempotent).
+#
+# The stock image has no init step for this, so a fresh DB volume leaves
+# docservice failing with `DB table "task_result" does not exist` and
+# never binding to :8000 — nginx then serves 502 on /healthcheck.
+# --------------------------------------------------------------------
+ensure_db_schema() {
+  schema_file="${EO_ROOT}/server/schema/postgresql/createdb.sql"
+  [ -f "$schema_file" ] || return 0
+
+  db_psql() {
+    PGPASSWORD="${DB_PWD:-}" psql \
+      -v ON_ERROR_STOP=1 \
+      -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" "$@"
+  }
+
+  tries=0
+  until db_psql -tAc 'SELECT 1' >/dev/null 2>&1; do
+    tries=$((tries + 1))
+    if [ "$tries" -gt 60 ]; then
+      echo "ERROR: Postgres not reachable at ${DB_HOST}:${DB_PORT} after 60s" >&2
+      return 1
+    fi
+    sleep 1
+  done
+
+  # Probe a table that createdb.sql creates. Skip if already populated.
+  if db_psql -tAc "SELECT to_regclass('public.task_result')::text" 2>/dev/null \
+       | grep -qx 'task_result'; then
+    return 0
+  fi
+
+  echo "Applying Postgres schema from ${schema_file}..."
+  db_psql -f "$schema_file"
+}
+ensure_db_schema
 
 # --------------------------------------------------------------------
 # Fonts + plugins (background where appropriate).
