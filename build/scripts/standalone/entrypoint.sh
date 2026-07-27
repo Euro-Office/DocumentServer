@@ -16,6 +16,7 @@ EXAMPLE_LOCAL="${EXAMPLE_CONF_DIR}/local.json"
 NGINX_CONFIG_PATH="/etc/nginx/nginx.conf"
 NGINX_DS_DIR="${EO_CONF}/nginx"
 NGINX_DS_CONF="${NGINX_DS_DIR}/ds.conf"
+NGINX_DS_COMMON_CONF="${NGINX_DS_DIR}/includes/ds-common.conf"
 NGINX_DS_SSL_TMPL="${NGINX_DS_DIR}/ds-ssl.conf.tmpl"
 SUPERVISOR_CONF_DIR="/etc/supervisor/conf.d"
 
@@ -46,8 +47,13 @@ METRICS_PORT="${METRICS_PORT:-8125}"
 METRICS_PREFIX="${METRICS_PREFIX:-ds.}"
 GENERATE_FONTS="${GENERATE_FONTS:-true}"
 
+MAX_FILE_SIZE="${MAX_FILE_SIZE:-104857600}"
+MAX_ZIP_UNCOMPRESSED_DOC="${MAX_ZIP_UNCOMPRESSED_DOC:-50MB}"
+MAX_ZIP_UNCOMPRESSED_XLSX="${MAX_ZIP_UNCOMPRESSED_XLSX:-300MB}"
+
 NGINX_WORKER_PROCESSES="${NGINX_WORKER_PROCESSES:-1}"
 NGINX_ACCESS_LOG="${NGINX_ACCESS_LOG:-false}"
+NGINX_CLIENT_MAX_BODY_SIZE="${NGINX_CLIENT_MAX_BODY_SIZE:-100m}"
 SSL_VERIFY_CLIENT="${SSL_VERIFY_CLIENT:-off}"
 ONLYOFFICE_HTTPS_HSTS_ENABLED="${ONLYOFFICE_HTTPS_HSTS_ENABLED:-true}"
 ONLYOFFICE_HTTPS_HSTS_MAXAGE="${ONLYOFFICE_HTTPS_HSTS_MAXAGE:-31536000}"
@@ -234,6 +240,12 @@ fi
 [ "$ALLOW_META_IP_ADDRESS" = "true" ] && \
   jq_set '.services.CoAuthoring["request-filtering-agent"].allowMetaIPAddress = true'
 
+# Upload / conversion size limits
+jq_set '.services.CoAuthoring.server.limits_tempfile_upload = ($maxFileSize | tonumber? // $maxFileSize)'
+jq_set '.FileConverter.converter.maxDownloadBytes           = ($maxFileSize | tonumber? // $maxFileSize)'
+jq_set '(.FileConverter.converter.inputLimits[] | select(.type | test("xlsx"))       | .zip.uncompressed) = $zipLimitXlsx'
+jq_set '(.FileConverter.converter.inputLimits[] | select(.type | test("xlsx") | not) | .zip.uncompressed) = $zipLimitDoc'
+
 # Metrics (statsd)
 if [ "$METRICS_ENABLED" = "true" ]; then
   jq_set '.statsd.useMetrics = true'
@@ -282,6 +294,9 @@ jq \
   --arg metricsHost      "$METRICS_HOST" \
   --arg metricsPort      "$METRICS_PORT" \
   --arg metricsPrefix    "$METRICS_PREFIX" \
+  --arg maxFileSize      "$MAX_FILE_SIZE" \
+  --arg zipLimitDoc      "$MAX_ZIP_UNCOMPRESSED_DOC" \
+  --arg zipLimitXlsx     "$MAX_ZIP_UNCOMPRESSED_XLSX" \
   "$jq_filter" \
   "$CONFIG_FILE" > "${CONFIG_FILE}.tmp"
 mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
@@ -310,6 +325,10 @@ if [ -f "$NGINX_CONFIG_PATH" ]; then
   else
     sed -ri "s|^\s*access_log\b.*;|access_log off;|" "$NGINX_CONFIG_PATH"
   fi
+fi
+
+if [ -f "$NGINX_DS_COMMON_CONF" ]; then
+  sed -i "s/client_max_body_size[[:space:]]\+[^;]\+;/client_max_body_size ${NGINX_CLIENT_MAX_BODY_SIZE};/" "$NGINX_DS_COMMON_CONF"
 fi
 
 if [ -n "${SSL_CERTIFICATE_PATH:-}" ] && [ -n "${SSL_KEY_PATH:-}" ] \
@@ -359,12 +378,14 @@ enable_supervisor_program() {
 # --------------------------------------------------------------------
 if [ "${EXAMPLE_ENABLED:-false}" = "true" ] && [ -d "$EXAMPLE_CONF_DIR" ]; then
   jq -n \
-    --arg secret "$JWT_SECRET" \
-    --arg header "$JWT_HEADER" \
+    --arg secret      "$JWT_SECRET" \
+    --arg header      "$JWT_HEADER" \
+    --arg maxFileSize "$MAX_FILE_SIZE" \
     '{
       "server": {
         "siteUrl": "/",
         "exampleUrl": "http://localhost/example/",
+        "maxFileSize": ($maxFileSize | tonumber? // $maxFileSize),
         "token": {
           "enable": true,
           "secret": $secret,
