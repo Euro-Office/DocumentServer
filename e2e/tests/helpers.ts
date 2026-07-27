@@ -48,3 +48,40 @@ export async function editorApi<T>(editorPage: Page, fn: (api: any) => T): Promi
     return new Function('api', `return (${body})(api);`)(api);
   }, fn.toString());
 }
+
+/**
+ * Evaluate a function against the editor iframe's window, for driving app-level
+ * globals (e.g. Common.UI.Themes) rather than just the automation API. The
+ * function is serialized, so it must be self-contained (no closures over test
+ * scope) -- but real, JSON-serializable values from the test can still be
+ * passed in via `args`, which arrive as genuine extra parameters (`fn(win,
+ * ...args)`), not string-substituted into the function's source text.
+ */
+export async function frameEval<T>(
+  editorPage: Page,
+  fn: (win: any, ...args: any[]) => T,
+  args: any[] = [],
+): Promise<T> {
+  const handle = await editorPage.locator(EDITOR_IFRAME).elementHandle();
+  if (!handle) throw new Error('editor iframe not found');
+  const frame = await handle.contentFrame();
+  if (!frame) throw new Error('editor iframe has no content frame');
+
+  return frame.evaluate(({ body, args }) => {
+    // eslint-disable-next-line no-new-func
+    return new Function('win', 'args', `return (${body}).apply(null, [win].concat(args));`)(window, args);
+  }, { body: fn.toString(), args });
+}
+
+/**
+ * Asserts an RGB color is within `tolerance` per channel of `expected`, not
+ * exactly equal. Anti-aliasing at a fill/glyph edge can shift a scanned
+ * pixel by a value or two from the exact color that was set, even when the
+ * color itself is correct.
+ */
+export function expectColorClose(actual: number[], expected: number[], tolerance = 4) {
+  expect(actual.length).toBe(expected.length);
+  for (let i = 0; i < expected.length; i++) {
+    expect(Math.abs(actual[i] - expected[i])).toBeLessThanOrEqual(tolerance);
+  }
+}
