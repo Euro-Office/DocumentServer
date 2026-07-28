@@ -422,10 +422,6 @@ fi
 # for it above.
 # --------------------------------------------------------------------
 [ "$DB_HOST"            = "localhost" ] && service postgresql start
-[ "$AMQP_HOST"          = "localhost" ] && [ -z "${AMQP_URI:-}" ] && \
-  service rabbitmq-server start
-[ "$REDIS_SERVER_HOST"  = "localhost" ] && service redis-server start
-service nginx start
 
 # --------------------------------------------------------------------
 # Apply Postgres schema on first boot (idempotent).
@@ -433,6 +429,9 @@ service nginx start
 # The stock image has no init step for this, so a fresh DB volume leaves
 # docservice failing with `DB table "task_result" does not exist` and
 # never binding to :8000 — nginx then serves 502 on /healthcheck.
+#
+# Runs here, right after Postgres starts and before nginx, so the 502
+# window is as small as possible.
 # --------------------------------------------------------------------
 ensure_db_schema() {
   schema_file="${EO_ROOT}/server/schema/postgresql/createdb.sql"
@@ -448,15 +447,16 @@ ensure_db_schema() {
   until db_psql -tAc 'SELECT 1' >/dev/null 2>&1; do
     tries=$((tries + 1))
     if [ "$tries" -gt 60 ]; then
-      echo "ERROR: Postgres not reachable at ${DB_HOST}:${DB_PORT} after 60s" >&2
+      echo "ERROR: could not connect to Postgres at ${DB_HOST}:${DB_PORT} as ${DB_USER}/${DB_NAME} after 60s" >&2
+      db_psql -tAc 'SELECT 1' >&2 || true
       return 1
     fi
     sleep 1
   done
 
   # Probe a table that createdb.sql creates. Skip if already populated.
-  if db_psql -tAc "SELECT to_regclass('public.task_result')::text" 2>/dev/null \
-       | grep -qx 'task_result'; then
+  if [ "$(db_psql -tAc "SELECT to_regclass('public.task_result') IS NOT NULL" 2>/dev/null)" = "t" ]; then
+    echo "Postgres schema already present, skipping."
     return 0
   fi
 
@@ -464,6 +464,11 @@ ensure_db_schema() {
   db_psql -f "$schema_file"
 }
 ensure_db_schema
+
+[ "$AMQP_HOST"          = "localhost" ] && [ -z "${AMQP_URI:-}" ] && \
+  service rabbitmq-server start
+[ "$REDIS_SERVER_HOST"  = "localhost" ] && service redis-server start
+service nginx start
 
 # --------------------------------------------------------------------
 # Fonts + plugins (background where appropriate).

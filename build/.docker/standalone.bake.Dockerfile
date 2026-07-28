@@ -56,7 +56,8 @@ RUN apt-get update && \
     echo "${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW} ds/db-name string eurooffice" | debconf-set-selections && \
     DS_DOCKER_INSTALLATION=true apt-get install -yq /tmp/${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW}_${PRODUCT_VERSION}-${BUILD_NUMBER}_${TARGETARCH}.deb && \
     rm -rf /var/lib/apt/lists/* /tmp/*
-    #sudo -u postgres bash -c "PGPASSWORD=eurooffice psql -h localhost -U eurooffice -d eurooffice -f ${EO_ROOT}/server/schema/postgresql/createdb.sql"
+# Postgres schema is applied at container boot (entrypoint.sh's ensure_db_schema),
+# not at build time: build-time application doesn't survive a fresh DB volume.
 
 # --- Final setup ---
 COPY build/configs/standalone/supervisor/ /etc/supervisor/conf.d/
