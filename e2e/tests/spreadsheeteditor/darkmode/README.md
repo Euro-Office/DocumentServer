@@ -1,6 +1,4 @@
-/*
-
-
+```
   /$$$$$$   /$$$$$$  /$$$$$$$$       /$$$$$$$                      /$$
  /$$__  $$ /$$__  $$| $$_____/      | $$__  $$                    | $$
 | $$  \__/| $$  \__/| $$            | $$  \ $$  /$$$$$$   /$$$$$$ | $$   /$$
@@ -17,60 +15,57 @@
 | $$\  $ | $$| $$  | $$| $$  | $$| $$_____/         | $$| $$_____/ \____  $$  | $$ /$$
 | $$ \/  | $$|  $$$$$$/|  $$$$$$$|  $$$$$$$         | $$|  $$$$$$$ /$$$$$$$/  |  $$$$/
 |__/     |__/ \______/  \_______/ \_______/         |__/ \_______/|_______/    \___/
+```
 
-
-
-what we want to test
+## what we want to test
 
 UI and relation with darkmode
-- button darkmode beeing dsiabled in light theme
-- button darkmode beeing enabled in dark theme
+- button darkmode being disabled in light theme
+- button darkmode being enabled in dark theme
 - click on button darkmode enable darkmode
+- interface theme's effect on content dark mode (forces off / restores)
 
 background and foreground colors cells
 - 100% automatic colors , before/after darkmode
-- automatic background color + usertextcolor , before/after darkmode
+- automatic background color + user text color , before/after darkmode
 - user background color + automatic text color , before/after darkmode
 - user background color + user text color , before/after darkmode
+- merged cells with automatic colors
+- search-highlighted cell text contrast
+- a cell actively being edited (mid-edit toggle)
 
 borders
 - 100% automatic colors , before/after darkmode
--
+- user/explicit color , before/after darkmode
+- column resize guide visibility
 
-print
+print (simplified test)
 - backgroundcolor of document , before/after darkmode
 
+## running these tests
 
-*/
+Each file in this folder is a normal Playwright spec, discovered directly --
+no index, no special setup.
 
+```bash
+# all of them
+npx playwright test tests/spreadsheeteditor/darkmode/
 
+# just one
+npx playwright test tests/spreadsheeteditor/darkmode/resize-guide.spec.ts
 
+# by name
+npx playwright test tests/spreadsheeteditor/darkmode/ -g "resize guide"
 
+# everything except one
+npx playwright test tests/spreadsheeteditor/darkmode/ --grep-invert "resize guide"
+```
 
-// Index for the spreadsheet dark-mode suite -- imports each test file under
-// spreadsheeteditor/darkmode/ for its side effect (registering its test()
-// calls). Those files use a plain .ts extension (not .spec.ts/.test.ts) so
-// Playwright's own file discovery doesn't also pick them up directly and
-// run them a second time.
-//
-// Run this suite with --workers=1, e.g.:
-//   npx playwright test tests/spreadsheeteditor-darkmode.spec.ts --workers=1
-// Splitting into one file per test lets Playwright schedule up to ~7
-// workers in parallel by default on this machine (cpus/2). Confirmed live:
-// running 3 grouped files already used 3 workers and produced page.goto
-// navigation timeouts against the shared dev container under that
-// concurrent load -- 9 separate files would make more workers available,
-// not fewer. Forcing one worker keeps these tests running against the
-// shared container one at a time, like the rest of this suite already
-// does when run as a single file.
+If a test fails with `page.goto` timing out or a `test.describe()`-related error
+that doesn't match the actual file content, clear Playwright's transform cache
+before assuming it's a real bug -- this has recurred a few times after
+renaming/moving spec files in this folder:
 
-import './spreadsheeteditor/darkmode/toggle-button';
-import './spreadsheeteditor/darkmode/interface-theme';
-import './spreadsheeteditor/darkmode/cell-colors';
-import './spreadsheeteditor/darkmode/cell-borders';
-import './spreadsheeteditor/darkmode/merged-cells';
-import './spreadsheeteditor/darkmode/search-highlight';
-import './spreadsheeteditor/darkmode/resize-guide';
-import './spreadsheeteditor/darkmode/mid-edit-toggle';
-import './spreadsheeteditor/darkmode/print-preview';
-
+```bash
+rm -rf /tmp/playwright-transform-cache-*
+```

@@ -7,16 +7,21 @@ test.describe('Spreadsheet editor - dark mode rendering', () => {
    TESTING CORE CELL COLOR CORRECTION
   */
   test('automatic cell colors invert in dark mode; explicit colors stay untouched', async ({ page }) => {
-    // Covers the four automatic/explicit combinations a cell's fill and text
-    // can be in: B2 (both automatic), B3 (fill only), B4 (both explicit),
-    // B6 (text only). Measures each before/after toggling dark mode.
+    // Covers the automatic/explicit combinations a cell's fill and text can
+    // be in: B2 (both automatic), B3 (dark fill only), B4 (both explicit),
+    // B6 (text only), B7 (light fill only). Measures each before/after
+    // toggling dark mode. Automatic text inverts for contrast against
+    // whichever background is actually behind it -- the dark canvas (B2),
+    // or its own cell's fill if it has one (B3, B7) -- but only when that
+    // background is dark enough to need it: B3's darker fill triggers the
+    // inversion, B7's lighter fill doesn't.
     const { editorPage } = await openNewEditor(page, 'a.try-editor.cell', /\.xlsx/);
 
     // Assert the light-mode starting point explicitly rather than assume it
     // -- every "before" check below relies on it.
     expect(await editorApi(editorPage, (api) => api.isDarkMode)).toBe(false);
 
-    // WRITE B2/B3/B4/B6
+    // WRITE B2/B3/B4/B6/B7
 
     // B2: left on default/automatic colors -- no fill, no explicit text color.
     await editorApi(editorPage, (api) => {
@@ -58,12 +63,23 @@ test.describe('Spreadsheet editor - dark mode rendering', () => {
     });
     await expect.poll(() => cellFontRgb(editorPage, 5, 1)).not.toBeNull();
 
+    // B7: light explicit fill, automatic text.
+    await editorApi(editorPage, (api) => {
+      api.wb.getWorksheet().model.getRange3(6, 1, 6, 1).setValue('lightBgOnly');
+    });
+    await editorApi(editorPage, (api) => {
+      api.asc_findCell('B7');
+      api.asc_setCellBackgroundColor(new (window as any).Asc.asc_CColor(220, 220, 220));
+    });
+    await expect.poll(() => cellFillRgb(editorPage, 6, 1)).not.toBeNull();
+
     // MEASURE COLORS IN LIGHT MODE
 
     const b2Before = await sampleCellPixels(editorPage, 1, 1);
     const b3Before = await sampleCellPixels(editorPage, 2, 1);
     const b4Before = await sampleCellPixels(editorPage, 3, 1);
     const b6Before = await sampleCellPixels(editorPage, 5, 1);
+    const b7Before = await sampleCellPixels(editorPage, 6, 1);
 
     // B2's automatic text is literal black against the light-mode canvas.
     expectColorClose(b2Before.darkest, [0, 0, 0]);
@@ -76,6 +92,10 @@ test.describe('Spreadsheet editor - dark mode rendering', () => {
     // is plain white in light mode.
     expectColorClose(b6Before.darkest, [10, 10, 60]);
     expectColorClose(b6Before.lightest, [255, 255, 255]);
+    // B7's light explicit fill renders as set; its automatic text is literal
+    // black, same as B2's.
+    expectColorClose(b7Before.darkest, [0, 0, 0]);
+    expectColorClose(b7Before.lightest, [220, 220, 220]);
 
     // SWITCH TO DARK MODE
 
@@ -90,18 +110,19 @@ test.describe('Spreadsheet editor - dark mode rendering', () => {
     const b3After = await sampleCellPixels(editorPage, 2, 1);
     const b4After = await sampleCellPixels(editorPage, 3, 1);
     const b6After = await sampleCellPixels(editorPage, 5, 1);
+    const b7After = await sampleCellPixels(editorPage, 6, 1);
 
     // Explicit fill/text colors are exactly unchanged by the dark-mode toggle.
-    expectColorClose(b3After.lightest, [200, 100, 50]);
+    expectColorClose(b3After.darkest, [200, 100, 50]);
     expectColorClose(b4After.darkest, [30, 30, 120]);
     expectColorClose(b4After.lightest, [255, 220, 0]);
-    // KNOWN BUG: B3's automatic text should invert for contrast in dark mode
-    // the same way B2's does, but any explicit fill -- light or dark --
-    // currently forces it to stay literal black instead. This asserts
-    // today's actual (wrong) output on purpose: it starts failing the
-    // moment that bug is fixed, which is the signal to update it, not a
-    // regression to chase.
-    expectColorClose(b3After.darkest, [0, 0, 0]);
+    // B3's automatic text inverts for contrast against its own fill, same as
+    // B2 does against the dark canvas -- B3's fill (200,100,50) is dark
+    // enough (luminance ~124/255) to need the correction, so the text
+    // inverts to white. That swaps which sample lands in which slot: the
+    // fill (darker of the two) is now "darkest", the corrected text
+    // (lighter) is now "lightest" -- same swap seen below for B6.
+    expectColorClose(b3After.lightest, [255, 255, 255]);
     // B6's explicit text is still unchanged; its automatic background is now
     // the dark canvas gray instead of white -- the two swap which slot
     // (darkest/lightest) they land in, since the text color (sum 80) is
@@ -109,5 +130,10 @@ test.describe('Spreadsheet editor - dark mode rendering', () => {
     // dark-mode gray background (sum 114), so it's "darkest" in both modes.
     expectColorClose(b6After.darkest, [10, 10, 60]);
     expectColorClose(b6After.lightest, [38, 38, 38]);
+    // B7's fill (220,220,220) is light enough (luminance ~220/255, well
+    // above the threshold) that automatic text must stay untouched, exactly
+    // as in light mode -- no swap, no inversion.
+    expectColorClose(b7After.darkest, [0, 0, 0]);
+    expectColorClose(b7After.lightest, [220, 220, 220]);
   });
 });
