@@ -428,6 +428,44 @@ fi
 service nginx start
 
 # --------------------------------------------------------------------
+# Apply Postgres schema on first boot (idempotent).
+#
+# The stock image has no init step for this, so a fresh DB volume leaves
+# docservice failing with `DB table "task_result" does not exist` and
+# never binding to :8000 — nginx then serves 502 on /healthcheck.
+# --------------------------------------------------------------------
+ensure_db_schema() {
+  schema_file="${EO_ROOT}/server/schema/postgresql/createdb.sql"
+  [ -f "$schema_file" ] || return 0
+
+  db_psql() {
+    PGPASSWORD="${DB_PWD:-}" psql \
+      -v ON_ERROR_STOP=1 \
+      -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" "$@"
+  }
+
+  tries=0
+  until db_psql -tAc 'SELECT 1' >/dev/null 2>&1; do
+    tries=$((tries + 1))
+    if [ "$tries" -gt 60 ]; then
+      echo "ERROR: Postgres not reachable at ${DB_HOST}:${DB_PORT} after 60s" >&2
+      return 1
+    fi
+    sleep 1
+  done
+
+  # Probe a table that createdb.sql creates. Skip if already populated.
+  if db_psql -tAc "SELECT to_regclass('public.task_result')::text" 2>/dev/null \
+       | grep -qx 'task_result'; then
+    return 0
+  fi
+
+  echo "Applying Postgres schema from ${schema_file}..."
+  db_psql -f "$schema_file"
+}
+ensure_db_schema
+
+# --------------------------------------------------------------------
 # Fonts + plugins (background where appropriate).
 # --------------------------------------------------------------------
 if [ "$GENERATE_FONTS" = "true" ] && command -v /usr/bin/documentserver-generate-allfonts.sh >/dev/null 2>&1; then
