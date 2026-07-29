@@ -480,7 +480,9 @@ ensure_db_schema() {
 
   echo "Applying Postgres schema from ${schema_file}..."
   db_psql -f "$schema_file"
+  rc=$?
   unset -f db_psql
+  return "$rc"
 }
 ensure_db_schema || echo "WARNING: Postgres schema bootstrap failed; docservice may 502 until it is applied." >&2
 
