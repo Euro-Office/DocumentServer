@@ -36,7 +36,7 @@ test.describe('Spreadsheet editor - dark mode', () => {
     // The click handler debounces rapid clicks for 500ms; a second click
     // inside that window is dropped rather than toggling again. This wait
     // is matched to that real, named constant, not a guess at timing.
-    await editorPage.waitForTimeout(600);
+    await editorPage.waitForTimeout(500+250);
     await darkDocButton.click();
 
     await expect.poll(() => editorApi(editorPage, (api) => api.isDarkMode)).toBe(false);
