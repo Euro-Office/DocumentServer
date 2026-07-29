@@ -12,6 +12,18 @@ export function cellFillRgb(editorPage: Page, row: number, col: number) {
   }, [row, col]);
 }
 
+// Distinct from cellFillRgb: a gradient fill has no patternFill at all (the
+// model's Fill keeps gradientFill and patternFill as separate, mutually-set
+// members), so cellFillRgb's patternFill-only check always reports null for
+// it -- this checks the gradientFill member directly, purely to confirm the
+// fill landed on the model before proceeding, not to read its color.
+export function cellHasGradientFill(editorPage: Page, row: number, col: number) {
+  return frameEval(editorPage, (win, row: number, col: number) => {
+    const fill = win.Asc.editor.wb.getWorksheet().model.getRange3(row, col, row, col).getFill();
+    return !!(fill && fill.gradientFill);
+  }, [row, col]);
+}
+
 export function cellFontRgb(editorPage: Page, row: number, col: number) {
   return frameEval(editorPage, (win, row: number, col: number) => {
     const color = win.Asc.editor.wb.getWorksheet().model.getRange3(row, col, row, col).getFont().getColor();
