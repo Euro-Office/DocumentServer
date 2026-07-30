@@ -422,6 +422,70 @@ fi
 # for it above.
 # --------------------------------------------------------------------
 [ "$DB_HOST"            = "localhost" ] && service postgresql start
+
+# --------------------------------------------------------------------
+# Apply Postgres schema on first boot (idempotent).
+#
+# The .deb postinst applies createdb.sql at *image build* time, so the
+# bundled cluster already has the schema. This step exists for the cases
+# build-time application can't cover: an external DB_HOST, or a fresh
+# volume mounted over the Postgres datadir — either leaves docservice
+# failing with `DB table "task_result" does not exist` and never binding
+# to :8000, so nginx serves 502 on /healthcheck.
+#
+# Runs here, right after Postgres starts and before nginx, so the 502
+# window is as small as possible.
+#
+# A failure here is not fatal to boot (see the `||` at the call site
+# below) — the container still starts, just possibly 502ing until the
+# schema is applied out of band, rather than being taken down by set -e.
+# --------------------------------------------------------------------
+ensure_db_schema() {
+  schema_file="${EO_ROOT}/server/schema/postgresql/createdb.sql"
+  [ -f "$schema_file" ] || return 0
+
+  # DB_PWD is usually unset: the jq rewrite above only touches
+  # sql.dbPass when DB_PWD is non-empty (see :200), so in the default
+  # (stock-image) configuration the real password is whatever postinst
+  # baked into $CONFIG_FILE at build time. Fall back to reading it from
+  # there rather than authenticating with an empty password.
+  db_pwd="${DB_PWD:-$(jq -r '.services.CoAuthoring.sql.dbPass // empty' "$CONFIG_FILE" 2>/dev/null || true)}"
+
+  db_psql() {
+    PGPASSWORD="$db_pwd" psql -w \
+      -v ON_ERROR_STOP=1 \
+      -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" "$@"
+  }
+
+  tries=0
+  until db_psql -tAc 'SELECT 1' >/dev/null 2>&1; do
+    tries=$((tries + 1))
+    if [ "$tries" -gt 60 ]; then
+      echo "ERROR: could not connect to Postgres at ${DB_HOST}:${DB_PORT} as ${DB_USER}/${DB_NAME} after 60s" >&2
+      # Re-run once unsuppressed so psql's own message (auth failure vs.
+      # unreachable host) reaches the log instead of our generic one.
+      db_psql -tAc 'SELECT 1' >&2 || true
+      unset -f db_psql
+      return 1
+    fi
+    sleep 1
+  done
+
+  # Probe a table that createdb.sql creates. Skip if already populated.
+  if [ "$(db_psql -tAc "SELECT to_regclass('public.task_result') IS NOT NULL" 2>/dev/null)" = "t" ]; then
+    echo "Postgres schema already present, skipping."
+    unset -f db_psql
+    return 0
+  fi
+
+  echo "Applying Postgres schema from ${schema_file}..."
+  db_psql -f "$schema_file"
+  rc=$?
+  unset -f db_psql
+  return "$rc"
+}
+ensure_db_schema || echo "WARNING: Postgres schema bootstrap failed; docservice may 502 until it is applied." >&2
+
 [ "$AMQP_HOST"          = "localhost" ] && [ -z "${AMQP_URI:-}" ] && \
   service rabbitmq-server start
 [ "$REDIS_SERVER_HOST"  = "localhost" ] && service redis-server start
