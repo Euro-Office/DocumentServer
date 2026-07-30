@@ -89,16 +89,10 @@ test.describe('Spreadsheet editor - dark mode rendering', () => {
   /*
    PATTERN-FILLED CELL, EDITED IN DARK MODE: TEXT MUST STAY READABLE
 
-   Unlike a gradient fill, a genuine pattern fill (patternType other than
-   None/Solid) makes Fill.prototype.bg() return non-null -- the pattern's
-   foreground color -- and that's exactly what the editor paints as a flat
-   background (background: bg || defaultState.background), raw, with no
-   dark-mode correction of its own. Before the fix, the automatic-text-color
-   decision only ever got a resolvedFallbackBg when bg was null, so a
-   pattern fill fell into the grid path's "unknown contrast" exemption even
-   though the actual painted color was fully known right there -- text
-   rendered at its literal stored black regardless of how dark the
-   pattern's foreground actually was.
+   Unlike a gradient fill, a genuine pattern fill has a known foreground
+   color, and that's exactly what the editor paints as the background.
+   Automatic text must be corrected for contrast against that color like
+   any other known background, not treated as an unknown-contrast case.
   */
   test('editing a pattern-filled cell keeps automatic text readable against its foreground color', async ({ page }) => {
     const { editorPage } = await openNewEditor(page, 'a.try-editor.cell', /\.xlsx/);

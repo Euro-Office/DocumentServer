@@ -5,16 +5,10 @@ test.describe('Spreadsheet editor - dark mode rendering', () => {
   /*
    PAGE BREAK PREVIEW, DARK MODE: OUTSIDE-PRINT-AREA OVERLAY MUST MATCH THE GRID-LINE COLOR
 
-   Page Break Preview shades the area outside the print range using
-   cells.defaultState.border -- the same theme-resolved color every ordinary
-   grid line already uses (drawn via setStrokeStyle, never dark-mode
-   corrected). The overlay itself is painted through drawFillCell instead,
-   which re-applies getDarkModeCorrectedColor unless bIsExplicitFill says
-   otherwise. Before the fix, that flag came out false in the main
-   _drawRowBG loop, and wasn't passed at all for merged-cell sub-rectangles
-   -- so the already-resolved border color got corrected a second time,
-   landing a near-white overlay next to dark-grey grid lines in dark mode.
-   See TASKS/10-build-pr-endsession-sanitizer for the diagnosis.
+   The overlay outside the print range must use the same theme-resolved
+   border color as ordinary grid lines. A regression that corrects this
+   color a second time would paint a near-white overlay next to dark-grey
+   grid lines instead of blending into them.
   */
   test('page-break-preview overlay color matches the grid-line border color in dark mode', async ({ page }) => {
     const { editorPage } = await openNewEditor(page, 'a.try-editor.cell', /\.xlsx/);

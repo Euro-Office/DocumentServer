@@ -8,13 +8,13 @@ test.describe('Spreadsheet editor - dark mode rendering', () => {
   */
   test('automatic cell colors invert in dark mode; explicit colors stay untouched', async ({ page }) => {
     // Covers the automatic/explicit combinations a cell's fill and text can
-    // be in: B2 (both automatic), B3 (dark fill only), B4 (both explicit),
-    // B6 (text only), B7 (light fill only). Measures each before/after
+    // be in: B2 (both automatic), B3 (fill only), B4 (both explicit), B6
+    // (text only), B7 (light fill only). Measures each before/after
     // toggling dark mode. Automatic text inverts for contrast against
     // whichever background is actually behind it -- the dark canvas (B2),
     // or its own cell's fill if it has one (B3, B7) -- but only when that
-    // background is dark enough to need it: B3's darker fill triggers the
-    // inversion, B7's lighter fill doesn't.
+    // background is dark enough to need it: B7's fill isn't, and neither
+    // is B3's, just under the current isColorDark cutoff.
     const { editorPage } = await openNewEditor(page, 'a.try-editor.cell', /\.xlsx/);
 
     // Assert the light-mode starting point explicitly rather than assume it
@@ -113,16 +113,13 @@ test.describe('Spreadsheet editor - dark mode rendering', () => {
     const b7After = await sampleCellPixels(editorPage, 6, 1);
 
     // Explicit fill/text colors are exactly unchanged by the dark-mode toggle.
-    expectColorClose(b3After.darkest, [200, 100, 50]);
     expectColorClose(b4After.darkest, [30, 30, 120]);
     expectColorClose(b4After.lightest, [255, 220, 0]);
-    // B3's automatic text inverts for contrast against its own fill, same as
-    // B2 does against the dark canvas -- B3's fill (200,100,50) is dark
-    // enough (luminance ~124/255) to need the correction, so the text
-    // inverts to white. That swaps which sample lands in which slot: the
-    // fill (darker of the two) is now "darkest", the corrected text
-    // (lighter) is now "lightest" -- same swap seen below for B6.
-    expectColorClose(b3After.lightest, [255, 255, 255]);
+    // B3's fill (200,100,50, HSL lightness 125) sits above the current
+    // isColorDark cutoff, so its automatic text stays untouched -- nothing
+    // in this cell differs from light mode.
+    expectColorClose(b3After.darkest, [0, 0, 0]);
+    expectColorClose(b3After.lightest, [200, 100, 50]);
     // B6's explicit text is still unchanged; its automatic background is now
     // the dark canvas gray instead of white -- the two swap which slot
     // (darkest/lightest) they land in, since the text color (sum 80) is
