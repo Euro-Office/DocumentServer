@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { openNewEditor, editorApi, frameEval } from '../../helpers';
-import { cellFillRgb, cellHasGradientFill } from '../../utils/spreadsheet-editor';
+import { openNewEditor, editorApi } from '../../helpers';
+import { cellFillRgb, cellHasGradientFill, ceColors } from '../../utils/spreadsheet-editor';
 
 test.describe('Spreadsheet editor - dark mode rendering', () => {
   /*
@@ -46,20 +46,10 @@ test.describe('Spreadsheet editor - dark mode rendering', () => {
     });
     await expect.poll(() => cellHasGradientFill(editorPage, 1, 1)).toBe(true);
 
-    const ceColors = () =>
-      frameEval(editorPage, (win) => {
-        const canvas = win.document.getElementById('ce-canvas') as HTMLCanvasElement;
-        const ctx = canvas.getContext('2d')!;
-        const img = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-        const set = new Set<string>();
-        for (let i = 0; i < img.length; i += 4) set.add(img[i] + ',' + img[i + 1] + ',' + img[i + 2]);
-        return Array.from(set).sort();
-      });
-
     // START EDITING B2 IN LIGHT MODE -- ALREADY-WORKING BASELINE
 
     await editorPage.keyboard.press('F2');
-    const lightColors = await ceColors();
+    const lightColors = await ceColors(editorPage);
     // Pre-existing, unrelated limitation: the editor shows a plain white
     // background, not the actual gradient -- confirmed here as the baseline
     // this test builds on, not something this fix changes.
@@ -74,7 +64,7 @@ test.describe('Spreadsheet editor - dark mode rendering', () => {
     await editorApi(editorPage, (api) => api.asc_findCell('B2'));
     await editorPage.keyboard.press('F2');
 
-    const darkColors = await ceColors();
+    const darkColors = await ceColors(editorPage);
     // The editor's fallback background is cells.defaultState.background's
     // dark-mode value (#262626 = 38,38,38) -- confirms the fallback is in
     // effect, same as the no-fill case already covered by cell-colors.spec.ts.
@@ -119,20 +109,10 @@ test.describe('Spreadsheet editor - dark mode rendering', () => {
     });
     await expect.poll(() => cellFillRgb(editorPage, 2, 1)).not.toBeNull();
 
-    const ceColors = () =>
-      frameEval(editorPage, (win) => {
-        const canvas = win.document.getElementById('ce-canvas') as HTMLCanvasElement;
-        const ctx = canvas.getContext('2d')!;
-        const img = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-        const set = new Set<string>();
-        for (let i = 0; i < img.length; i += 4) set.add(img[i] + ',' + img[i + 1] + ',' + img[i + 2]);
-        return Array.from(set).sort();
-      });
-
     // START EDITING B3 IN LIGHT MODE -- ALREADY-WORKING BASELINE
 
     await editorPage.keyboard.press('F2');
-    const lightColors = await ceColors();
+    const lightColors = await ceColors(editorPage);
     // The editor paints the pattern's foreground color flat, raw -- not
     // corrected in either mode, confirmed here as the baseline.
     expect(lightColors).toContain('30,30,90');
@@ -145,7 +125,7 @@ test.describe('Spreadsheet editor - dark mode rendering', () => {
     await editorApi(editorPage, (api) => api.asc_findCell('B3'));
     await editorPage.keyboard.press('F2');
 
-    const darkColors = await ceColors();
+    const darkColors = await ceColors(editorPage);
     // Same foreground color as before -- the editor's background paint is
     // mode-independent, unaffected by this fix.
     expect(darkColors).toContain('30,30,90');

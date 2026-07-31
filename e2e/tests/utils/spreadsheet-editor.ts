@@ -166,3 +166,17 @@ export function resizeColumnGuideColor(editorPage: Page, col: number) {
     return null;
   }, [col]);
 }
+
+// Every distinct RGB triple currently painted on the cell editor's own canvas,
+// sorted -- used to assert the editor's rendered colors change (or don't)
+// across a dark-mode toggle, independent of layout.
+export function ceColors(editorPage: Page) {
+  return frameEval(editorPage, (win) => {
+    const canvas = win.document.getElementById('ce-canvas') as HTMLCanvasElement;
+    const ctx = canvas.getContext('2d')!;
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    const set = new Set<string>();
+    for (let i = 0; i < img.length; i += 4) set.add(img[i] + ',' + img[i + 1] + ',' + img[i + 2]);
+    return Array.from(set).sort();
+  });
+}

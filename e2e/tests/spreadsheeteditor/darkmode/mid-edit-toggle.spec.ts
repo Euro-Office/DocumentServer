@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { openNewEditor, editorApi, frameEval } from '../../helpers';
-import { sampleCellPixels } from '../../utils/spreadsheet-editor';
+import { openNewEditor, editorApi } from '../../helpers';
+import { sampleCellPixels, ceColors } from '../../utils/spreadsheet-editor';
 
 test.describe('Spreadsheet editor - dark mode rendering', () => {
   /*
@@ -18,17 +18,7 @@ test.describe('Spreadsheet editor - dark mode rendering', () => {
     await editorPage.keyboard.press('Control+Home');
     await editorPage.keyboard.type('hello');
 
-    const ceColors = () =>
-      frameEval(editorPage, (win) => {
-        const canvas = win.document.getElementById('ce-canvas') as HTMLCanvasElement;
-        const ctx = canvas.getContext('2d')!;
-        const img = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-        const set = new Set<string>();
-        for (let i = 0; i < img.length; i += 4) set.add(img[i] + ',' + img[i + 1] + ',' + img[i + 2]);
-        return Array.from(set).sort();
-      });
-
-    const before = await ceColors();
+    const before = await ceColors(editorPage);
 
     await editorApi(editorPage, (api) => api.asc_setContentDarkMode(true));
     // Confirm the toggle is genuinely in effect elsewhere (the main grid),
@@ -36,13 +26,13 @@ test.describe('Spreadsheet editor - dark mode rendering', () => {
     // toggle simply not having landed yet.
     await expect.poll(() => sampleCellPixels(editorPage, 5, 5).then((s) => s.darkest)).not.toEqual([255, 255, 255]);
 
-    const after = await ceColors();
+    const after = await ceColors(editorPage);
     expect(after).toEqual(before);
 
     // ENDING THE EDIT AND STARTING A NEW ONE DOES PICK UP THE NEW THEME
     await editorPage.keyboard.press('Escape');
     await editorPage.keyboard.press('Control+Home');
     await editorPage.keyboard.type('world');
-    await expect.poll(async () => (await ceColors()).includes('38,38,38')).toBe(true);
+    await expect.poll(async () => (await ceColors(editorPage)).includes('38,38,38')).toBe(true);
   });
 });
