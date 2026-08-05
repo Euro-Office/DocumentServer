@@ -249,6 +249,26 @@ if [ "$METRICS_ENABLED" = "true" ]; then
   jq_set '.statsd.prefix     = $metricsPrefix'
 fi
 
+# FileConverter limits (max upload/conversion size).
+# Both are optional overrides; when unset the built-in default.json values apply.
+# maxDownloadBytes: max size in bytes of the file the converter will download.
+if [ -n "${FILECONVERTER_MAX_DOWNLOAD_BYTES:-}" ]; then
+  case "$FILECONVERTER_MAX_DOWNLOAD_BYTES" in
+    ''|*[!0-9]*) >&2 echo "WARN: FILECONVERTER_MAX_DOWNLOAD_BYTES is not a plain byte count, ignoring" ;;
+    *) jq_set '.FileConverter.converter.maxDownloadBytes = ($maxDownloadBytes | tonumber)' ;;
+  esac
+fi
+# inputLimits: max *uncompressed* size of the office file's zip (e.g. "500MB").
+# Replaces the whole inputLimits array (node-config replaces arrays, not merges).
+if [ -n "${FILECONVERTER_INPUT_LIMIT_UNCOMPRESSED:-}" ]; then
+  jq_set '.FileConverter.converter.inputLimits = [
+    { "type": "docx;dotx;docm;dotm",           "zip": { "uncompressed": $inputLimitUncompressed, "template": "*.xml" } },
+    { "type": "xlsx;xltx;xlsm;xltm",           "zip": { "uncompressed": $inputLimitUncompressed, "template": "*.xml" } },
+    { "type": "pptx;ppsx;potx;pptm;ppsm;potm", "zip": { "uncompressed": $inputLimitUncompressed, "template": "*.xml" } },
+    { "type": "vsdx;vstx;vssx;vsdm;vstm;vssm", "zip": { "uncompressed": $inputLimitUncompressed, "template": "*.xml" } }
+  ]'
+fi
+
 # Construct the AMQP URI value (may be unused if AMQP_HOST=localhost and AMQP_URI unset).
 # AMQP_VHOST is a vhost name (e.g. "myvhost"); normalize to a leading slash before
 # appending to the URI so values without it still produce a valid amqp:// URI.
@@ -290,6 +310,8 @@ jq \
   --arg metricsPort      "$METRICS_PORT" \
   --arg metricsPrefix    "$METRICS_PREFIX" \
   --arg maxFileSize      "$MAX_FILE_SIZE" \
+  --arg maxDownloadBytes       "${FILECONVERTER_MAX_DOWNLOAD_BYTES:-}" \
+  --arg inputLimitUncompressed "${FILECONVERTER_INPUT_LIMIT_UNCOMPRESSED:-}" \
   "$jq_filter" \
   "$CONFIG_FILE" > "${CONFIG_FILE}.tmp"
 mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
