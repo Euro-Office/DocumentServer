@@ -114,3 +114,18 @@ A PR should:
 * Contributions should align with:
   * Existing architecture
   * Project roadmap (where applicable)
+
+## AI-assisted contributions
+
+Euro-Office allows contributions made with the help of AI tools. You are the author of everything you submit — AI assistance does not change that responsibility.
+
+* **Disclosure:** Declare AI tool use in the PR description and add an `Assisted-by: AGENT_NAME:MODEL_VERSION` git trailer to each affected commit.
+* **Accountability:** You must be able to explain, defend, and modify every line you submit. If a reviewer asks why something works a certain way, "the AI wrote it" is not an answer.
+* **Communication:** PR descriptions, review comments, and issue reports must be written in your own words. This applies throughout the review process — passing reviewer feedback to an AI and posting whatever comes out is not acceptable.
+* **Quality:** AI output must be reviewed, cleaned up, and tested by you before submission. New features must be tested on a live instance by you, not by an agent. Code that has never been executed, or that shifts debugging work onto maintainers, will not be accepted.
+* **Licensing:** Ensure AI-generated code contains no material incompatible with the AGPLv3 or the license of any third-party component you are contributing to.
+* **Sign-off:** Only the human contributor may add the `Signed-off-by` trailer. An agent must never sign off on your behalf.
+
+For the full policy including autonomous agent rules, security reports, and beginner issues, read the [AI Contribution Policy][aipolicy].
+
+[aipolicy]: https://github.com/Euro-Office/.github/blob/main/AI_POLICY.md

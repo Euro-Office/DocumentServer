@@ -218,6 +218,13 @@ export NODE_CONFIG='{
   "FileConverter": {
     "converter": {
         "maxprocesscount": 0.001,
+        "maxDownloadBytes": '${FILECONVERTER_MAX_DOWNLOAD_BYTES:-524288000}',
+        "inputLimits": [
+          { "type": "docx;dotx;docm;dotm", "zip": { "uncompressed": "'${FILECONVERTER_INPUT_LIMIT_UNCOMPRESSED:-500MB}'", "template": "*.xml" } },
+          { "type": "xlsx;xltx;xlsm;xltm", "zip": { "uncompressed": "'${FILECONVERTER_INPUT_LIMIT_UNCOMPRESSED:-500MB}'", "template": "*.xml" } },
+          { "type": "pptx;ppsx;potx;pptm;ppsm;potm", "zip": { "uncompressed": "'${FILECONVERTER_INPUT_LIMIT_UNCOMPRESSED:-500MB}'", "template": "*.xml" } },
+          { "type": "vsdx;vstx;vssx;vsdm;vstm;vssm", "zip": { "uncompressed": "'${FILECONVERTER_INPUT_LIMIT_UNCOMPRESSED:-500MB}'", "template": "*.xml" } }
+        ],
         "signingKeyStorePath": "/var/www/'${COMPANY_NAME}'/config/signing-keystore.p12"
     }
   },

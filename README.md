@@ -18,7 +18,7 @@ We currently provide a docker image for testing and integration purposes. We are
 
 ```
 docker pull ghcr.io/euro-office/documentserver:latest
-docker run -i -t -d -p 8080:80 --restart=always -e EXAMPLE_ENABLED=true -e JWT_SECRET=my_jwt_secret ghcr.io/euro-office/documentserver:latest
+docker run -i -t -d -p 8080:80 --restart=always -e EXAMPLE_ENABLED=true -e JWT_SECRET=my_long_jwt_secret_at_least_32_chars ghcr.io/euro-office/documentserver:latest
 ```
 
 ### Building
