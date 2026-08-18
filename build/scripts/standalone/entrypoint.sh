@@ -35,6 +35,8 @@ DB_USER="${DB_USER:-eurooffice}"
 
 AMQP_HOST="${AMQP_HOST:-localhost}"
 AMQP_PORT="${AMQP_PORT:-5672}"
+# Seconds to wait for the bundled RabbitMQ to report itself ready (start_rabbitmq).
+AMQP_START_TIMEOUT="${AMQP_START_TIMEOUT:-60}"
 
 REDIS_SERVER_HOST="${REDIS_SERVER_HOST:-localhost}"
 REDIS_SERVER_PORT="${REDIS_SERVER_PORT:-6379}"
@@ -522,8 +524,43 @@ ensure_db_schema() {
 }
 ensure_db_schema || echo "WARNING: Postgres schema bootstrap failed; docservice may 502 until it is applied." >&2
 
-[ "$AMQP_HOST"          = "localhost" ] && [ -z "${AMQP_URI:-}" ] && \
-  service rabbitmq-server start
+# --------------------------------------------------------------------
+# Start the bundled RabbitMQ.
+#
+# Deliberately not `service rabbitmq-server start`: that init script goes
+# through `start-stop-daemon --background`, which wedges for many minutes on
+# hosts whose Docker daemon hands containers a huge RLIMIT_NOFILE (some
+# distro-packaged daemons default it to 1073741816). The entrypoint then never
+# reaches nginx/supervisord and the container looks hung with no diagnostic
+# (#326). A direct detached start is unaffected, and pairing it with an
+# explicit readiness wait means a real startup failure is reported here
+# instead of surfacing later as unexplained 502s from docservice.
+#
+# Not fatal to boot, like the schema bootstrap above: the container stays up
+# and inspectable, and /healthcheck fails until AMQP is reachable.
+# --------------------------------------------------------------------
+start_rabbitmq() {
+  echo "Starting RabbitMQ Messaging Server rabbitmq-server"
+  runuser -u rabbitmq -- rabbitmq-server -detached || return 1
+
+  # `-detached` returns before the node registers with epmd, and until it does
+  # await_startup fails outright instead of waiting, so poll it.
+  deadline=$(( $(date +%s) + AMQP_START_TIMEOUT ))
+  until runuser -u rabbitmq -- rabbitmqctl -q await_startup --timeout 5 >/dev/null 2>&1; do
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      # Re-run unsuppressed so rabbitmqctl's own diagnostics reach the log.
+      runuser -u rabbitmq -- rabbitmqctl await_startup --timeout 5 >&2 || true
+      return 1
+    fi
+    sleep 1
+  done
+  echo "   ...done."
+}
+
+if [ "$AMQP_HOST" = "localhost" ] && [ -z "${AMQP_URI:-}" ]; then
+  start_rabbitmq \
+    || echo "ERROR: RabbitMQ did not become ready within ${AMQP_START_TIMEOUT}s; docservice will fail to connect." >&2
+fi
 [ "$REDIS_SERVER_HOST"  = "localhost" ] && service redis-server start
 service nginx start
 
