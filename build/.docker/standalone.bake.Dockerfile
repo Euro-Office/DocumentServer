@@ -29,6 +29,24 @@ ENV EO_CONF=${EO_CONF}
 ENV COMPANY_NAME_LOW=${COMPANY_NAME_LOW}
 ENV PRODUCT_NAME_LOW=${PRODUCT_NAME_LOW}
 
+# Pin the UIDs/GIDs of every account that ends up owning persisted state.
+#
+# Debian allocates system UIDs in package-configuration order, which makes them
+# a side effect of the package set: adding --no-install-recommends below for
+# v9.3.3 dropped dbus's `messagebus` account from this layer and slid postgres
+# from 103 to 102, so Postgres volumes written by v9.3.2 suddenly had a datadir
+# owned by what is now `rabbitmq` and the server refused to start (#314).
+#
+# These are the values v9.3.3 shipped, so pinning them changes nothing for
+# existing volumes; entrypoint.sh repairs the ones written before that. The
+# adduser/useradd calls in the package postinst scripts (and in the .deb's own
+# postinst, for `ds`) are no-ops when the account already exists, so the
+# packages adopt these accounts as they are.
+RUN groupadd -r -g 103 redis    && useradd -r -u 101 -g redis    -d /var/lib/redis      -s /usr/sbin/nologin redis    && \
+    groupadd -r -g 104 postgres && useradd -r -u 102 -g postgres -d /var/lib/postgresql -s /bin/bash        postgres && \
+    groupadd -r -g 105 rabbitmq && useradd -r -u 103 -g rabbitmq -d /var/lib/rabbitmq   -s /usr/sbin/nologin rabbitmq && \
+    groupadd -r -g 107 ds       && useradd -r -u 105 -g ds       -d ${EO_ROOT}          -s /usr/sbin/nologin ds
+
 RUN apt-get update && \
     ACCEPT_EULA=Y apt-get install -yq --no-install-recommends \
         postgresql postgresql-client redis-server rabbitmq-server \
