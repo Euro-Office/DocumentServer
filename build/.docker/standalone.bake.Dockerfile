@@ -46,13 +46,23 @@ RUN apt-get update && \
 # would hang the build on hosts that hand containers one (#326). Its mnesia
 # database is dropped again afterwards -- the node name follows the container
 # hostname, so `rabbit@buildkitsandbox` is never read at runtime.
+#
+# The readiness wait is a poll for the same reason as start_rabbitmq() in
+# entrypoint.sh: `-detached` returns before the node registers with epmd, and
+# until it does `rabbitmqctl await_startup` fails outright instead of waiting
+# out its timeout. A single call therefore lost the race on three of four CI
+# builders, exiting 69 after seven seconds with "epmd reports: node 'rabbit'
+# not running at all". On timeout the wait is repeated unsuppressed so
+# rabbitmqctl's own diagnostics reach the build log before the build fails.
 ARG TARGETARCH
 COPY --from=packages / /tmp/
 RUN apt-get update && \
     (pg_createcluster 16 main || true) && \
     service postgresql start && \
     runuser -u rabbitmq -- rabbitmq-server -detached && \
-    runuser -u rabbitmq -- rabbitmqctl await_startup --timeout 60 && \
+    ( timeout 60 runuser -u rabbitmq -- sh -c \
+        'until rabbitmqctl -q await_startup --timeout 5 >/dev/null 2>&1; do sleep 1; done' \
+      || runuser -u rabbitmq -- rabbitmqctl await_startup --timeout 5 ) && \
     sudo -u postgres psql -c "CREATE USER eurooffice WITH password 'eurooffice';" && \
     sudo -u postgres psql -c "CREATE DATABASE eurooffice OWNER eurooffice;" && \
     echo "${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW} ds/db-type string postgres" | debconf-set-selections && \
