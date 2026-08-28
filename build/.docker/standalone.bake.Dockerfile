@@ -40,12 +40,29 @@ RUN apt-get update && \
 #RUN useradd -r -s /bin/false ds || true
 
 # --- install ${COMPANY_NAME_LOW} .deb package
+# RabbitMQ is started directly rather than via `service rabbitmq-server start`
+# for the same reason as in entrypoint.sh: the init script's
+# `start-stop-daemon --background` wedges under a huge RLIMIT_NOFILE, which
+# would hang the build on hosts that hand containers one (#326). Its mnesia
+# database is dropped again afterwards -- the node name follows the container
+# hostname, so `rabbit@buildkitsandbox` is never read at runtime.
+#
+# The readiness wait is a poll for the same reason as start_rabbitmq() in
+# entrypoint.sh: `-detached` returns before the node registers with epmd, and
+# until it does `rabbitmqctl await_startup` fails outright instead of waiting
+# out its timeout. A single call therefore lost the race on three of four CI
+# builders, exiting 69 after seven seconds with "epmd reports: node 'rabbit'
+# not running at all". On timeout the wait is repeated unsuppressed so
+# rabbitmqctl's own diagnostics reach the build log before the build fails.
 ARG TARGETARCH
 COPY --from=packages / /tmp/
 RUN apt-get update && \
     (pg_createcluster 16 main || true) && \
     service postgresql start && \
-    service rabbitmq-server start && \
+    runuser -u rabbitmq -- rabbitmq-server -detached && \
+    ( timeout 60 runuser -u rabbitmq -- sh -c \
+        'until rabbitmqctl -q await_startup --timeout 5 >/dev/null 2>&1; do sleep 1; done' \
+      || runuser -u rabbitmq -- rabbitmqctl await_startup --timeout 5 ) && \
     sudo -u postgres psql -c "CREATE USER eurooffice WITH password 'eurooffice';" && \
     sudo -u postgres psql -c "CREATE DATABASE eurooffice OWNER eurooffice;" && \
     echo "${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW} ds/db-type string postgres" | debconf-set-selections && \
@@ -55,8 +72,13 @@ RUN apt-get update && \
     echo "${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW} ds/db-pwd password eurooffice" | debconf-set-selections && \
     echo "${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW} ds/db-name string eurooffice" | debconf-set-selections && \
     DS_DOCKER_INSTALLATION=true apt-get install -yq /tmp/${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW}_${PRODUCT_VERSION}-${BUILD_NUMBER}_${TARGETARCH}.deb && \
-    rm -rf /var/lib/apt/lists/* /tmp/*
-    #sudo -u postgres bash -c "PGPASSWORD=eurooffice psql -h localhost -U eurooffice -d eurooffice -f ${EO_ROOT}/server/schema/postgresql/createdb.sql"
+    (runuser -u rabbitmq -- rabbitmqctl shutdown || true) && \
+    rm -rf /var/lib/rabbitmq/mnesia /var/lib/apt/lists/* /tmp/*
+# The .deb postinst applies server/schema/postgresql/createdb.sql at build time
+# (postinst.m4: install_db is not gated on DS_DOCKER_INSTALLATION), which is why the
+# explicit psql call that used to live here was redundant. It does not help when the
+# Postgres datadir is a fresh volume or DB_HOST points at an external server, so
+# entrypoint.sh re-applies it idempotently at boot (ensure_db_schema).
 
 # --- Final setup ---
 COPY build/configs/standalone/supervisor/ /etc/supervisor/conf.d/

@@ -16,6 +16,7 @@ EXAMPLE_LOCAL="${EXAMPLE_CONF_DIR}/local.json"
 NGINX_CONFIG_PATH="/etc/nginx/nginx.conf"
 NGINX_DS_DIR="${EO_CONF}/nginx"
 NGINX_DS_CONF="${NGINX_DS_DIR}/ds.conf"
+NGINX_DS_COMMON_CONF="${NGINX_DS_DIR}/includes/ds-common.conf"
 NGINX_DS_SSL_TMPL="${NGINX_DS_DIR}/ds-ssl.conf.tmpl"
 SUPERVISOR_CONF_DIR="/etc/supervisor/conf.d"
 
@@ -34,6 +35,8 @@ DB_USER="${DB_USER:-eurooffice}"
 
 AMQP_HOST="${AMQP_HOST:-localhost}"
 AMQP_PORT="${AMQP_PORT:-5672}"
+# Seconds to wait for the bundled RabbitMQ to report itself ready (start_rabbitmq).
+AMQP_START_TIMEOUT="${AMQP_START_TIMEOUT:-60}"
 
 REDIS_SERVER_HOST="${REDIS_SERVER_HOST:-localhost}"
 REDIS_SERVER_PORT="${REDIS_SERVER_PORT:-6379}"
@@ -46,8 +49,11 @@ METRICS_PORT="${METRICS_PORT:-8125}"
 METRICS_PREFIX="${METRICS_PREFIX:-ds.}"
 GENERATE_FONTS="${GENERATE_FONTS:-true}"
 
+MAX_FILE_SIZE="${MAX_FILE_SIZE:-104857600}"
+
 NGINX_WORKER_PROCESSES="${NGINX_WORKER_PROCESSES:-1}"
 NGINX_ACCESS_LOG="${NGINX_ACCESS_LOG:-false}"
+NGINX_CLIENT_MAX_BODY_SIZE="${NGINX_CLIENT_MAX_BODY_SIZE:-100m}"
 SSL_VERIFY_CLIENT="${SSL_VERIFY_CLIENT:-off}"
 ONLYOFFICE_HTTPS_HSTS_ENABLED="${ONLYOFFICE_HTTPS_HSTS_ENABLED:-true}"
 ONLYOFFICE_HTTPS_HSTS_MAXAGE="${ONLYOFFICE_HTTPS_HSTS_MAXAGE:-31536000}"
@@ -234,12 +240,35 @@ fi
 [ "$ALLOW_META_IP_ADDRESS" = "true" ] && \
   jq_set '.services.CoAuthoring["request-filtering-agent"].allowMetaIPAddress = true'
 
+# Upload size limit
+jq_set '.services.CoAuthoring.server.limits_tempfile_upload = ($maxFileSize | tonumber? // $maxFileSize)'
+
 # Metrics (statsd)
 if [ "$METRICS_ENABLED" = "true" ]; then
   jq_set '.statsd.useMetrics = true'
   jq_set '.statsd.host       = $metricsHost'
   jq_set '.statsd.port       = ($metricsPort | tonumber? // $metricsPort)'
   jq_set '.statsd.prefix     = $metricsPrefix'
+fi
+
+# FileConverter limits (max upload/conversion size).
+# Both are optional overrides; when unset the built-in default.json values apply.
+# maxDownloadBytes: max size in bytes of the file the converter will download.
+if [ -n "${FILECONVERTER_MAX_DOWNLOAD_BYTES:-}" ]; then
+  case "$FILECONVERTER_MAX_DOWNLOAD_BYTES" in
+    ''|*[!0-9]*) >&2 echo "WARN: FILECONVERTER_MAX_DOWNLOAD_BYTES is not a plain byte count, ignoring" ;;
+    *) jq_set '.FileConverter.converter.maxDownloadBytes = ($maxDownloadBytes | tonumber)' ;;
+  esac
+fi
+# inputLimits: max *uncompressed* size of the office file's zip (e.g. "500MB").
+# Replaces the whole inputLimits array (node-config replaces arrays, not merges).
+if [ -n "${FILECONVERTER_INPUT_LIMIT_UNCOMPRESSED:-}" ]; then
+  jq_set '.FileConverter.converter.inputLimits = [
+    { "type": "docx;dotx;docm;dotm",           "zip": { "uncompressed": $inputLimitUncompressed, "template": "*.xml" } },
+    { "type": "xlsx;xltx;xlsm;xltm",           "zip": { "uncompressed": $inputLimitUncompressed, "template": "*.xml" } },
+    { "type": "pptx;ppsx;potx;pptm;ppsm;potm", "zip": { "uncompressed": $inputLimitUncompressed, "template": "*.xml" } },
+    { "type": "vsdx;vstx;vssx;vsdm;vstm;vssm", "zip": { "uncompressed": $inputLimitUncompressed, "template": "*.xml" } }
+  ]'
 fi
 
 # Construct the AMQP URI value (may be unused if AMQP_HOST=localhost and AMQP_URI unset).
@@ -282,6 +311,9 @@ jq \
   --arg metricsHost      "$METRICS_HOST" \
   --arg metricsPort      "$METRICS_PORT" \
   --arg metricsPrefix    "$METRICS_PREFIX" \
+  --arg maxFileSize      "$MAX_FILE_SIZE" \
+  --arg maxDownloadBytes       "${FILECONVERTER_MAX_DOWNLOAD_BYTES:-}" \
+  --arg inputLimitUncompressed "${FILECONVERTER_INPUT_LIMIT_UNCOMPRESSED:-}" \
   "$jq_filter" \
   "$CONFIG_FILE" > "${CONFIG_FILE}.tmp"
 mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
@@ -310,6 +342,10 @@ if [ -f "$NGINX_CONFIG_PATH" ]; then
   else
     sed -ri "s|^\s*access_log\b.*;|access_log off;|" "$NGINX_CONFIG_PATH"
   fi
+fi
+
+if [ -f "$NGINX_DS_COMMON_CONF" ]; then
+  sed -i "s/client_max_body_size[[:space:]]\+[^;]\+;/client_max_body_size ${NGINX_CLIENT_MAX_BODY_SIZE};/" "$NGINX_DS_COMMON_CONF"
 fi
 
 if [ -n "${SSL_CERTIFICATE_PATH:-}" ] && [ -n "${SSL_KEY_PATH:-}" ] \
@@ -359,12 +395,14 @@ enable_supervisor_program() {
 # --------------------------------------------------------------------
 if [ "${EXAMPLE_ENABLED:-false}" = "true" ] && [ -d "$EXAMPLE_CONF_DIR" ]; then
   jq -n \
-    --arg secret "$JWT_SECRET" \
-    --arg header "$JWT_HEADER" \
+    --arg secret      "$JWT_SECRET" \
+    --arg header      "$JWT_HEADER" \
+    --arg maxFileSize "$MAX_FILE_SIZE" \
     '{
       "server": {
         "siteUrl": "/",
         "exampleUrl": "http://localhost/example/",
+        "maxFileSize": ($maxFileSize | tonumber? // $maxFileSize),
         "token": {
           "enable": true,
           "secret": $secret,
@@ -422,8 +460,107 @@ fi
 # for it above.
 # --------------------------------------------------------------------
 [ "$DB_HOST"            = "localhost" ] && service postgresql start
-[ "$AMQP_HOST"          = "localhost" ] && [ -z "${AMQP_URI:-}" ] && \
-  service rabbitmq-server start
+
+# --------------------------------------------------------------------
+# Apply Postgres schema on first boot (idempotent).
+#
+# The .deb postinst applies createdb.sql at *image build* time, so the
+# bundled cluster already has the schema. This step exists for the cases
+# build-time application can't cover: an external DB_HOST, or a fresh
+# volume mounted over the Postgres datadir — either leaves docservice
+# failing with `DB table "task_result" does not exist` and never binding
+# to :8000, so nginx serves 502 on /healthcheck.
+#
+# Runs here, right after Postgres starts and before nginx, so the 502
+# window is as small as possible.
+#
+# A failure here is not fatal to boot (see the `||` at the call site
+# below) — the container still starts, just possibly 502ing until the
+# schema is applied out of band, rather than being taken down by set -e.
+# --------------------------------------------------------------------
+ensure_db_schema() {
+  schema_file="${EO_ROOT}/server/schema/postgresql/createdb.sql"
+  [ -f "$schema_file" ] || return 0
+
+  # DB_PWD is usually unset: the jq rewrite above only touches
+  # sql.dbPass when DB_PWD is non-empty (see :200), so in the default
+  # (stock-image) configuration the real password is whatever postinst
+  # baked into $CONFIG_FILE at build time. Fall back to reading it from
+  # there rather than authenticating with an empty password.
+  db_pwd="${DB_PWD:-$(jq -r '.services.CoAuthoring.sql.dbPass // empty' "$CONFIG_FILE" 2>/dev/null || true)}"
+
+  db_psql() {
+    PGPASSWORD="$db_pwd" psql -w \
+      -v ON_ERROR_STOP=1 \
+      -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" "$@"
+  }
+
+  tries=0
+  until db_psql -tAc 'SELECT 1' >/dev/null 2>&1; do
+    tries=$((tries + 1))
+    if [ "$tries" -gt 60 ]; then
+      echo "ERROR: could not connect to Postgres at ${DB_HOST}:${DB_PORT} as ${DB_USER}/${DB_NAME} after 60s" >&2
+      # Re-run once unsuppressed so psql's own message (auth failure vs.
+      # unreachable host) reaches the log instead of our generic one.
+      db_psql -tAc 'SELECT 1' >&2 || true
+      unset -f db_psql
+      return 1
+    fi
+    sleep 1
+  done
+
+  # Probe a table that createdb.sql creates. Skip if already populated.
+  if [ "$(db_psql -tAc "SELECT to_regclass('public.task_result') IS NOT NULL" 2>/dev/null)" = "t" ]; then
+    echo "Postgres schema already present, skipping."
+    unset -f db_psql
+    return 0
+  fi
+
+  echo "Applying Postgres schema from ${schema_file}..."
+  db_psql -f "$schema_file"
+  rc=$?
+  unset -f db_psql
+  return "$rc"
+}
+ensure_db_schema || echo "WARNING: Postgres schema bootstrap failed; docservice may 502 until it is applied." >&2
+
+# --------------------------------------------------------------------
+# Start the bundled RabbitMQ.
+#
+# Deliberately not `service rabbitmq-server start`: that init script goes
+# through `start-stop-daemon --background`, which wedges for many minutes on
+# hosts whose Docker daemon hands containers a huge RLIMIT_NOFILE (some
+# distro-packaged daemons default it to 1073741816). The entrypoint then never
+# reaches nginx/supervisord and the container looks hung with no diagnostic
+# (#326). A direct detached start is unaffected, and pairing it with an
+# explicit readiness wait means a real startup failure is reported here
+# instead of surfacing later as unexplained 502s from docservice.
+#
+# Not fatal to boot, like the schema bootstrap above: the container stays up
+# and inspectable, and /healthcheck fails until AMQP is reachable.
+# --------------------------------------------------------------------
+start_rabbitmq() {
+  echo "Starting RabbitMQ Messaging Server rabbitmq-server"
+  runuser -u rabbitmq -- rabbitmq-server -detached || return 1
+
+  # `-detached` returns before the node registers with epmd, and until it does
+  # await_startup fails outright instead of waiting, so poll it.
+  deadline=$(( $(date +%s) + AMQP_START_TIMEOUT ))
+  until runuser -u rabbitmq -- rabbitmqctl -q await_startup --timeout 5 >/dev/null 2>&1; do
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      # Re-run unsuppressed so rabbitmqctl's own diagnostics reach the log.
+      runuser -u rabbitmq -- rabbitmqctl await_startup --timeout 5 >&2 || true
+      return 1
+    fi
+    sleep 1
+  done
+  echo "   ...done."
+}
+
+if [ "$AMQP_HOST" = "localhost" ] && [ -z "${AMQP_URI:-}" ]; then
+  start_rabbitmq \
+    || echo "ERROR: RabbitMQ did not become ready within ${AMQP_START_TIMEOUT}s; docservice will fail to connect." >&2
+fi
 [ "$REDIS_SERVER_HOST"  = "localhost" ] && service redis-server start
 service nginx start
 
