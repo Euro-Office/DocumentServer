@@ -46,4 +46,6 @@ runs:
 
     - name: Pull built image
       shell: bash
-      run: docker pull "${{ steps.image.outputs.ref }}"
+      env:
+        IMAGE_REF: ${{ steps.image.outputs.ref }}
+      run: docker pull "$IMAGE_REF"

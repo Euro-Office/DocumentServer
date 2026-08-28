@@ -534,8 +534,10 @@ jobs:
           cache-image-name: ${{ env.CACHE_IMAGE_NAME }}
 
       - name: Compile sdk-all.js under the real no-ICU V8 (x2t -create-js-cache)
+        env:
+          IMAGE_REF: ${{ steps.pull.outputs.ref }}
         run: |
-          docker run --rm --entrypoint bash "${{ steps.pull.outputs.ref }}" -c '
+          docker run --rm --entrypoint bash "$IMAGE_REF" -c '
             set -euo pipefail
             DIR=/var/www/euro-office/documentserver
             export LD_LIBRARY_PATH="$DIR/server/FileConverter/bin:${LD_LIBRARY_PATH:-}"
