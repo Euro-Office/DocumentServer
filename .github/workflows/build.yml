@@ -514,7 +514,10 @@ jobs:
       !cancelled() &&
       needs.build.result == 'success' &&
       (github.event_name != 'pull_request' ||
-       github.event.pull_request.head.repo.full_name == github.repository)
+       github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name == 'pull_request' ||
+       github.ref == format('refs/heads/{0}', github.event.repository.default_branch) ||
+       startsWith(github.ref, 'refs/tags/'))
     permissions:
       contents: read
       packages: read
@@ -538,15 +541,22 @@ jobs:
           IMAGE_REF: ${{ steps.pull.outputs.ref }}
         run: |
           docker run --rm --entrypoint bash "$IMAGE_REF" -c '
-            set -euo pipefail
+            set -uo pipefail
             DIR=/var/www/euro-office/documentserver
             export LD_LIBRARY_PATH="$DIR/server/FileConverter/bin:${LD_LIBRARY_PATH:-}"
 
             rm -f "$DIR"/sdkjs/*/sdk-all.cache
             cd "$DIR/server/FileConverter/bin"
-            ./x2t -create-js-cache
+
+            rc=0
+            ./x2t -create-js-cache || rc=$?
 
             fail=0
+            if [ "$rc" -ne 0 ]; then
+              echo "::error::x2t -create-js-cache exited $rc — V8 likely aborted compiling sdk-all.js (see Euro-Office/sdkjs#80)"
+              fail=1
+            fi
+
             for module in word cell slide visio; do
               size=$(stat -c %s "$DIR/sdkjs/$module/sdk-all.cache" 2>/dev/null || echo 0)
               echo "$module: sdk-all.cache = ${size} bytes"
