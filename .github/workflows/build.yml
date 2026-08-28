@@ -56,7 +56,7 @@ env:
   CLUSTER_IMG_EXAMPLE: cluster-example
   CLUSTER_IMG_UTILS: cluster-utils
   CACHE_IMAGE_NAME: documentserver-build-cache
-  PRODUCT_VERSION: 9.3.1
+  PRODUCT_VERSION: 9.3.3
   BUILD_NUMBER: dev.1
   BUILD_ROOT: /package
   # Branded image names (nextcloud-office)
@@ -70,14 +70,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout fork repository (with submodules)
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: .
           submodules: recursive
           token: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN }}
 
       - name: Checkout nextcloud-office-brand repo
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: Euro-Office/nextcloud-office-brand
           path: build/brands/nextcloud-office-brand
@@ -172,7 +172,7 @@ jobs:
           key: ${{ runner.os }}-build-${{ github.sha }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
@@ -242,14 +242,21 @@ jobs:
           fi
           echo "e2e_image=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
 
-          # Parse PRODUCT_VERSION / BUILD_NUMBER from tag of the form v${PRODUCT_VERSION}-${BUILD_NUMBER}
-          # (e.g. v9.3.1-beta.1, v9.3.1-stable.1). Fall back to env defaults otherwise.
+          # Parse PRODUCT_VERSION / BUILD_NUMBER from the git tag.
+          # Supported formats:
+          #   v9.3.3-stable.1  →  product_version=9.3.3  build_number=stable.1
+          #   v9.3.3           →  product_version=9.3.3  build_number=<env default>
+          # Fall back to the VERSION file, then env defaults, for non-tag builds.
           if [[ "$IS_TAG" == "true" && "${{ github.ref_name }}" =~ ^v([^-]+)-(.+)$ ]]; then
             echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
             echo "build_number=${BASH_REMATCH[2]}"    >> $GITHUB_OUTPUT
+          elif [[ "$IS_TAG" == "true" && "${{ github.ref_name }}" =~ ^v(.+)$ ]]; then
+            echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
+            echo "build_number=${{ env.BUILD_NUMBER }}" >> $GITHUB_OUTPUT
           else
-            echo "product_version=${{ env.PRODUCT_VERSION }}" >> $GITHUB_OUTPUT
-            echo "build_number=${{ env.BUILD_NUMBER }}"       >> $GITHUB_OUTPUT
+            VERSION_FILE=$(cat VERSION 2>/dev/null | tr -d '[:space:]')
+            echo "product_version=${VERSION_FILE:-${{ env.PRODUCT_VERSION }}}" >> $GITHUB_OUTPUT
+            echo "build_number=${{ env.BUILD_NUMBER }}"                        >> $GITHUB_OUTPUT
           fi
 
       - name: Build all targets (packages → docker → develop)
@@ -272,48 +279,48 @@ jobs:
           no-cache: ${{ steps.meta.outputs.no_cache == 'true' }}
           pull: ${{ steps.meta.outputs.no_cache == 'true' }}
           set: |
-            core.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}core-buildcache-${{ matrix.arch }}
-            core.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}core-buildcache-${{ matrix.arch }},mode=max
+            core.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}core-buildcache-${{ matrix.arch }}
+            core.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}core-buildcache-${{ matrix.arch }},mode=max
             core.tags=
-            core-wasm.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}core-wasm-buildcache-${{ matrix.arch }}
-            core-wasm.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}core-wasm-buildcache-${{ matrix.arch }},mode=max
+            core-wasm.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}core-wasm-buildcache-${{ matrix.arch }}
+            core-wasm.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}core-wasm-buildcache-${{ matrix.arch }},mode=max
             core-wasm.tags=
-            sdkjs.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}sdkjs-buildcache-${{ matrix.arch }}
-            sdkjs.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}sdkjs-buildcache-${{ matrix.arch }},mode=max
+            sdkjs.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}sdkjs-buildcache-${{ matrix.arch }}
+            sdkjs.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}sdkjs-buildcache-${{ matrix.arch }},mode=max
             sdkjs.tags=
-            web-apps.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}web-apps-buildcache-${{ matrix.arch }}
-            web-apps.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}web-apps-buildcache-${{ matrix.arch }},mode=max
+            web-apps.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}web-apps-buildcache-${{ matrix.arch }}
+            web-apps.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}web-apps-buildcache-${{ matrix.arch }},mode=max
             web-apps.tags=
-            server.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}server-buildcache-${{ matrix.arch }}
-            server.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}server-buildcache-${{ matrix.arch }},mode=max
+            server.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}server-buildcache-${{ matrix.arch }}
+            server.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}server-buildcache-${{ matrix.arch }},mode=max
             server.tags=
-            example.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}example-buildcache-${{ matrix.arch }}
-            example.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}example-buildcache-${{ matrix.arch }},mode=max
+            example.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}example-buildcache-${{ matrix.arch }}
+            example.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}example-buildcache-${{ matrix.arch }},mode=max
             example.tags=
-            bundle.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}bundle-buildcache-${{ matrix.arch }}
-            bundle.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}bundle-buildcache-${{ matrix.arch }},mode=max
+            bundle.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}bundle-buildcache-${{ matrix.arch }}
+            bundle.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}bundle-buildcache-${{ matrix.arch }},mode=max
             bundle.tags=
-            packages.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}packages-buildcache-${{ matrix.arch }}
-            packages.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}packages-buildcache-${{ matrix.arch }},mode=max
+            packages.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}packages-buildcache-${{ matrix.arch }}
+            packages.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}packages-buildcache-${{ matrix.arch }},mode=max
             packages.tags=
-            cluster-docs.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}cluster-docs-buildcache-${{ matrix.arch }}
-            cluster-docs.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}cluster-docs-buildcache-${{ matrix.arch }},mode=max
+            cluster-docs.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}cluster-docs-buildcache-${{ matrix.arch }}
+            cluster-docs.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}cluster-docs-buildcache-${{ matrix.arch }},mode=max
             cluster-docs.tags=${{ steps.meta.outputs.images_push == 'true' && format('{0}/{1}:{2}', env.REGISTRY, matrix.brand.cluster_docs, steps.meta.outputs.images_tag) || '' }}
             cluster-docs.output=${{ steps.meta.outputs.images_push == 'true' && format('type=registry') || 'type=cacheonly' }}
-            cluster-example.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}cluster-example-buildcache-${{ matrix.arch }}
-            cluster-example.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}cluster-example-buildcache-${{ matrix.arch }},mode=max
+            cluster-example.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}cluster-example-buildcache-${{ matrix.arch }}
+            cluster-example.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}cluster-example-buildcache-${{ matrix.arch }},mode=max
             cluster-example.tags=${{ steps.meta.outputs.images_push == 'true' && format('{0}/{1}:{2}', env.REGISTRY, matrix.brand.cluster_example, steps.meta.outputs.images_tag) || '' }}
             cluster-example.output=${{ steps.meta.outputs.images_push == 'true' && format('type=registry') || 'type=cacheonly' }}
-            cluster-utils.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}cluster-utils-buildcache-${{ matrix.arch }}
-            cluster-utils.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}cluster-utils-buildcache-${{ matrix.arch }},mode=max
+            cluster-utils.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}cluster-utils-buildcache-${{ matrix.arch }}
+            cluster-utils.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}cluster-utils-buildcache-${{ matrix.arch }},mode=max
             cluster-utils.tags=${{ steps.meta.outputs.images_push == 'true' && format('{0}/{1}:{2}', env.REGISTRY, matrix.brand.cluster_utils, steps.meta.outputs.images_tag) || '' }}
             cluster-utils.output=${{ steps.meta.outputs.images_push == 'true' && format('type=registry') || 'type=cacheonly' }}
-            standalone.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}standalone-buildcache-${{ matrix.arch }}
-            standalone.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}standalone-buildcache-${{ matrix.arch }},mode=max
+            standalone.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}standalone-buildcache-${{ matrix.arch }}
+            standalone.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}standalone-buildcache-${{ matrix.arch }},mode=max
             standalone.tags=${{ steps.meta.outputs.images_push == 'true' && format('{0}/{1}:{2}', env.REGISTRY, matrix.brand.image_name, steps.meta.outputs.images_tag) || (steps.meta.outputs.export_image == 'true' && steps.meta.outputs.e2e_image || '') }}
             standalone.output=${{ (steps.meta.outputs.images_push == 'true' || steps.meta.outputs.export_image == 'true') && 'type=registry' || 'type=cacheonly' }}
-            develop.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}develop-buildcache-${{ matrix.arch }}
-            develop.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}develop-buildcache-${{ matrix.arch }},mode=max
+            develop.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}develop-buildcache-${{ matrix.arch }}
+            develop.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}develop-buildcache-${{ matrix.arch }},mode=max
             develop.tags=${{ steps.meta.outputs.develop_push == 'true' && format('{0}/{1}:latest-dev-{2}', env.REGISTRY, matrix.brand.image_name, matrix.arch) || '' }}
             develop.output=${{ steps.meta.outputs.develop_push == 'true' && 'type=registry' || 'type=cacheonly' }}
         env:
@@ -376,7 +383,7 @@ jobs:
         run: echo "name=$(echo '${{ github.ref_name }}' | tr '/' '-')" >> $GITHUB_OUTPUT
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
@@ -450,7 +457,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -498,7 +505,7 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: playwright-report-${{ github.sha }}
           path: e2e/playwright-report/

@@ -1,3 +1,36 @@
+## What this repo is
+
+DocumentServer is the master orchestrator for the Euro-Office ecosystem. It manages all submodules, docker orchestration, and workspace-level build configurations.
+
+This repo holds the workspace configuration for the submodules:
+- `core`, `core-fonts`, `sdkjs`, `sdkjs-forms`, `server`, `web-apps`, `dictionaries`, `document-formats`, `document-server-integration`, `document-server-package`, `document-templates`.
+
+Any change to the orchestration (e.g., updating a submodule commit, modifying `docker-bake.hcl`, or changing the build order) requires a full verification of the dependency chain.
+
+## Architecture notes
+
+### Submodule dependency chain
+
+Changes flow in one direction — everything downstream needs rebuilding:
+
+```
+core-fonts → core/AllFontsGen → sdkjs (AllFonts.js) → web-apps → server → Docker image
+```
+
+Each submodule has its own `AGENTS.md` with repo-specific guidance.
+
+The Nextcloud integration app lives in the **sibling repo `eurooffice-nextcloud`**, mounted read-only into the dev container.
+
+> **Shared submodules**: `core`, `sdkjs`, `web-apps`, `core-fonts`, and `sdkjs-forms` are also submodules of the **`DesktopEditors`** product (the Windows/Mac/Linux desktop app). A change merged to any of those repos affects both DocumentServer and DesktopEditors.
+
+## Rules
+
+- **Never** modify submodule contents directly from here without verifying the target submodule's own `AGENTS.md`.
+- **Never** introduce workspace-wide dependencies that break the "no root package.json" rule in submodules.
+- **Never** commit changes to `docker-bake.hcl` without validating the build orchestration for all platforms.
+- **Always** verify that `AGENTS.md` is updated if you modify workspace-level developer workflows.
+- **Never** update submodule refs manually via a PR — submodule bumps are handled by an automated GitHub Action.
+
 ## Build & run a test server (Docker)
 
 The dev environment in `develop/` runs a full document server from a prebuilt image. Individual components are rebuilt *inside* the container — never rebuild the docker image to test a change. The repo is bind-mounted at `/develop` in the container, so edits on the host are immediately visible inside.
@@ -95,4 +128,3 @@ All contributions generated or assisted by this agent must fully comply with:
 - Write PR descriptions, review comments, or issue reports on behalf of the contributor. These must be in the contributor's own words.
 - Fully automate the resolution of issues labeled [`good first issue`](https://github.com/search?q=org%3AEuro-Office+label%3A%22good+first+issue%22&type=issues) or similar beginner-friendly labels.
 - Submit code that has not been reviewed and cleaned up by the contributor. Dead code, redundant logic, excessive comments, and unrelated changes must be removed before submission.
-

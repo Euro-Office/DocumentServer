@@ -75,6 +75,28 @@ else
 fi
 
 # --------------------------------------------------------------------
+# JWT
+#
+# docservice, converter and adminpanel run as separate containers here and
+# must all sign with the same secret, so there is nothing safe to fall back
+# to: a per-container random value (as the standalone entrypoint generates)
+# would break signing between them, and a baked-in literal would be public
+# in this repository. Require the operator to supply one while JWT is on.
+# --------------------------------------------------------------------
+JWT_ENABLED="${JWT_ENABLED:-true}"
+
+if [[ "${JWT_ENABLED}" == "true" && -z "${JWT_SECRET:-}" ]]; then
+  echo "JWT is enabled but JWT_SECRET is not set." >&2
+  echo "Set JWT_SECRET to at least 32 characters, or set JWT_ENABLED=false to turn JWT off." >&2
+  echo "JWT_SECRET_INBOX/JWT_SECRET_OUTBOX only override individual directions and do not replace it." >&2
+  exit 1
+fi
+
+if [[ -n "${JWT_SECRET:-}" && ${#JWT_SECRET} -lt 32 ]]; then
+  echo "Warning: JWT_SECRET is ${#JWT_SECRET} characters; clients such as the EuroOffice connector require at least 32 and will refuse to connect." >&2
+fi
+
+# --------------------------------------------------------------------
 # NODE_CONFIG (exported for Docs services)
 # --------------------------------------------------------------------
 export NODE_CONFIG='{
@@ -135,7 +157,7 @@ export NODE_CONFIG='{
       },
       "secret": {
         "inbox": {
-          "string": "'${JWT_SECRET_INBOX:-${JWT_SECRET:=secret}}'"
+          "string": "'${JWT_SECRET_INBOX:-${JWT_SECRET}}'"
         },
         "outbox": {
           "string": "'${JWT_SECRET_OUTBOX:-${JWT_SECRET}}'"
@@ -184,6 +206,13 @@ export NODE_CONFIG='{
   "FileConverter": {
     "converter": {
         "maxprocesscount": 0.001,
+        "maxDownloadBytes": '${FILECONVERTER_MAX_DOWNLOAD_BYTES:-524288000}',
+        "inputLimits": [
+          { "type": "docx;dotx;docm;dotm", "zip": { "uncompressed": "'${FILECONVERTER_INPUT_LIMIT_UNCOMPRESSED:-500MB}'", "template": "*.xml" } },
+          { "type": "xlsx;xltx;xlsm;xltm", "zip": { "uncompressed": "'${FILECONVERTER_INPUT_LIMIT_UNCOMPRESSED:-500MB}'", "template": "*.xml" } },
+          { "type": "pptx;ppsx;potx;pptm;ppsm;potm", "zip": { "uncompressed": "'${FILECONVERTER_INPUT_LIMIT_UNCOMPRESSED:-500MB}'", "template": "*.xml" } },
+          { "type": "vsdx;vstx;vssx;vsdm;vstm;vssm", "zip": { "uncompressed": "'${FILECONVERTER_INPUT_LIMIT_UNCOMPRESSED:-500MB}'", "template": "*.xml" } }
+        ],
         "signingKeyStorePath": "/var/www/'${COMPANY_NAME}'/config/signing-keystore.p12"
     }
   },
