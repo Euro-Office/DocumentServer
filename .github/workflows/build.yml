@@ -497,3 +497,61 @@ jobs:
           name: playwright-report-${{ github.sha }}
           path: e2e/playwright-report/
           retention-days: 14
+
+  # Asserts the shipped sdk-all.js bundles actually compile under the real,
+  # no-ICU V8 that x2t/doctrenderer embeds — not just under Node/Chromium
+  # (both full-ICU, so CI JS checks structurally cannot catch this class of
+  # bug). This is the reproduction recipe from Euro-Office/sdkjs#80 (Terser
+  # emitted bare astral-plane object keys; the no-ICU V8 rejected them and
+  # x2t aborted on every save) turned into a CI assertion. Runs against the
+  # same already-built image as e2e, independently of it, so a V8-compile
+  # regression fails loud here in seconds rather than surfacing as a broken
+  # save with no diagnostic.
+  sdkjs-v8-smoke:
+    runs-on: self-hosted
+    needs: build
+    if: |
+      !cancelled() &&
+      needs.build.result == 'success' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Pull built image
+        id: pull
+        uses: ./.github/actions/pull-built-image
+        with:
+          registry: ${{ env.REGISTRY }}
+          image-name: ${{ env.IMAGE_NAME }}
+          cache-image-name: ${{ env.CACHE_IMAGE_NAME }}
+
+      - name: Compile sdk-all.js under the real no-ICU V8 (x2t -create-js-cache)
+        run: |
+          docker run --rm --entrypoint bash "${{ steps.pull.outputs.ref }}" -c '
+            set -euo pipefail
+            DIR=/var/www/euro-office/documentserver
+            export LD_LIBRARY_PATH="$DIR/server/FileConverter/bin:${LD_LIBRARY_PATH:-}"
+
+            rm -f "$DIR"/sdkjs/*/sdk-all.cache
+            cd "$DIR/server/FileConverter/bin"
+            ./x2t -create-js-cache
+
+            fail=0
+            for module in word cell slide visio; do
+              size=$(stat -c %s "$DIR/sdkjs/$module/sdk-all.cache" 2>/dev/null || echo 0)
+              echo "$module: sdk-all.cache = ${size} bytes"
+              if [ "$size" -eq 0 ]; then
+                echo "::error::$module/sdk-all.cache is empty or missing — V8 failed to compile sdk-all.js (see Euro-Office/sdkjs#80)"
+                fail=1
+              fi
+            done
+            exit $fail
+          '
