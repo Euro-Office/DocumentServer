@@ -26,16 +26,19 @@ test.describe('Spreadsheet editor - numbers and formulas', () => {
     await editorPage.keyboard.type('=A1+A2');
     await editorPage.keyboard.press('Enter');
 
-    // Operands landed in A1/A2.
+    // Operands landed in A1/A2. nameBox.press('Enter') resolves on key dispatch,
+    // not once asc_getCellInfo() reflects the new selection, so read with
+    // expect.poll() rather than a one-shot read — same async-value race the
+    // presentation test already guards against for slide count.
     await select('A1');
-    expect(await cellText(editorPage)).toBe('5');
+    await expect.poll(() => cellText(editorPage)).toBe('5');
     await select('A2');
-    expect(await cellText(editorPage)).toBe('10');
+    await expect.poll(() => cellText(editorPage)).toBe('10');
 
     // The formula was accepted into A3. asc_getText() returns the formula
     // string, not the computed value.
     await select('A3');
-    expect(await cellText(editorPage)).toBe('=A1+A2');
+    await expect.poll(() => cellText(editorPage)).toBe('=A1+A2');
 
     // TODO: verify the *computed* value (15). asc_getCellInfo().asc_getText()
     // returns the formula, and pluginMethod_GetSelectedText() returns "" for
