@@ -24,6 +24,16 @@ test.describe('Mobile editor smoke', () => {
 
   for (const editor of MOBILE_EDITOR_TYPES) {
     test(`${editor.label} mobile editor loads`, async ({ page }) => {
+      // Catches a JS exception thrown after the shell paints (placeholder gone, canvas
+      // visible) — exactly the "deploys but breaks at runtime" (#258) class the other
+      // assertions below can't see, since they only check DOM state, not JS health.
+      // Registered before goto() so nothing during initial load is missed. Empirically
+      // verified against a live container: a planted uncaught exception inside the
+      // frameEditor iframe is observed here for all three editors below, and a normal
+      // load produces zero of these — so this assertion doesn't need any allowlist.
+      const errors: string[] = [];
+      page.on('pageerror', (err) => errors.push(err.message));
+
       // ?type=mobile forces the mobile bundle (bypasses UA sniffing in nodejs/app.js).
       await page.goto(`/example/editor?fileExt=${editor.fileExt}&type=mobile`);
 
@@ -42,6 +52,7 @@ test.describe('Mobile editor smoke', () => {
       await expect(placeholder).toHaveCount(0, { timeout: 30_000 });
       await expect(frame.locator(ERROR_SURFACE_SELECTOR)).toHaveCount(0, { timeout: 5_000 });
       await expect(frame.locator(editor.canvasSelector)).toBeVisible({ timeout: 5_000 });
+      expect(errors).toEqual([]);
     });
   }
 });
