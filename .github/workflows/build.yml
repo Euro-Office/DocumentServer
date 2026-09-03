@@ -356,11 +356,21 @@ jobs:
           chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
-          TARGET="$REMOTE_BASE/$PRODUCT_VERSION/$BUILD_NUMBER"
+          TARGET="$REMOTE_BASE/docserver/$PRODUCT_VERSION/$BUILD_NUMBER"
           ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "mkdir -p '$TARGET'"
           scp -i ~/.ssh/id_deploy -P "$SSH_PORT" \
             build/deploy/packages/*.deb build/deploy/packages/*.rpm \
             "$SSH_USER@$SSH_HOST:$TARGET/"
+
+      - name: Upload packages as artifact (nextcloud-office)
+        if: matrix.brand.name == 'nextcloud-office' #&& startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: nc-packages-${{ matrix.arch }}
+          path: |
+            build/deploy/packages/*.deb
+            build/deploy/packages/*.rpm
+          retention-days: 1
 
   # ─────────────────────────────────────────────────────────────
   # MANIFEST
@@ -437,6 +447,84 @@ jobs:
               create_manifest "$repo" "${REF}" "latest"
             done
           fi
+
+
+  publish-repo:
+    runs-on: ubuntu-latest
+    needs: build
+    #if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: nc-packages-*
+          path: incoming
+          merge-multiple: true
+
+      - name: Install repo tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y createrepo-c dpkg-dev apt-utils
+
+      - name: Import signing key
+        env:
+          GPG_KEY: ${{ secrets.NEXTCLOUD_GPG_PRIVATE_KEY }}
+        run: |
+          printf '%s\n' "$GPG_KEY" | gpg --batch --import
+          echo "KEYID=$(gpg --list-secret-keys --with-colons \
+            | awk -F: '/^sec/{print $5; exit}')" >> $GITHUB_ENV
+
+      - name: Build deb repo
+        run: |
+          set -euo pipefail
+          POOL=repo/deb/pool/main/n/nextcloud-office-documentserver
+          mkdir -p "$POOL"
+          cp incoming/*.deb "$POOL/"
+          cd repo/deb
+          for arch in amd64 arm64; do
+            d="dists/stable/main/binary-$arch"
+            mkdir -p "$d"
+            dpkg-scanpackages --arch "$arch" pool > "$d/Packages"
+            gzip -9kf "$d/Packages"
+          done
+          apt-ftparchive \
+            -o APT::FTPArchive::Release::Origin="Nextcloud Office" \
+            -o APT::FTPArchive::Release::Suite=stable \
+            -o APT::FTPArchive::Release::Codename=stable \
+            -o APT::FTPArchive::Release::Components=main \
+            -o APT::FTPArchive::Release::Architectures="amd64 arm64" \
+            release dists/stable > dists/stable/Release
+          gpg --batch --yes --default-key "$KEYID" \
+            --clearsign -o dists/stable/InRelease dists/stable/Release
+          gpg --batch --yes --default-key "$KEYID" \
+            -abs -o dists/stable/Release.gpg dists/stable/Release
+
+      - name: Build rpm repo
+        run: |
+          set -euo pipefail
+          for arch in x86_64 aarch64; do
+            mkdir -p "repo/rpm/$arch"
+            cp incoming/*."$arch".rpm "repo/rpm/$arch/" 2>/dev/null || continue
+            createrepo_c "repo/rpm/$arch"
+            gpg --batch --yes --default-key "$KEYID" \
+              --detach-sign --armor "repo/rpm/$arch/repodata/repomd.xml"
+          done
+          gpg --armor --export "$KEYID" > repo/nextcloud-office.asc
+
+      - name: Publish via SSH
+        env:
+          SSH_KEY:  ${{ secrets.NEXTCLOUD_SSH_KEY }}
+          SSH_HOST: ${{ secrets.NEXTCLOUD_SSH_HOST }}
+          SSH_USER: ${{ secrets.NEXTCLOUD_SSH_USER }}
+          SSH_PORT: ${{ secrets.NEXTCLOUD_SSH_PORT || 22 }}
+          REMOTE_BASE: ${{ secrets.NEXTCLOUD_SSH_REMOTE_PATH }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          rsync -av --delete -e "ssh -i ~/.ssh/id_deploy -p $SSH_PORT" \
+            repo/ "$SSH_USER@$SSH_HOST:$REMOTE_BASE/docserver/repo/"
 
   e2e:
     runs-on: self-hosted
