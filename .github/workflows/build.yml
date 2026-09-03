@@ -510,3 +510,111 @@ jobs:
           name: playwright-report-${{ github.sha }}
           path: e2e/playwright-report/
           retention-days: 14
+
+  # Upgrade path: boot the last released image against persistent volumes, then
+  # boot the image built here on those same volumes. The e2e job only ever sees
+  # empty volumes, which is why #314 shipped — a shifted `postgres` UID left
+  # pre-existing Postgres data owned by an account that no longer matched, and
+  # every fresh-volume boot stayed green.
+  #
+  # Skipped on tag pushes: the manifest job has already moved :latest to the
+  # image under test by then, so there would be nothing to upgrade from. PR and
+  # main builds are where :latest is genuinely the previous release.
+  upgrade:
+    runs-on: self-hosted
+    needs: [build, manifest]
+    if: |
+      !cancelled() &&
+      needs.build.result == 'success' &&
+      !startsWith(github.ref, 'refs/tags/') &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name == 'pull_request' || needs.manifest.result == 'success')
+    permissions:
+      contents: read
+      packages: read
+
+    env:
+      FROM_IMAGE: ghcr.io/euro-office/documentserver:latest
+      CONTAINER: eo-upgrade-${{ github.run_id }}
+      VOLUME_DB: eo-upgrade-db-${{ github.run_id }}
+      VOLUME_DATA: eo-upgrade-data-${{ github.run_id }}
+      BOOT_TIMEOUT: 300
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Determine image
+        id: image
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          else
+            echo "ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c99871dec2022cc055c062a10cc1a1310835ceb4 # v4.3.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull images
+        id: pull
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+        run: |
+          docker pull "$IMAGE_REF"
+          # No published release to upgrade from (new brand, pruned tag): report
+          # it and skip rather than failing a build this cannot say anything about.
+          if docker pull "$FROM_IMAGE"; then
+            echo "have_from=true" >> $GITHUB_OUTPUT
+          else
+            echo "have_from=false" >> $GITHUB_OUTPUT
+            echo "::notice::$FROM_IMAGE not available - skipping the upgrade check"
+          fi
+
+      - name: Boot previous release and seed the database
+        if: steps.pull.outputs.have_from == 'true'
+        run: |
+          set -euo pipefail
+          . .github/scripts/upgrade-lib.sh
+
+          docker volume create "$VOLUME_DB" >/dev/null
+          docker volume create "$VOLUME_DATA" >/dev/null
+          boot "$FROM_IMAGE" "$CONTAINER-old"
+
+          # A row of our own, so the check after the upgrade proves the same
+          # datadir came back rather than a silently reinitialised empty one.
+          docker exec "$CONTAINER-old" sudo -u postgres psql -q -d eurooffice \
+            -c 'CREATE TABLE upgrade_probe (id integer)' \
+            -c 'INSERT INTO upgrade_probe VALUES (314)'
+          docker rm -f "$CONTAINER-old" >/dev/null
+
+      - name: Boot the built image on the same volumes
+        if: steps.pull.outputs.have_from == 'true'
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.ref }}
+        run: |
+          set -euo pipefail
+          . .github/scripts/upgrade-lib.sh
+
+          boot "$IMAGE_REF" "$CONTAINER-new"
+
+          probe=$(docker exec "$CONTAINER-new" sudo -u postgres psql -tAq -d eurooffice \
+                    -c 'SELECT id FROM upgrade_probe' | tr -d '[:space:]')
+          if [ "$probe" != "314" ]; then
+            echo "::error::Postgres data from the previous release did not survive the upgrade (probe='$probe')"
+            exit 1
+          fi
+          echo "Upgrade check passed: pre-existing Postgres volume in use after the upgrade."
+
+      - name: Clean up
+        if: always()
+        run: |
+          docker rm -f "$CONTAINER-old" "$CONTAINER-new" >/dev/null 2>&1 || true
+          docker volume rm -f "$VOLUME_DB" "$VOLUME_DATA" >/dev/null 2>&1 || true
