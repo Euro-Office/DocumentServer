@@ -260,7 +260,7 @@ jobs:
           fi
 
       - name: Build all targets (packages → docker → develop)
-        uses: docker/bake-action@4a9a8d494466d37134e2bfca2d3a8de8fb2681ad # v5.13.0
+        uses: docker/bake-action@d3418bd7d0e9324001bca92fa8ba175ea7e6dc9b # v7.3.0
         with:
           workdir: ./build
           # For nextcloud-office, brand-server.hcl is appended; empty lines are
