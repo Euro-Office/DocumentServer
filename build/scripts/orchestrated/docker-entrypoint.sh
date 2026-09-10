@@ -54,9 +54,12 @@ if [[ -n "$REDIS_SENTINEL_NODES" ]]; then
   IFS=","
   NODES=$(echo "${REDIS_SENTINEL_NODES_ARRAY[*]}")
   IFS="$OLD_IFS"
-  REDIS_SENTINEL='[ '$NODES' ],'
+  REDIS_SENTINEL='"sentinels": [ '$NODES' ],'
 else
-  REDIS_SENTINEL='[ { "host": "'${REDIS_SERVER_HOST:-localhost}'", "port": '${REDIS_SERVER_PORT:-6379}' } ],'
+  # No sentinel configured: emit no `sentinels` key at all. Listing the plain
+  # Redis server as its own sentinel puts ioredis into sentinel mode, where it
+  # never connects - and a fail-closed consumer then refuses every request.
+  REDIS_SENTINEL=''
 fi
 
 if [[ -n "$REDIS_CLUSTER_NODES" ]]; then
@@ -130,7 +133,7 @@ export NODE_CONFIG='{
         },
         "optionsCluster": { '${REDIS_CLUSTER}' },
         "iooptions": {
-          "sentinels": '${REDIS_SENTINEL}'
+          '${REDIS_SENTINEL}'
           "name": "'${REDIS_SENTINEL_GROUP_NAME:-mymaster}'",
           "sentinelPassword": "'${REDIS_SENTINEL_PWD}'",
           "username": "'${REDIS_SERVER_USER:-default}'",
