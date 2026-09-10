@@ -77,6 +77,25 @@ else
   REDIS_CLUSTER=''
 fi
 
+# Which editorData backend to use. Emitted only when an operator asks, so the
+# packaged default stands otherwise. EDITOR_STAT_STORAGE pins the EditorStat
+# half separately; left empty it follows editorDataStorage.
+EDITOR_STORAGE_KEYS=()
+if [[ -n "$EDITOR_DATA_STORAGE" ]]; then
+  EDITOR_STORAGE_KEYS+=('"editorDataStorage": "'${EDITOR_DATA_STORAGE}'"')
+fi
+if [[ -n "$EDITOR_STAT_STORAGE" ]]; then
+  EDITOR_STORAGE_KEYS+=('"editorStatStorage": "'${EDITOR_STAT_STORAGE}'"')
+fi
+if [[ ${#EDITOR_STORAGE_KEYS[@]} -gt 0 ]]; then
+  OLD_IFS="$IFS"
+  IFS=","
+  EDITOR_STORAGE_JSON='"server": { '"${EDITOR_STORAGE_KEYS[*]}"' },'
+  IFS="$OLD_IFS"
+else
+  EDITOR_STORAGE_JSON=''
+fi
+
 # State the topology rather than leaving consumers to infer it from the shape
 # of the options. REDIS_MODE overrides if a deployment needs to be explicit.
 if [[ -n "$REDIS_MODE" ]]; then
@@ -154,6 +173,7 @@ export NODE_CONFIG='{
           "db": "'${REDIS_SERVER_DB_NUM:-0}'"
         }
       },
+      '${EDITOR_STORAGE_JSON}'
       "token": {
         "enable": {
           "browser": '${JWT_ENABLED:=true}',
