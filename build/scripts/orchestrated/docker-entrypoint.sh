@@ -77,6 +77,18 @@ else
   REDIS_CLUSTER=''
 fi
 
+# State the topology rather than leaving consumers to infer it from the shape
+# of the options. REDIS_MODE overrides if a deployment needs to be explicit.
+if [[ -n "$REDIS_MODE" ]]; then
+  REDIS_MODE_VALUE="$REDIS_MODE"
+elif [[ -n "$REDIS_CLUSTER_NODES" ]]; then
+  REDIS_MODE_VALUE="cluster"
+elif [[ -n "$REDIS_SENTINEL_NODES" ]]; then
+  REDIS_MODE_VALUE="sentinel"
+else
+  REDIS_MODE_VALUE="standalone"
+fi
+
 # --------------------------------------------------------------------
 # JWT
 #
@@ -124,6 +136,7 @@ export NODE_CONFIG='{
       },
       "redis": {
         "name": "'${REDIS_CONNECTOR_NAME:-redis}'",
+        "mode": "'${REDIS_MODE_VALUE}'",
         "host": "'${REDIS_SERVER_HOST:-${REDIST_SERVER_HOST:-localhost}}'",
         "port": '${REDIS_SERVER_PORT:-${REDIST_SERVER_PORT:-6379}}',
         "options": {
