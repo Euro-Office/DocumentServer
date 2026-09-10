@@ -80,6 +80,17 @@ fi
 # Which editorData backend to use. Emitted only when an operator asks, so the
 # packaged default stands otherwise. EDITOR_STAT_STORAGE pins the EditorStat
 # half separately; left empty it follows editorDataStorage.
+# These two are interpolated into NODE_CONFIG and then reach
+# require('./' + value) in docservice, so reject anything that is not a
+# plain module basename rather than passing a path or a quote through.
+for var in EDITOR_DATA_STORAGE EDITOR_STAT_STORAGE; do
+  value="${!var}"
+  if [[ -n "$value" && ! "$value" =~ ^[A-Za-z][A-Za-z0-9]*$ ]]; then
+    echo "$var must be a module name such as editorDataRedis (got: $value)" >&2
+    exit 2
+  fi
+done
+
 EDITOR_STORAGE_KEYS=()
 if [[ -n "$EDITOR_DATA_STORAGE" ]]; then
   EDITOR_STORAGE_KEYS+=('"editorDataStorage": "'${EDITOR_DATA_STORAGE}'"')
@@ -99,6 +110,13 @@ fi
 # State the topology rather than leaving consumers to infer it from the shape
 # of the options. REDIS_MODE overrides if a deployment needs to be explicit.
 if [[ -n "$REDIS_MODE" ]]; then
+  case "$REDIS_MODE" in
+    auto | standalone | sentinel | cluster) ;;
+    *)
+      echo "REDIS_MODE must be one of auto, standalone, sentinel, cluster (got: $REDIS_MODE)" >&2
+      exit 2
+      ;;
+  esac
   REDIS_MODE_VALUE="$REDIS_MODE"
 elif [[ -n "$REDIS_CLUSTER_NODES" ]]; then
   REDIS_MODE_VALUE="cluster"
