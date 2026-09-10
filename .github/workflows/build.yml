@@ -356,11 +356,21 @@ jobs:
           chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
-          TARGET="$REMOTE_BASE/$PRODUCT_VERSION/$BUILD_NUMBER"
+          TARGET="$REMOTE_BASE/docserver/$PRODUCT_VERSION/$BUILD_NUMBER"
           ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "mkdir -p '$TARGET'"
           scp -i ~/.ssh/id_deploy -P "$SSH_PORT" \
             build/deploy/packages/*.deb build/deploy/packages/*.rpm \
             "$SSH_USER@$SSH_HOST:$TARGET/"
+
+      - name: Upload packages as artifact (nextcloud-office)
+        if: matrix.brand.name == 'nextcloud-office' #&& startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: nc-packages-${{ matrix.arch }}
+          path: |
+            build/deploy/packages/*.deb
+            build/deploy/packages/*.rpm
+          retention-days: 1
 
   # ─────────────────────────────────────────────────────────────
   # MANIFEST
@@ -437,6 +447,16 @@ jobs:
               create_manifest "$repo" "${REF}" "latest"
             done
           fi
+
+
+  publish-repo:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/') && contains(github.ref_name, '-stable.')
+    uses: ./.github/workflows/publish-repo.yml
+    with:
+      product: documentserver
+      artifact_pattern: 'nc-packages-*'
+    secrets: inherit
 
   e2e:
     runs-on: self-hosted
