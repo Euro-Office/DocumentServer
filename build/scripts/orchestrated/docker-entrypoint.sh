@@ -62,6 +62,18 @@ else
   REDIS_SENTINEL=''
 fi
 
+# Only name a user when one was configured. ioredis sends the two-argument
+# AUTH whenever a username is present - a password is not required for that -
+# and two-argument AUTH is Redis 6.0 and later. Emitting a default username
+# unconditionally therefore made 6.0 the floor for every deployment; on Redis
+# 5 with a password set it fails, warns, and leaves the client
+# unauthenticated for every subsequent command.
+if [[ -n "$REDIS_SERVER_USER" ]]; then
+  REDIS_USERNAME_JSON='"username": "'${REDIS_SERVER_USER}'",'
+else
+  REDIS_USERNAME_JSON=''
+fi
+
 if [[ -n "$REDIS_CLUSTER_NODES" ]]; then
   declare -a REDIS_CLUSTER_NODES_ALL=($REDIS_CLUSTER_NODES)
   REDIS_CLUSTER_NODES_ARRAY=()
@@ -72,7 +84,7 @@ if [[ -n "$REDIS_CLUSTER_NODES" ]]; then
   IFS=","
   NODES=$(echo "${REDIS_CLUSTER_NODES_ARRAY[*]}")
   IFS="$OLD_IFS"
-  REDIS_CLUSTER='"rootNodes": [ '$NODES' ], "defaults": { "username": "'${REDIS_SERVER_USER:-default}'", "password": "'$REDIS_SERVER_PWD'" }'
+  REDIS_CLUSTER='"rootNodes": [ '$NODES' ], "defaults": { '${REDIS_USERNAME_JSON}'"password": "'$REDIS_SERVER_PWD'" }'
 else
   REDIS_CLUSTER=''
 fi
@@ -186,7 +198,7 @@ export NODE_CONFIG='{
           '${REDIS_SENTINEL}'
           "name": "'${REDIS_SENTINEL_GROUP_NAME:-mymaster}'",
           "sentinelPassword": "'${REDIS_SENTINEL_PWD}'",
-          "username": "'${REDIS_SERVER_USER:-default}'",
+          '${REDIS_USERNAME_JSON}'
           "password": "'${REDIS_SERVER_PWD}'",
           "db": "'${REDIS_SERVER_DB_NUM:-0}'"
         }
