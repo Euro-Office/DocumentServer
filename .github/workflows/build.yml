@@ -452,7 +452,7 @@ jobs:
 
   publish-repo:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/') && contains(github.ref_name, '-stable.')
+    #if: startsWith(github.ref, 'refs/tags/') && contains(github.ref_name, '-stable.')
     uses: ./.github/workflows/publish-repo.yml
     with:
       product: documentserver
