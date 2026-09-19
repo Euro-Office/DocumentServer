@@ -1,0 +1,51 @@
+name: 'Resolve and pull built image'
+description: >
+  Resolves the DocumentServer image tag for the current event (PR cache tag
+  on pull_request, :latest on a release tag, :nightly otherwise), logs in to
+  GHCR, and pulls it. Shared by any job that runs something against the
+  already-built image (e2e, post-build smoke checks, ...) so the
+  tag-resolution + login + pull sequence exists in exactly one place.
+
+inputs:
+  registry:
+    description: 'Container registry host, e.g. ghcr.io/euro-office'
+    required: true
+  image-name:
+    description: 'Image name used for :nightly / :latest tags'
+    required: true
+  cache-image-name:
+    description: 'Image name used for the per-PR cache tag'
+    required: true
+
+outputs:
+  ref:
+    description: 'Fully-qualified image ref that was pulled'
+    value: ${{ steps.image.outputs.ref }}
+
+runs:
+  using: composite
+  steps:
+    - name: Determine image
+      id: image
+      shell: bash
+      run: |
+        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          echo "ref=${{ inputs.registry }}/${{ inputs.cache-image-name }}:pr-${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+        elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+          echo "ref=${{ inputs.registry }}/${{ inputs.image-name }}:latest" >> "$GITHUB_OUTPUT"
+        else
+          echo "ref=${{ inputs.registry }}/${{ inputs.image-name }}:nightly" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@c99871dec2022cc055c062a10cc1a1310835ceb4 # v4.3.0
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+
+    - name: Pull built image
+      shell: bash
+      env:
+        IMAGE_REF: ${{ steps.image.outputs.ref }}
+      run: docker pull "$IMAGE_REF"
