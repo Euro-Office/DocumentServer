@@ -75,25 +75,37 @@ else
 fi
 
 # --------------------------------------------------------------------
-# JWT
+# Fail closed on insecure default secrets.
 #
-# docservice, converter and adminpanel run as separate containers here and
-# must all sign with the same secret, so there is nothing safe to fall back
-# to: a per-container random value (as the standalone entrypoint generates)
-# would break signing between them, and a baked-in literal would be public
-# in this repository. Require the operator to supply one while JWT is on.
+# The standalone image generates and persists random secrets, but cluster
+# pods are ephemeral and run as multiple replicas behind a shared proxy: a
+# per-pod generated secret would differ across replicas and break JWT /
+# secure-link verification. Secrets must therefore be supplied explicitly
+# (e.g. via a Kubernetes Secret). Refuse to start with the known upstream
+# placeholder values ("secret" / "verysecretstring") when the corresponding
+# feature is enabled, rather than silently accepting forgeable tokens.
 # --------------------------------------------------------------------
-JWT_ENABLED="${JWT_ENABLED:-true}"
+JWT_ENABLED_EFF="${JWT_ENABLED:-true}"
+JWT_ENABLED_INBOX_EFF="${JWT_ENABLED_INBOX:-$JWT_ENABLED_EFF}"
+JWT_ENABLED_OUTBOX_EFF="${JWT_ENABLED_OUTBOX:-$JWT_ENABLED_EFF}"
 
-if [[ "${JWT_ENABLED}" == "true" && -z "${JWT_SECRET:-}" ]]; then
-  echo "JWT is enabled but JWT_SECRET is not set." >&2
-  echo "Set JWT_SECRET to at least 32 characters, or set JWT_ENABLED=false to turn JWT off." >&2
-  echo "JWT_SECRET_INBOX/JWT_SECRET_OUTBOX only override individual directions and do not replace it." >&2
+# browser/session verify with JWT_SECRET directly; inbox/outbox fall back to it.
+if [ "$JWT_ENABLED_EFF" = "true" ] && [ -z "${JWT_SECRET:-}" ]; then
+  echo "ERROR: JWT browser verification is enabled (JWT_ENABLED=true) but JWT_SECRET is not set. Provide a strong JWT_SECRET (e.g. via a Kubernetes Secret) or set JWT_ENABLED=false. Refusing to start with an insecure default." >&2
+  exit 1
+fi
+if [ "$JWT_ENABLED_INBOX_EFF" = "true" ] && [ -z "${JWT_SECRET_INBOX:-}" ] && [ -z "${JWT_SECRET:-}" ]; then
+  echo "ERROR: inbox JWT is enabled but neither JWT_SECRET_INBOX nor JWT_SECRET is set. Refusing to start with an insecure default." >&2
+  exit 1
+fi
+if [ "$JWT_ENABLED_OUTBOX_EFF" = "true" ] && [ -z "${JWT_SECRET_OUTBOX:-}" ] && [ -z "${JWT_SECRET:-}" ]; then
+  echo "ERROR: outbox JWT is enabled but neither JWT_SECRET_OUTBOX nor JWT_SECRET is set. Refusing to start with an insecure default." >&2
   exit 1
 fi
 
-if [[ -n "${JWT_SECRET:-}" && ${#JWT_SECRET} -lt 32 ]]; then
-  echo "Warning: JWT_SECRET is ${#JWT_SECRET} characters; clients such as the EuroOffice connector require at least 32 and will refuse to connect." >&2
+if [ -z "${SECURE_LINK_SECRET:-}" ]; then
+  echo "ERROR: SECURE_LINK_SECRET is not set. It signs internal cache/file URLs and must be identical across all Docs and proxy replicas. Provide a strong shared value (e.g. via a Kubernetes Secret). Refusing to start with an insecure default." >&2
+  exit 1
 fi
 
 # --------------------------------------------------------------------
@@ -219,14 +231,14 @@ export NODE_CONFIG='{
   "storage": {
     "fs": {
       "folderPath": "/var/lib/'${COMPANY_NAME}'/documentserver/App_Data/cache/files/'${STORAGE_SUBDIRECTORY_NAME:-latest}'",
-      "secretString": "'${SECURE_LINK_SECRET:-verysecretstring}'"
+      "secretString": "'${SECURE_LINK_SECRET}'"
     },
     "storageFolderName": "files/'${STORAGE_SUBDIRECTORY_NAME:-latest}'"
   },
   "persistentStorage": {
     "fs": {
       "folderPath": "/var/lib/'${COMPANY_NAME}'/documentserver/App_Data/cache/files",
-      "secretString": "'${SECURE_LINK_SECRET:-verysecretstring}'"
+      "secretString": "'${SECURE_LINK_SECRET}'"
     },
     "storageFolderName": "files"
   }
