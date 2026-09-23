@@ -1,0 +1,132 @@
+name: Remind community issue triage
+
+on:
+  schedule:
+    - cron: '33 3 * * *'
+
+  # Allows manual testing from the Actions tab.
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+concurrency:
+  group: community-issue-triage-reminders
+  cancel-in-progress: false
+
+jobs:
+  remind-triage:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Remind triagers about unassigned overdue issues
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            // Change these values to adjust the reminder policy.
+            const reminderAfterHours = 96;
+            const maximumIssueAgeDays = 100;
+
+            // This marker and the triager list are written by
+            // auto-ping-triagers.yml in the initial triage comment.
+            const requestMarker = '<!-- community-triage-request -->';
+
+            // Calculate the eligible issue age window.
+            const now = Date.now();
+            const reminderCutoff = new Date(
+              now - reminderAfterHours * 60 * 60 * 1000
+            );
+            const maximumAgeCutoff = new Date(
+              now - maximumIssueAgeDays * 24 * 60 * 60 * 1000
+            );
+
+            // Retrieve all open repository issues from newest to oldest.
+            // github.paginate handles repositories with more than 100 open issues.
+            const issues = await github.paginate(
+              github.rest.issues.listForRepo,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'open',
+                sort: 'created',
+                direction: 'desc',
+                per_page: 100,
+              }
+            );
+
+            for (const issue of issues) {
+              // GitHub's Issues API also returns pull requests; ignore them.
+              if (issue.pull_request) continue;
+
+              // Only process issues with no assigned developer.
+              if (issue.assignees.length > 0) continue;
+
+              const createdAt = new Date(issue.created_at);
+
+              // Skip issues that have been open for less than 96 hours.
+              if (createdAt > reminderCutoff) continue;
+
+              // Results are ordered from newest to oldest. Once an issue is
+              // older than the configured maximum age, remaining ones are too.
+              if (createdAt < maximumAgeCutoff) break;
+
+              // Read comments to find the initial request made by
+              // auto-ping-triagers.yml and retrieve its selected triagers.
+              const comments = await github.paginate(
+                github.rest.issues.listComments,
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  per_page: 100,
+                }
+              );
+
+              const requestComment = comments.find(comment =>
+                comment.body?.includes(requestMarker)
+              );
+
+              // Ignore issues not initialized by auto-ping-triagers.yml.
+              if (!requestComment) continue;
+
+              // The initial workflow stores the originally selected users in an
+              // invisible HTML comment, for example:
+              // <!-- triagers: user-one,user-two -->
+              const triagersMatch = requestComment.body?.match(
+                /<!-- triagers: ([^>]+) -->/
+              );
+
+              if (!triagersMatch) {
+                core.warning(
+                  `Could not identify triagers for issue #${issue.number}; skipping.`
+                );
+                continue;
+              }
+
+              const triagers = triagersMatch[1]
+                .split(',')
+                .map(user => user.trim())
+                .filter(Boolean);
+
+              if (triagers.length === 0) {
+                core.warning(
+                  `No valid triagers found for issue #${issue.number}; skipping.`
+                );
+                continue;
+              }
+
+              const mentions = triagers.map(user => `@${user}`).join(' ');
+
+              // A reminder is intentionally created on every daily execution
+              // while the issue remains open, eligible by age, and unassigned.
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `${mentions} Reminder: this community-created issue has remained open and unassigned for more than ${reminderAfterHours} hours and needs triage, please.`,
+              });
+
+              core.info(
+                `Sent reminder for issue #${issue.number} to: ${triagers.join(', ')}`
+              );
+            }
