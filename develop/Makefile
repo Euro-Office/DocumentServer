@@ -4,6 +4,46 @@ export PRODUCT_VERSION
 EO_JWT_SECRET ?= euro-office-dev-jwt-secret-key-2026
 export EO_JWT_SECRET
 
+# Redis topology test-stack settings. These are exported so values supplied
+# either from the shell or on the make command line reach Docker Compose.
+TYPE ?= STANDALONE
+EO_IMAGE ?= ghcr.io/euro-office/documentserver:latest-dev
+REDIS_IMAGE ?= redis:7-alpine
+REDIS_SERVER_COMMAND ?= redis-server
+REDIS_CLI_COMMAND ?= redis-cli
+export EO_IMAGE REDIS_IMAGE REDIS_SERVER_COMMAND REDIS_CLI_COMMAND
+
+REDIS_TOPOLOGY_COMPOSE_BASE := docker-compose.redis-base.yml
+
+.PHONY: up down
+
+# Start one Redis topology test stack.
+# Examples:
+#   make up TYPE=STANDALONE
+#   make up TYPE=SENTINEL REDIS_IMAGE=valkey/valkey:8-alpine REDIS_SERVER_COMMAND=valkey-server REDIS_CLI_COMMAND=valkey-cli
+#   make up TYPE=CLUSTER
+up:
+	@topology="$$(printf '%s' "$(TYPE)" | tr '[:upper:]' '[:lower:]')"; \
+	case "$$topology" in \
+	  standalone|sentinel|cluster) ;; \
+	  *) echo "error: TYPE must be STANDALONE, SENTINEL, or CLUSTER (got '$(TYPE)')" >&2; exit 2 ;; \
+	esac; \
+	docker compose -f "$(REDIS_TOPOLOGY_COMPOSE_BASE)" -f "docker-compose.redis-$$topology.yml" up -d
+
+# Stop one Redis topology test stack. Add PURGE=1 to remove its volumes too.
+# Examples:
+#   make down TYPE=SENTINEL
+#   make down TYPE=CLUSTER PURGE=1
+down:
+	@topology="$$(printf '%s' "$(TYPE)" | tr '[:upper:]' '[:lower:]')"; \
+	case "$$topology" in \
+	  standalone|sentinel|cluster) ;; \
+	  *) echo "error: TYPE must be STANDALONE, SENTINEL, or CLUSTER (got '$(TYPE)')" >&2; exit 2 ;; \
+	esac; \
+	flags=""; \
+	if [ "$(PURGE)" = "1" ]; then flags="-v"; fi; \
+	docker compose -f "$(REDIS_TOPOLOGY_COMPOSE_BASE)" -f "docker-compose.redis-$$topology.yml" down $$flags --remove-orphans
+
 # Detect host LAN IP for phones/emulators/LAN devices. Used by `make mobile`
 # and `make refresh-urls`.
 ifeq ($(shell uname -s),Darwin)
