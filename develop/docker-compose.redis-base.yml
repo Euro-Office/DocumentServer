@@ -1,0 +1,60 @@
+name: Euro-Office Redis topology development environment
+
+services:
+  eo:
+    image: ${EO_IMAGE:-ghcr.io/euro-office/documentserver:latest-dev}
+    container_name: eo-test-docserver-compose
+    ports:
+      - "8000:80"
+    environment:
+      COMPANY_NAME: euro-office
+      EXAMPLE_ENABLED: "true"
+      WOPI_ENABLED: "true"
+      JWT_SECRET: ${EO_JWT_SECRET:-euro-office-test-jwt-secret-1234567890}
+      DB_TYPE: postgres
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: eurooffice
+      DB_USER: eurooffice
+      DB_PWD: eurooffice
+      AMQP_HOST: rabbitmq
+      AMQP_PORT: 5672
+      AMQP_USER: eo
+      AMQP_PWD: rabbit-test-pass
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16
+    container_name: eo-test-postgres-compose
+    environment:
+      POSTGRES_DB: eurooffice
+      POSTGRES_USER: eurooffice
+      POSTGRES_PASSWORD: eurooffice
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../server/schema/postgresql/createdb.sql:/docker-entrypoint-initdb.d/createdb.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eurooffice -d eurooffice"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  rabbitmq:
+    image: rabbitmq:3
+    container_name: eo-test-rabbitmq-compose
+    environment:
+      RABBITMQ_DEFAULT_USER: eo
+      RABBITMQ_DEFAULT_PASS: rabbit-test-pass
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  postgres_data:
+    name: eo-test-postgres-data
