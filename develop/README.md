@@ -188,6 +188,11 @@ docker-compose.redis-sentinel.yml
 docker-compose.redis-cluster.yml
 ```
 
+The published `latest-dev` image uses the standalone entrypoint. The overlays
+use its supported `REDIS_SERVER_PASS` and `REDIS_SERVER_DB` variables for the
+base connection, while the Sentinel and Cluster topology settings are supplied
+through `NODE_CONFIG`.
+
 ### First-time setup
 
 The default image is the same multi-architecture development image used by the

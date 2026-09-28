@@ -4,11 +4,8 @@ services:
       REDIS_SERVER_HOST: redis-primary
       REDIS_SERVER_PORT: 6379
       REDIS_SERVER_USER: default
-      REDIS_SERVER_PWD: redis-test-pass
-      REDIS_SERVER_DB_NUM: 0
-      REDIS_SENTINEL_NODES: redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
-      REDIS_SENTINEL_GROUP_NAME: mymaster
-      REDIS_SENTINEL_PWD: sentinel-test-pass
+      REDIS_SERVER_PASS: redis-test-pass
+      REDIS_SERVER_DB: 0
       NODE_CONFIG: >-
         {"services":{"CoAuthoring":{"server":{"editorDataStorage":"editorDataRedis","editorStatStorage":"editorDataRedis"},"redis":{"optionsSentinel":{"name":"mymaster","sentinelRootNodes":[{"host":"redis-sentinel-1","port":26379},{"host":"redis-sentinel-2","port":26379},{"host":"redis-sentinel-3","port":26379}],"nodeClientOptions":{"username":"default","password":"redis-test-pass","database":0},"sentinelClientOptions":{"password":"sentinel-test-pass"}}}}}}
     depends_on:
