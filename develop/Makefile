@@ -15,14 +15,14 @@ export EO_IMAGE REDIS_IMAGE REDIS_SERVER_COMMAND REDIS_CLI_COMMAND
 
 REDIS_TOPOLOGY_COMPOSE_BASE := docker-compose.redis-base.yml
 
-.PHONY: up down
+.PHONY: redis-up redis-down
 
 # Start one Redis topology test stack.
 # Examples:
-#   make up TYPE=STANDALONE
-#   make up TYPE=SENTINEL REDIS_IMAGE=valkey/valkey:8-alpine REDIS_SERVER_COMMAND=valkey-server REDIS_CLI_COMMAND=valkey-cli
-#   make up TYPE=CLUSTER
-up:
+#   make redis-up TYPE=STANDALONE
+#   make redis-up TYPE=SENTINEL REDIS_IMAGE=valkey/valkey:8-alpine REDIS_SERVER_COMMAND=valkey-server REDIS_CLI_COMMAND=valkey-cli
+#   make redis-up TYPE=CLUSTER
+redis-up:
 	@topology="$$(printf '%s' "$(TYPE)" | tr '[:upper:]' '[:lower:]')"; \
 	case "$$topology" in \
 	  standalone|sentinel|cluster) ;; \
@@ -32,9 +32,9 @@ up:
 
 # Stop one Redis topology test stack. Add PURGE=1 to remove its volumes too.
 # Examples:
-#   make down TYPE=SENTINEL
-#   make down TYPE=CLUSTER PURGE=1
-down:
+#   make redis-down TYPE=SENTINEL
+#   make redis-down TYPE=CLUSTER PURGE=1
+redis-down:
 	@topology="$$(printf '%s' "$(TYPE)" | tr '[:upper:]' '[:lower:]')"; \
 	case "$$topology" in \
 	  standalone|sentinel|cluster) ;; \
