@@ -219,7 +219,7 @@ REGISTRY=local TAG=<my-custom-tag> \
   --load
 cd ..
 
-EO_IMAGE=local/documentserver:<my-custom-tag> make -C develop up TYPE=SENTINEL
+EO_IMAGE=local/documentserver:<my-custom-tag> make -C develop redis-up TYPE=SENTINEL
 ```
 
 ### Start and stop a topology
@@ -228,22 +228,22 @@ Run these commands from the repository root, or use `make -C develop` from
 any directory:
 
 ```sh
-make -C develop up TYPE=STANDALONE
-make -C develop up TYPE=SENTINEL
-make -C develop up TYPE=CLUSTER
+make -C develop redis-up TYPE=STANDALONE
+make -C develop redis-up TYPE=SENTINEL
+make -C develop redis-up TYPE=CLUSTER
 ```
 
 Run only one topology at a time. Stop the current one before switching:
 
 ```sh
-make -C develop down TYPE=SENTINEL
-make -C develop up TYPE=CLUSTER
+make -C develop redis-down TYPE=SENTINEL
+make -C develop redis-up TYPE=CLUSTER
 ```
 
 To remove the test PostgreSQL volume as well:
 
 ```sh
-make -C develop down TYPE=CLUSTER PURGE=1
+make -C develop redis-down TYPE=CLUSTER PURGE=1
 ```
 
 DocumentServer is exposed at `http://127.0.0.1:8000/`; its health endpoint is
@@ -259,7 +259,7 @@ values:
 export REDIS_IMAGE=valkey/valkey:8-alpine
 export REDIS_SERVER_COMMAND=valkey-server
 export REDIS_CLI_COMMAND=valkey-cli
-make -C develop up TYPE=SENTINEL
+make -C develop redis-up TYPE=SENTINEL
 ```
 
 Use `TYPE=STANDALONE` or `TYPE=CLUSTER` instead when needed. The verification
