@@ -1,6 +1,9 @@
 PRODUCT_VERSION ?= $(shell cat ../VERSION)
 export PRODUCT_VERSION
 
+# Keep the full development environment as the default target.
+.DEFAULT_GOAL := local
+
 EO_JWT_SECRET ?= euro-office-dev-jwt-secret-key-2026
 export EO_JWT_SECRET
 
