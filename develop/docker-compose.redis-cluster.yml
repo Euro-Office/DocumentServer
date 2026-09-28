@@ -30,8 +30,8 @@ services:
       REDIS_SERVER_HOST: redis-cluster-1
       REDIS_SERVER_PORT: 7000
       REDIS_SERVER_USER: default
-      REDIS_SERVER_PWD: redis-test-pass
-      REDIS_CLUSTER_NODES: redis-cluster-1:7000,redis-cluster-2:7001,redis-cluster-3:7002,redis-cluster-4:7003,redis-cluster-5:7004,redis-cluster-6:7005
+      REDIS_SERVER_PASS: redis-test-pass
+      REDIS_SERVER_DB: 0
       NODE_CONFIG: >-
         {"services":{"CoAuthoring":{"server":{"editorDataStorage":"editorDataRedis","editorStatStorage":"editorDataRedis"},"redis":{"optionsCluster":{"rootNodes":[{"url":"redis://redis-cluster-1:7000"},{"url":"redis://redis-cluster-2:7001"},{"url":"redis://redis-cluster-3:7002"},{"url":"redis://redis-cluster-4:7003"},{"url":"redis://redis-cluster-5:7004"},{"url":"redis://redis-cluster-6:7005"}],"defaults":{"username":"default","password":"redis-test-pass"}}}}}}
     depends_on:
