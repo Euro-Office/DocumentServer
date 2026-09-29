@@ -18,11 +18,6 @@ WEBAPPS_FLAGS :=
 #   PRODUCT_VERSION=9.4.0 make web-apps-dev
 PRODUCT_VERSION ?= $(shell cat $(EO_DEV)/VERSION)
 
-# Pass SKIP_MOBILE=1 to skip framework7-react mobile builds (~50s saved).
-# Useful when iterating on desktop editor JS/CSS only.
-#   SKIP_MOBILE=1 make web-apps-dev
-SKIP_MOBILE ?= 0
-
 CHECK_WEBAPPS_DEPS = @test -d $(EO_DEV)/web-apps/build/node_modules || { echo "Run 'make web-apps' first to install dependencies"; exit 1; }
 
 # Dev-friendly cache flush: regenerate nginx cache tag and reload, without
@@ -62,7 +57,6 @@ web-apps:
 	cd $(EO_DEV)/web-apps/build && \
 	npm ci && \
 	BUILD_ROOT=$(EO_ROOT) PRODUCT_VERSION=$(PRODUCT_VERSION) THEME=euro-office \
-	SKIP_MOBILE=$(SKIP_MOBILE) \
 	node scripts/build-pipeline.js
 	$(FLUSH_CACHE)
 
@@ -72,7 +66,6 @@ web-apps-dev:
 	python3 merge_and_check.py && \
 	cd $(EO_DEV)/web-apps/build && \
 	BUILD_ROOT=$(EO_ROOT) PRODUCT_VERSION=$(PRODUCT_VERSION) THEME=euro-office \
-	SKIP_MOBILE=$(SKIP_MOBILE) \
 	node scripts/build-pipeline.js
 	$(FLUSH_CACHE)
 
