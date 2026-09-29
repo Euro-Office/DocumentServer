@@ -43,7 +43,7 @@ case $AMQP_PROTO in
 esac
 
 if [[ -n "$REDIS_SENTINEL_NODES" ]]; then
-  IFS=',' read -ra REDIS_SENTINEL_NODES_ALL <<< "$REDIS_SENTINEL_NODES"
+  IFS=', ' read -ra REDIS_SENTINEL_NODES_ALL <<< "$REDIS_SENTINEL_NODES"
   REDIS_SENTINEL_NODES_ARRAY=()
   for node in "${REDIS_SENTINEL_NODES_ALL[@]}"; do
     host="${node%%:*}"
@@ -62,7 +62,7 @@ else
 fi
 
 if [[ -n "$REDIS_CLUSTER_NODES" ]]; then
-  IFS=',' read -ra REDIS_CLUSTER_NODES_ALL <<< "$REDIS_CLUSTER_NODES"
+  IFS=', ' read -ra REDIS_CLUSTER_NODES_ALL <<< "$REDIS_CLUSTER_NODES"
   REDIS_CLUSTER_NODES_ARRAY=()
   for node in "${REDIS_CLUSTER_NODES_ALL[@]}"; do
     REDIS_CLUSTER_NODES_ARRAY+=('{ "url": "redis://'$node'" }')
