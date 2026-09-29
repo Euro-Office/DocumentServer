@@ -193,6 +193,13 @@ use its supported `REDIS_SERVER_PASS` and `REDIS_SERVER_DB` variables for the
 base connection, while the Sentinel and Cluster topology settings are supplied
 through `NODE_CONFIG`.
 
+For deployments using the orchestrated image, select the Redis-backed
+editor-data stores with `EDITOR_DATA_STORAGE=editorDataRedis` and, when an
+explicit statistics backend is desired, `EDITOR_STAT_STORAGE=editorDataRedis`.
+Both variables are optional; leaving them unset preserves the packaged memory
+backend. The orchestrated image uses `REDIS_SERVER_PWD` and
+`REDIS_SERVER_DB_NUM` for the Redis password and database settings.
+
 ### First-time setup
 
 The default image is the same multi-architecture development image used by the

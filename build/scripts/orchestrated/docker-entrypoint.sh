@@ -77,6 +77,35 @@ else
 fi
 
 # --------------------------------------------------------------------
+# Editor-data storage
+#
+# The server package defaults to editorDataMemory. Keep the storage keys out
+# of NODE_CONFIG unless an operator explicitly selects a backend, so the
+# orchestrated image preserves that default. Values become module names in
+# DocService and must therefore be plain basenames rather than paths or JSON.
+# --------------------------------------------------------------------
+EDITOR_STORAGE_CONFIG=""
+for storage_var in EDITOR_DATA_STORAGE EDITOR_STAT_STORAGE; do
+  storage_value="${!storage_var:-}"
+  if [[ -n "$storage_value" && ! "$storage_value" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    echo "$storage_var must be a plain module name (letters, digits, '_' or '-')." >&2
+    exit 1
+  fi
+done
+
+if [[ -n "${EDITOR_DATA_STORAGE:-}" || -n "${EDITOR_STAT_STORAGE:-}" ]]; then
+  EDITOR_STORAGE_CONFIG='"server": {'
+  if [[ -n "${EDITOR_DATA_STORAGE:-}" ]]; then
+    EDITOR_STORAGE_CONFIG+='"editorDataStorage": "'"$EDITOR_DATA_STORAGE"'"'
+  fi
+  if [[ -n "${EDITOR_STAT_STORAGE:-}" ]]; then
+    [[ "$EDITOR_STORAGE_CONFIG" == *'"editorDataStorage"'* ]] && EDITOR_STORAGE_CONFIG+=', '
+    EDITOR_STORAGE_CONFIG+='"editorStatStorage": "'"$EDITOR_STAT_STORAGE"'"'
+  fi
+  EDITOR_STORAGE_CONFIG+='},'
+fi
+
+# --------------------------------------------------------------------
 # JWT
 #
 # docservice, converter and adminpanel run as separate containers here and
@@ -113,6 +142,7 @@ export NODE_CONFIG='{
   },
   "services": {
     "CoAuthoring": {
+      '${EDITOR_STORAGE_CONFIG}'
       "sql": {
         "type": "'${DB_TYPE:-postgres}'",
         "dbHost": "'${DB_HOST:-localhost}'",
