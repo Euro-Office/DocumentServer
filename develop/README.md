@@ -207,10 +207,21 @@ Compose overlays provide the external dependency containers and configure
 DocumentServer to use the selected Redis topology. The default compose setup
 uses this published image as-is: it does not build from or mount the current
 checkout. The default commands therefore validate the topology against the
-published image, not local server changes.
+published image, not local server changes. The published image cannot use the
+Redis-backed editor-data store until server PR #46 has been merged and a new
+`latest-dev` image has been published.
 
-To validate the current checkout, build a local image and pass it through
-`EO_IMAGE` when starting the stack:
+To validate this Redis integration before server PR #46 is merged, temporarily
+check out the server PR in the `server` submodule, then build a local image
+from this checkout. The following uses GitHub's pull-request ref and does not
+change the DocumentServer submodule pointer:
+
+```sh
+git -C server fetch https://github.com/Euro-Office/server.git pull/46/head:server-pr-46
+git -C server checkout --detach server-pr-46
+```
+
+Build the local image and pass it through `EO_IMAGE` when starting the stack:
 
 ```sh
 cd build
@@ -222,6 +233,10 @@ cd ..
 
 EO_IMAGE=local/documentserver:<my-custom-tag> make -C develop redis-up TYPE=SENTINEL
 ```
+
+After server PR #46 is merged and the automated submodule bump has landed,
+the temporary checkout is no longer needed; the published `latest-dev` image
+can be used with the default commands above.
 
 ### Start and stop a topology
 
@@ -323,8 +338,9 @@ Expected output:
 PONG
 ```
 
-For Sentinel, confirm that DocumentServer received Sentinel configuration and
-that Sentinel elected a master:
+For Sentinel, confirm that DocumentServer received the Sentinel configuration,
+that DocService is healthy with the Redis-backed editor-data store, and that
+Sentinel elected a master:
 
 ```sh
 docker compose \
@@ -335,6 +351,15 @@ docker compose \
   printf "%s" "$config" | grep -q "\\\"optionsSentinel\\\"" &&
     echo "DocumentServer optionsSentinel: CONFIGURED" ||
     { echo "DocumentServer optionsSentinel: MISSING"; exit 1; }
+  '
+
+docker compose \
+  -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-sentinel.yml \
+  exec eo sh -lc '
+  curl -fsS http://localhost/healthcheck | grep -qx true &&
+    echo "DocService healthcheck: PASS" ||
+    { echo "DocService healthcheck: FAIL"; exit 1; }
   '
 
 docker compose \
