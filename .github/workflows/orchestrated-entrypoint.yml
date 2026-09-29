@@ -1,0 +1,20 @@
+name: Orchestrated Entrypoint Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  redis-config:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Test orchestrated Redis configuration
+        run: bash build/scripts/orchestrated/docker-entrypoint.tests.sh
