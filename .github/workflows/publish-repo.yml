@@ -1,0 +1,295 @@
+# ─────────────────────────────────────────────────────────────
+# Shared APT/DNF archive for nextcloud-office
+#
+# Lives in Euro-Office/DocumentServer/.github/workflows/publish-repo.yml
+# and is called from both product workflows via `uses:`.
+#
+# Model: the archive on the server is the source of truth. Every run pulls
+# it down in full, merges the new packages in, rebuilds the indices and
+# signatures, and pushes everything back. Because CI holds the complete
+# tree, --delete is correct here - but ONLY if the pull succeeded, so a
+# failed fetch aborts the run instead of publishing an empty archive.
+#
+# Serialisation: concurrency groups apply per repository, and this workflow
+# runs in the context of the CALLING repo. Hence the additional mkdir-based
+# lock on the server, which also guards DocumentServer against
+# DesktopEditors.
+# ─────────────────────────────────────────────────────────────
+name: Publish APT/DNF repository
+
+on:
+  workflow_call:
+    inputs:
+      product:
+        description: 'documentserver | desktopeditors - used for logging'
+        required: true
+        type: string
+      artifact_pattern:
+        description: 'Artifact pattern holding the .deb/.rpm files of the nextcloud-office brand'
+        required: true
+        type: string
+      suite:
+        description: 'APT suite. Only stable builds belong in the archive.'
+        required: false
+        type: string
+        default: stable
+      keep_versions:
+        description: 'How many versions per package and arch stay in the pool'
+        required: false
+        type: number
+        default: 2
+    secrets:
+      NEXTCLOUD_SSH_KEY:
+        required: true
+      NEXTCLOUD_SSH_HOST:
+        required: true
+      NEXTCLOUD_SSH_USER:
+        required: true
+      NEXTCLOUD_SSH_PORT:
+        required: false
+      NEXTCLOUD_SSH_REMOTE_PATH:
+        required: true
+      NEXTCLOUD_GPG_PRIVATE_KEY:
+        required: true
+
+permissions: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read          # download-artifact from the calling run
+    # Must stay below the stale-lock threshold (60 min) used below, otherwise
+    # a slow-but-alive run could have its lock broken by a waiting run.
+    timeout-minutes: 50
+    concurrency:
+      # Guards within a single repo. Cross-repo is handled by the SSH lock below.
+      group: nextcloud-office-archive
+      cancel-in-progress: false      # cancelling mid-rsync corrupts the archive
+    env:
+      PRODUCT: ${{ inputs.product }}
+      SUITE: ${{ inputs.suite }}
+      KEEP: ${{ inputs.keep_versions }}
+      SSH_HOST: ${{ secrets.NEXTCLOUD_SSH_HOST }}
+      SSH_USER: ${{ secrets.NEXTCLOUD_SSH_USER }}
+      SSH_PORT: ${{ secrets.NEXTCLOUD_SSH_PORT || 22 }}
+      REMOTE_BASE: ${{ secrets.NEXTCLOUD_SSH_REMOTE_PATH }}
+    steps:
+      - name: Validate inputs
+        run: |
+          set -euo pipefail
+          [ -n "$REMOTE_BASE" ] && [ "$REMOTE_BASE" != "/" ] \
+            || { echo "::error::NEXTCLOUD_SSH_REMOTE_PATH is empty or /"; exit 1; }
+          [[ "$KEEP" =~ ^[1-9][0-9]*$ ]] \
+            || { echo "::error::keep_versions must be a positive integer"; exit 1; }
+          [[ "$SUITE" =~ ^[a-z0-9][a-z0-9.-]*$ ]] \
+            || { echo "::error::invalid suite name '$SUITE'"; exit 1; }
+          echo "publishing $PRODUCT into suite $SUITE (keep $KEEP)"
+
+      - name: Install repo tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y createrepo-c dpkg-dev apt-utils rpm rsync
+
+      - name: Set up SSH
+        env:
+          SSH_KEY: ${{ secrets.NEXTCLOUD_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          echo "SSH_CMD=ssh -i $HOME/.ssh/id_deploy -p $SSH_PORT -o BatchMode=yes" >> "$GITHUB_ENV"
+          echo "REMOTE=$SSH_USER@$SSH_HOST" >> "$GITHUB_ENV"
+
+      - name: Import signing key
+        env:
+          GPG_KEY: ${{ secrets.NEXTCLOUD_GPG_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$GPG_KEY" | gpg --batch --import
+          KEYID=$(gpg --list-secret-keys --with-colons | awk -F: '/^sec/{print $5; exit}')
+          [ -n "$KEYID" ] || { echo "::error::no secret key imported"; exit 1; }
+          echo "KEYID=$KEYID" >> "$GITHUB_ENV"
+
+      - name: Download built packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: ${{ inputs.artifact_pattern }}
+          path: incoming
+          merge-multiple: true
+
+      - name: Check incoming packages
+        run: |
+          set -euo pipefail
+          n=$(find incoming -type f \( -name '*.deb' -o -name '*.rpm' \) | wc -l)
+          [ "$n" -gt 0 ] || { echo "::error::no .deb/.rpm found in artifacts matching the pattern"; exit 1; }
+          find incoming -type f \( -name '*.deb' -o -name '*.rpm' \) | sort
+
+      # mkdir is atomic and needs no software installed on the server.
+      # Acquired after the artifact download so the lock is held as briefly
+      # as possible.
+      - name: Acquire archive lock
+        run: |
+          set -uo pipefail
+          $SSH_CMD "$REMOTE" "mkdir -p '$REMOTE_BASE'" \
+            || { echo "::error::cannot reach server or create $REMOTE_BASE"; exit 1; }
+          for i in $(seq 1 60); do
+            if $SSH_CMD "$REMOTE" "mkdir '$REMOTE_BASE/.repo-lock'" 2>/dev/null; then
+              echo "LOCK_HELD=1" >> "$GITHUB_ENV"
+              echo "lock acquired (attempt $i)"
+              exit 0
+            fi
+            # Clear a stale lock left behind by a run that died without
+            # cleanup. 60 min > job timeout, so a live holder is never hit.
+            $SSH_CMD "$REMOTE" \
+              "find '$REMOTE_BASE/.repo-lock' -maxdepth 0 -mmin +60 -exec rmdir {} + 2>/dev/null" || true
+            echo "archive busy, waiting 30s ..."
+            sleep 30
+          done
+          echo "::error::could not acquire the archive lock within 30 minutes"
+          exit 1
+
+      - name: Fetch current archive
+        run: |
+          set -euo pipefail
+          mkdir -p repo
+          # Distinguish "first run" from "fetch failed". Swallowing rsync
+          # errors here would make the --delete in Publish wipe the archive.
+          if $SSH_CMD "$REMOTE" "test -d '$REMOTE_BASE/repo'"; then
+            rsync -a --info=stats2 -e "$SSH_CMD" "$REMOTE:$REMOTE_BASE/repo/" repo/
+          else
+            echo "::notice::no archive on the server yet - creating a new one"
+          fi
+          before=$(find repo -type f \( -name '*.deb' -o -name '*.rpm' \) | wc -l)
+          echo "PKGS_BEFORE=$before" >> "$GITHUB_ENV"
+          echo "--- archive before merge ($before packages) ---"
+          find repo -type f \( -name '*.deb' -o -name '*.rpm' \) | sort
+
+      - name: Merge new packages into the pool
+        run: |
+          set -euo pipefail
+          shopt -s nullglob globstar
+
+          for f in incoming/**/*.deb; do
+            pkg=$(dpkg-deb -f "$f" Package)
+            # Derive the pool path from the package name instead of hardcoding
+            # it - this is the change that admits a second product at all.
+            dest="repo/deb/pool/main/${pkg:0:1}/${pkg}"
+            mkdir -p "$dest"
+            cp -v "$f" "$dest/"
+          done
+
+          for f in incoming/**/*.rpm; do
+            # Arch from the RPM header, not from the filename.
+            arch=$(rpm -qp --qf '%{ARCH}' "$f" 2>/dev/null)
+            [ -n "$arch" ] || { echo "::error::cannot read arch of $f"; exit 1; }
+            mkdir -p "repo/rpm/$SUITE/$arch"
+            cp -v "$f" "repo/rpm/$SUITE/$arch/"
+          done
+
+      # Group by the package metadata (name + arch), not by filename
+      # patterns, so pruning works regardless of how files are named and
+      # never mixes up packages whose names contain "-<digit>".
+      - name: Prune old versions
+        run: |
+          set -euo pipefail
+          shopt -s nullglob globstar
+
+          prune() {  # stdin: "<group>\t<version>\t<file>"
+            sort -t $'\t' -k1,1 -k2,2V | awk -F'\t' -v keep="$KEEP" '
+              { g[$1]++; files[$1, g[$1]] = $3 }
+              END { for (k in g) for (i = 1; i <= g[k] - keep; i++) print files[k, i] }
+            ' | xargs -r -d '\n' rm -v
+          }
+
+          for f in repo/deb/pool/**/*.deb; do
+            printf '%s\t%s\t%s\n' \
+              "$(dpkg-deb -f "$f" Package)/$(dpkg-deb -f "$f" Architecture)" \
+              "$(dpkg-deb -f "$f" Version)" "$f"
+          done | prune
+
+          for f in repo/rpm/"$SUITE"/**/*.rpm; do
+            printf '%s\t%s\t%s\n' \
+              "$(rpm -qp --qf '%{NAME}/%{ARCH}' "$f" 2>/dev/null)" \
+              "$(rpm -qp --qf '%{EPOCHNUM}:%{VERSION}-%{RELEASE}' "$f" 2>/dev/null)" "$f"
+          done | prune
+
+      - name: Build deb indices
+        run: |
+          set -euo pipefail
+          cd repo/deb
+
+          rm -f "dists/$SUITE/Release" "dists/$SUITE/Release.gpg" "dists/$SUITE/InRelease"
+
+          for arch in amd64 arm64; do
+            d="dists/$SUITE/main/binary-$arch"
+            mkdir -p "$d"
+            dpkg-scanpackages --multiversion --arch "$arch" pool > "$d/Packages"
+            gzip -9kf "$d/Packages"
+          done
+
+          # Write Release outside the scanned tree: redirecting straight into
+          # dists/$SUITE/Release makes apt-ftparchive hash the (empty) file
+          # it is currently writing into itself.
+          tmp=$(mktemp)
+          apt-ftparchive \
+            -o APT::FTPArchive::Release::Origin="Nextcloud Office" \
+            -o APT::FTPArchive::Release::Label="Nextcloud Office" \
+            -o APT::FTPArchive::Release::Suite="$SUITE" \
+            -o APT::FTPArchive::Release::Codename="$SUITE" \
+            -o APT::FTPArchive::Release::Components=main \
+            -o APT::FTPArchive::Release::Architectures="amd64 arm64" \
+            release "dists/$SUITE" > "$tmp"
+          mv "$tmp" "dists/$SUITE/Release"
+          chmod 644 "dists/$SUITE/Release"
+
+          gpg --batch --yes --default-key "$KEYID" --digest-algo SHA512 \
+            --clearsign -o "dists/$SUITE/InRelease" "dists/$SUITE/Release"
+          gpg --batch --yes --default-key "$KEYID" --digest-algo SHA512 \
+            -abs -o "dists/$SUITE/Release.gpg" "dists/$SUITE/Release"
+
+          echo "--- packages in the index ---"
+          for arch in amd64 arm64; do
+            echo "$arch: $(grep -c '^Package:' "dists/$SUITE/main/binary-$arch/Packages" || true)"
+          done
+
+      - name: Build rpm indices
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for d in repo/rpm/"$SUITE"/*/; do
+            # Drop the old signature first; createrepo_c will not overwrite it
+            # and a stale .asc fails verification on the client.
+            rm -f "${d}repodata/repomd.xml.asc"
+            createrepo_c --update "$d"
+            gpg --batch --yes --default-key "$KEYID" \
+              --detach-sign --armor "${d}repodata/repomd.xml"
+          done
+
+      - name: Export public key
+        run: gpg --armor --export "$KEYID" > repo/nextcloud-office.asc
+
+      - name: Publish
+        run: |
+          set -euo pipefail
+          after=$(find repo -type f \( -name '*.deb' -o -name '*.rpm' \) | wc -l)
+          echo "--- archive after merge ($after packages, before: $PKGS_BEFORE) ---"
+          find repo -type f \( -name '*.deb' -o -name '*.rpm' \) | sort
+          # Last line of defence before --delete.
+          [ "$after" -gt 0 ] || { echo "::error::refusing to publish an empty archive"; exit 1; }
+
+          # Phase 1: add new packages without touching indices or deleting
+          # anything, so clients never see an index that points at a
+          # package that is not there yet.
+          rsync -a --info=stats2 -e "$SSH_CMD" \
+            --exclude='dists/' --exclude='repodata/' \
+            repo/ "$REMOTE:$REMOTE_BASE/repo/"
+          # Phase 2: swap in indices + signatures, drop pruned packages.
+          rsync -a --delete --delay-updates --info=stats2 -e "$SSH_CMD" \
+            repo/ "$REMOTE:$REMOTE_BASE/repo/"
+
+      - name: Release archive lock
+        if: always() && env.LOCK_HELD == '1'
+        run: $SSH_CMD "$REMOTE" "rmdir '$REMOTE_BASE/.repo-lock'" || true

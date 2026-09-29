@@ -279,6 +279,7 @@ jobs:
           no-cache: ${{ steps.meta.outputs.no_cache == 'true' }}
           pull: ${{ steps.meta.outputs.no_cache == 'true' }}
           set: |
+            *.context=..
             core.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}core-buildcache-${{ matrix.arch }}
             core.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}core-buildcache-${{ matrix.arch }},mode=max
             core.tags=
@@ -356,11 +357,24 @@ jobs:
           chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
-          TARGET="$REMOTE_BASE/$PRODUCT_VERSION/$BUILD_NUMBER"
+          TARGET="$REMOTE_BASE/docserver/$PRODUCT_VERSION/$BUILD_NUMBER"
           ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "mkdir -p '$TARGET'"
           scp -i ~/.ssh/id_deploy -P "$SSH_PORT" \
             build/deploy/packages/*.deb build/deploy/packages/*.rpm \
             "$SSH_USER@$SSH_HOST:$TARGET/"
+
+      # Handed to the publish-repo job below. Same gate as publish-repo, so
+      # only stable tags ever produce these artifacts.
+      - name: Upload packages as artifact (nextcloud-office)
+        if: matrix.brand.name == 'nextcloud-office' && startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nc-packages-${{ matrix.arch }}
+          path: |
+            build/deploy/packages/*.deb
+            build/deploy/packages/*.rpm
+          if-no-files-found: error
+          retention-days: 1
 
   # ─────────────────────────────────────────────────────────────
   # MANIFEST
@@ -437,6 +451,29 @@ jobs:
               create_manifest "$repo" "${REF}" "latest"
             done
           fi
+
+  # ─────────────────────────────────────────────────────────────
+  # PUBLISH-REPO
+  #
+  # Merges the nextcloud-office .deb/.rpm packages into the shared
+  # signed APT/DNF archive. Stable tags only (vX.Y.Z-stable.N).
+  # ─────────────────────────────────────────────────────────────
+  publish-repo:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      actions: read
+    uses: ./.github/workflows/publish-repo.yml
+    with:
+      product: documentserver
+      artifact_pattern: 'nc-packages-*'
+    secrets:
+      NEXTCLOUD_SSH_KEY: ${{ secrets.NEXTCLOUD_SSH_KEY }}
+      NEXTCLOUD_SSH_HOST: ${{ secrets.NEXTCLOUD_SSH_HOST }}
+      NEXTCLOUD_SSH_USER: ${{ secrets.NEXTCLOUD_SSH_USER }}
+      NEXTCLOUD_SSH_PORT: ${{ secrets.NEXTCLOUD_SSH_PORT }}
+      NEXTCLOUD_SSH_REMOTE_PATH: ${{ secrets.NEXTCLOUD_SSH_REMOTE_PATH }}
+      NEXTCLOUD_GPG_PRIVATE_KEY: ${{ secrets.NEXTCLOUD_GPG_PRIVATE_KEY }}
 
   e2e:
     runs-on: self-hosted
