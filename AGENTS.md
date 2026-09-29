@@ -71,6 +71,9 @@ Note: builds run against the bind-mounted checkout and can modify it — the web
 
 Troubleshooting: if `make` fails with `Makefile: No such file or directory`, the single-file bind mount of `develop/setup/Makefile` went stale (editing that file on the host replaces its inode). Fix with `docker compose up -d --force-recreate eo` — this also resets all in-container build/deploy state, so previously built components revert to the image's versions and need rebuilding.
 
+For Redis/Valkey topology testing, follow the [develop environment
+documentation](develop/README.md#redis-and-valkey-topology-test-stacks).
+
 ### Test the change
 
 - **Example app** (no Nextcloud needed): open `http://localhost:8080/example/` — create a document, spreadsheet, or presentation and open it in the editor. The welcome page is at `http://localhost:8080/`.

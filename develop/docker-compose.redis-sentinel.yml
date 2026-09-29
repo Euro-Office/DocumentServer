@@ -1,0 +1,104 @@
+services:
+  eo:
+    environment:
+      REDIS_SERVER_HOST: redis-primary
+      REDIS_SERVER_PORT: 6379
+      REDIS_SERVER_USER: default
+      REDIS_SERVER_PASS: redis-test-pass
+      REDIS_SERVER_DB: 0
+      NODE_CONFIG: >-
+        {"services":{"CoAuthoring":{"server":{"editorDataStorage":"editorDataRedis","editorStatStorage":"editorDataRedis"},"redis":{"optionsSentinel":{"name":"mymaster","sentinelRootNodes":[{"host":"redis-sentinel-1","port":26379},{"host":"redis-sentinel-2","port":26379},{"host":"redis-sentinel-3","port":26379}],"nodeClientOptions":{"username":"default","password":"redis-test-pass","database":0},"sentinelClientOptions":{"password":"sentinel-test-pass"}}}}}}
+    depends_on:
+      redis-sentinel-1:
+        condition: service_healthy
+      redis-sentinel-2:
+        condition: service_healthy
+      redis-sentinel-3:
+        condition: service_healthy
+
+  redis-primary:
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    container_name: eo-test-redis-primary-compose
+    command:
+      - ${REDIS_SERVER_COMMAND:-redis-server}
+      - --bind
+      - 0.0.0.0
+      - --port
+      - "6379"
+      - --protected-mode
+      - "no"
+      - --appendonly
+      - "no"
+      - --requirepass
+      - redis-test-pass
+    healthcheck:
+      test: ["CMD-SHELL", "${REDIS_CLI_COMMAND:-redis-cli} -a redis-test-pass ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  redis-replica:
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    container_name: eo-test-redis-replica-compose
+    command:
+      - ${REDIS_SERVER_COMMAND:-redis-server}
+      - --bind
+      - 0.0.0.0
+      - --port
+      - "6379"
+      - --protected-mode
+      - "no"
+      - --appendonly
+      - "no"
+      - --requirepass
+      - redis-test-pass
+      - --masterauth
+      - redis-test-pass
+      - --replicaof
+      - redis-primary
+      - "6379"
+    depends_on:
+      redis-primary:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "${REDIS_CLI_COMMAND:-redis-cli} -a redis-test-pass ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  redis-sentinel-1: &sentinel
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    container_name: eo-test-sentinel-1-compose
+    command:
+      - sh
+      - -c
+      - |
+        printf '%s\n' \
+          'port 26379' \
+          'bind 0.0.0.0' \
+          'protected-mode no' \
+          'sentinel resolve-hostnames yes' \
+          'sentinel announce-hostnames yes' \
+          'sentinel monitor mymaster redis-primary 6379 2' \
+          'sentinel auth-pass mymaster redis-test-pass' \
+          'requirepass sentinel-test-pass' \
+          > /tmp/sentinel.conf
+        exec ${REDIS_SERVER_COMMAND:-redis-server} /tmp/sentinel.conf --sentinel
+    depends_on:
+      redis-primary:
+        condition: service_healthy
+      redis-replica:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "${REDIS_CLI_COMMAND:-redis-cli} -p 26379 -a sentinel-test-pass sentinel master mymaster"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  redis-sentinel-2:
+    <<: *sentinel
+    container_name: eo-test-sentinel-2-compose
+
+  redis-sentinel-3:
+    <<: *sentinel
+    container_name: eo-test-sentinel-3-compose

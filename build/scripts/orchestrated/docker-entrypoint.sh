@@ -43,7 +43,7 @@ case $AMQP_PROTO in
 esac
 
 if [[ -n "$REDIS_SENTINEL_NODES" ]]; then
-  declare -a REDIS_SENTINEL_NODES_ALL=($REDIS_SENTINEL_NODES)
+  IFS=', ' read -ra REDIS_SENTINEL_NODES_ALL <<< "$REDIS_SENTINEL_NODES"
   REDIS_SENTINEL_NODES_ARRAY=()
   for node in "${REDIS_SENTINEL_NODES_ALL[@]}"; do
     host="${node%%:*}"
@@ -54,13 +54,15 @@ if [[ -n "$REDIS_SENTINEL_NODES" ]]; then
   IFS=","
   NODES=$(echo "${REDIS_SENTINEL_NODES_ARRAY[*]}")
   IFS="$OLD_IFS"
-  REDIS_SENTINEL='[ '$NODES' ],'
+  REDIS_SENTINEL='[ '$NODES' ]'
+  REDIS_SENTINEL_OPTIONS='"name": "'${REDIS_SENTINEL_GROUP_NAME:-mymaster}'", "sentinelRootNodes": '$REDIS_SENTINEL', "nodeClientOptions": { "username": "'${REDIS_SERVER_USER:-default}'", "password": "'$REDIS_SERVER_PWD'", "database": '${REDIS_SERVER_DB_NUM:-0}' }, "sentinelClientOptions": { "password": "'$REDIS_SENTINEL_PWD'" }'
 else
-  REDIS_SENTINEL='[ { "host": "'${REDIS_SERVER_HOST:-localhost}'", "port": '${REDIS_SERVER_PORT:-6379}' } ],'
+  REDIS_SENTINEL='[]'
+  REDIS_SENTINEL_OPTIONS=''
 fi
 
 if [[ -n "$REDIS_CLUSTER_NODES" ]]; then
-  declare -a REDIS_CLUSTER_NODES_ALL=($REDIS_CLUSTER_NODES)
+  IFS=', ' read -ra REDIS_CLUSTER_NODES_ALL <<< "$REDIS_CLUSTER_NODES"
   REDIS_CLUSTER_NODES_ARRAY=()
   for node in "${REDIS_CLUSTER_NODES_ALL[@]}"; do
     REDIS_CLUSTER_NODES_ARRAY+=('{ "url": "redis://'$node'" }')
@@ -72,6 +74,35 @@ if [[ -n "$REDIS_CLUSTER_NODES" ]]; then
   REDIS_CLUSTER='"rootNodes": [ '$NODES' ], "defaults": { "username": "'${REDIS_SERVER_USER:-default}'", "password": "'$REDIS_SERVER_PWD'" }'
 else
   REDIS_CLUSTER=''
+fi
+
+# --------------------------------------------------------------------
+# Editor-data storage
+#
+# The server package defaults to editorDataMemory. Keep the storage keys out
+# of NODE_CONFIG unless an operator explicitly selects a backend, so the
+# orchestrated image preserves that default. Values become module names in
+# DocService and must therefore be plain basenames rather than paths or JSON.
+# --------------------------------------------------------------------
+EDITOR_STORAGE_CONFIG=""
+for storage_var in EDITOR_DATA_STORAGE EDITOR_STAT_STORAGE; do
+  storage_value="${!storage_var:-}"
+  if [[ -n "$storage_value" && ! "$storage_value" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    echo "$storage_var must be a plain module name (letters, digits, '_' or '-')." >&2
+    exit 1
+  fi
+done
+
+if [[ -n "${EDITOR_DATA_STORAGE:-}" || -n "${EDITOR_STAT_STORAGE:-}" ]]; then
+  EDITOR_STORAGE_CONFIG='"server": {'
+  if [[ -n "${EDITOR_DATA_STORAGE:-}" ]]; then
+    EDITOR_STORAGE_CONFIG+='"editorDataStorage": "'"$EDITOR_DATA_STORAGE"'"'
+  fi
+  if [[ -n "${EDITOR_STAT_STORAGE:-}" ]]; then
+    [[ "$EDITOR_STORAGE_CONFIG" == *'"editorDataStorage"'* ]] && EDITOR_STORAGE_CONFIG+=', '
+    EDITOR_STORAGE_CONFIG+='"editorStatStorage": "'"$EDITOR_STAT_STORAGE"'"'
+  fi
+  EDITOR_STORAGE_CONFIG+='},'
 fi
 
 # --------------------------------------------------------------------
@@ -111,6 +142,7 @@ export NODE_CONFIG='{
   },
   "services": {
     "CoAuthoring": {
+      '${EDITOR_STORAGE_CONFIG}'
       "sql": {
         "type": "'${DB_TYPE:-postgres}'",
         "dbHost": "'${DB_HOST:-localhost}'",
@@ -129,14 +161,7 @@ export NODE_CONFIG='{
           "db": "'${REDIS_SERVER_DB_NUM:-0}'"
         },
         "optionsCluster": { '${REDIS_CLUSTER}' },
-        "iooptions": {
-          "sentinels": '${REDIS_SENTINEL}'
-          "name": "'${REDIS_SENTINEL_GROUP_NAME:-mymaster}'",
-          "sentinelPassword": "'${REDIS_SENTINEL_PWD}'",
-          "username": "'${REDIS_SERVER_USER:-default}'",
-          "password": "'${REDIS_SERVER_PWD}'",
-          "db": "'${REDIS_SERVER_DB_NUM:-0}'"
-        }
+        "optionsSentinel": { '${REDIS_SENTINEL_OPTIONS}' }
       },
       "token": {
         "enable": {
