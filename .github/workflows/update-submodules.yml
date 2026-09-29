@@ -17,9 +17,11 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
-          submodules: recursive
+          # Submodule contents are not needed: gitlinks are updated in the index
+          # and history is read from commit-only bare clones below.
+          submodules: false
           token: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN }}
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Configure git identity
         run: |
@@ -42,34 +44,30 @@ jobs:
           mapfile -t paths < <(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | awk '{print $2}')
 
           for path in "${paths[@]}"; do
-            if [ ! -d "$path" ]; then
-              echo "Skipping $path — directory not found"
+            old_sha="$(git ls-tree HEAD "$path" | awk '{print $3}')"
+            if [ -z "$old_sha" ]; then
+              echo "Skipping $path — no gitlink in HEAD"
               continue
             fi
-            pushd "$path" > /dev/null
-            old_sha="$(git rev-parse HEAD)"
-            git fetch origin
-            # Resolve the remote's actual default branch (HEAD), falling back to main.
-            git remote set-head origin --auto > /dev/null 2>&1 || true
-            branch="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@')"
-            [ -z "$branch" ] && branch="main"
-            echo "Updating $path → $branch"
-            git checkout "$branch"
-            git reset --hard "origin/$branch"
-            new_sha="$(git rev-parse HEAD)"
+            # Commits only (no trees/blobs): enough to resolve the default branch tip and build the changelog.
+            meta="$RUNNER_TEMP/submodules/$path.git"
+            git clone --quiet --bare --no-tags --filter=tree:0 "$(git config -f .gitmodules --get "submodule.$path.url")" "$meta"
+            branch="$(git -C "$meta" symbolic-ref --short HEAD)"
+            new_sha="$(git -C "$meta" rev-parse HEAD)"
+            echo "Updating $path → $branch ($new_sha)"
+            git update-index --cacheinfo "160000,$new_sha,$path"
             if [ "$old_sha" != "$new_sha" ]; then
-              count="$(git rev-list --count "$old_sha..$new_sha")"
+              count="$(git -C "$meta" rev-list --count "$old_sha..$new_sha")"
               {
                 echo "### $path ($branch) — $count new commit(s)"
                 echo
                 echo '```'
-                git log --no-merges --pretty=format:'%h %s' "$old_sha..$new_sha"
+                git -C "$meta" log --no-merges --pretty=format:'%h %s' "$old_sha..$new_sha"
                 echo
                 echo '```'
                 echo
               } >> "$BODY"
             fi
-            popd > /dev/null
           done
 
       - name: Open PR if submodule pointers changed
