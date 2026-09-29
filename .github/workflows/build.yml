@@ -366,9 +366,7 @@ jobs:
       # Handed to the publish-repo job below. Same gate as publish-repo, so
       # only stable tags ever produce these artifacts.
       - name: Upload packages as artifact (nextcloud-office)
-        if: >-
-          matrix.brand.name == 'nextcloud-office' &&
-          startsWith(github.ref, 'refs/tags/') &&
+        if: matrix.brand.name == 'nextcloud-office' && startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: nc-packages-${{ matrix.arch }}
