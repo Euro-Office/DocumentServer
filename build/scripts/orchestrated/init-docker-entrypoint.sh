@@ -61,7 +61,7 @@ build_plugins() {
   if [[ -n "$PLUGINS_LIST_DEFAULT" ]]; then
     find "$WORK_DIR/sdkjs-plugins" -mindepth 1 -maxdepth 1 -name '{*' -exec rm -rf -- {} +
   fi
-  if [[ "${PLUGINS_MARKET_DISABLED}" == "true" ]]; then
+  if [[ "${PLUGINS_MARKET_DISABLED,,}" =~ ^(true|yes|y|on|1)$ ]]; then
     chmod 755 -R "$WORK_DIR/sdkjs-plugins/marketplace"
     rm -rf "$WORK_DIR/sdkjs-plugins/marketplace"
   fi

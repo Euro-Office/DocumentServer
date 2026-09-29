@@ -61,6 +61,38 @@ ONLYOFFICE_HTTPS_HSTS_MAXAGE="${ONLYOFFICE_HTTPS_HSTS_MAXAGE:-31536000}"
 USE_UNAUTHORIZED_STORAGE="${USE_UNAUTHORIZED_STORAGE:-false}"
 ALLOW_PRIVATE_IP_ADDRESS="${ALLOW_PRIVATE_IP_ADDRESS:-false}"
 ALLOW_META_IP_ADDRESS="${ALLOW_META_IP_ADDRESS:-false}"
+ADMINPANEL_ENABLED="${ADMINPANEL_ENABLED:-false}"
+EXAMPLE_ENABLED="${EXAMPLE_ENABLED:-false}"
+
+# --------------------------------------------------------------------
+# Normalize boolean env vars.
+#
+# Tools such as Ansible or Python-based templating write YAML booleans as
+# "True"/"False", and compose files often use "1"/"yes". Everything below
+# compares against the literal "true", so canonicalize first. Empty values
+# are left untouched so derived defaults (e.g. JWT_ENABLED_INBOX falling
+# back to JWT_ENABLED) keep working.
+# --------------------------------------------------------------------
+normalize_bool() {
+  for _var in "$@"; do
+    _val=$(eval "printf '%s' \"\${$_var:-}\"")
+    case "$_val" in
+      "") ;;
+      [Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Yy]|[Oo][Nn]|1)             eval "$_var=true" ;;
+      [Ff][Aa][Ll][Ss][Ee]|[Nn][Oo]|[Nn]|[Oo][Ff][Ff]|0)         eval "$_var=false" ;;
+      *)
+        echo "WARNING: ${_var}='${_val}' is not a recognized boolean (use true/false); treating it as false" >&2
+        eval "$_var=false"
+        ;;
+    esac
+  done
+}
+
+normalize_bool JWT_ENABLED JWT_ENABLED_INBOX JWT_ENABLED_OUTBOX JWT_IN_BODY \
+  WOPI_ENABLED PLUGINS_ENABLED METRICS_ENABLED GENERATE_FONTS \
+  NGINX_ACCESS_LOG ONLYOFFICE_HTTPS_HSTS_ENABLED \
+  USE_UNAUTHORIZED_STORAGE ALLOW_PRIVATE_IP_ADDRESS ALLOW_META_IP_ADDRESS \
+  ADMINPANEL_ENABLED EXAMPLE_ENABLED
 
 # --------------------------------------------------------------------
 # Validate DB type (standalone image only supports postgres)
@@ -386,14 +418,14 @@ enable_supervisor_program() {
   [ -f "$conf" ] && sed -i 's/^autostart=false$/autostart=true/' "$conf"
 }
 
-[ "${ADMINPANEL_ENABLED:-false}" = "true" ] && enable_supervisor_program ds-adminpanel
-[ "${EXAMPLE_ENABLED:-false}"    = "true" ] && enable_supervisor_program ds-example
+[ "$ADMINPANEL_ENABLED" = "true" ] && enable_supervisor_program ds-adminpanel
+[ "$EXAMPLE_ENABLED"    = "true" ] && enable_supervisor_program ds-example
 [ "$METRICS_ENABLED" = "true" ]              && enable_supervisor_program ds-metrics
 
 # --------------------------------------------------------------------
 # Example app local.json (kept from previous entrypoint).
 # --------------------------------------------------------------------
-if [ "${EXAMPLE_ENABLED:-false}" = "true" ] && [ -d "$EXAMPLE_CONF_DIR" ]; then
+if [ "$EXAMPLE_ENABLED" = "true" ] && [ -d "$EXAMPLE_CONF_DIR" ]; then
   jq -n \
     --arg secret      "$JWT_SECRET" \
     --arg header      "$JWT_HEADER" \

@@ -83,7 +83,29 @@ fi
 # would break signing between them, and a baked-in literal would be public
 # in this repository. Require the operator to supply one while JWT is on.
 # --------------------------------------------------------------------
+# Normalize boolean env vars: accept True/TRUE/yes/on/1 (as written by e.g.
+# Ansible or compose files) and canonicalize to lowercase true/false. The
+# values end up raw inside JSON, where anything else is invalid. Empty values
+# are left untouched so the ${VAR:-default} fallbacks still apply.
+normalize_bool() {
+  local var val
+  for var in "$@"; do
+    val="${!var:-}"
+    case "${val,,}" in
+      "") ;;
+      true|yes|y|on|1)  printf -v "$var" '%s' true ;;
+      false|no|n|off|0) printf -v "$var" '%s' false ;;
+      *)
+        echo "WARNING: ${var}='${val}' is not a recognized boolean (use true/false); treating it as false" >&2
+        printf -v "$var" '%s' false
+        ;;
+    esac
+  done
+}
+
 JWT_ENABLED="${JWT_ENABLED:-true}"
+normalize_bool JWT_ENABLED JWT_ENABLED_INBOX JWT_ENABLED_OUTBOX JWT_IN_BODY \
+  METRICS_ENABLED WOPI_ENABLED ALLOW_PRIVATE_IP_ADDRESS ALLOW_META_IP_ADDRESS
 
 if [[ "${JWT_ENABLED}" == "true" && -z "${JWT_SECRET:-}" ]]; then
   echo "JWT is enabled but JWT_SECRET is not set." >&2
