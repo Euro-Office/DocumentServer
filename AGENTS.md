@@ -110,6 +110,12 @@ All contributions generated or assisted by this agent must fully comply with:
 - **[AI Contribution Policy](https://github.com/Euro-Office/.github/blob/main/AI_POLICY.md)** — the primary reference for AI-specific rules, covering disclosure, author accountability, communication, security, licensing, code quality, and autonomous agent behavior.
 - **[Contribution Guidelines](CONTRIBUTING.md)** — covering testing requirements, sign-off, license headers, and the review process. These apply in full to all contributions regardless of how they were produced.
 
+- For existing, copied or derived files: preserve upstream attribution, dates, licenses, additional terms and modification notices. Add our attribution only for our own copyrightable contributions; do not replace upstream notices or bump years merely for touching a file.
+- For new files we only add our copyright notice as SPDX headers
+- Use SPDX headers for our notices, e.g.:
+    SPDX-FileCopyrightText: 2026 Euro-Office contributors
+    SPDX-License-Identifier: AGPL-3.0-only
+
 ### What this agent must always do
 
 - Add an `Assisted-by: AGENT_NAME:MODEL_VERSION` git trailer to every commit containing AI-assisted content.
