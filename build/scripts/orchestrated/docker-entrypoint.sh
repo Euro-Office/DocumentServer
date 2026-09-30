@@ -87,8 +87,14 @@ fi
 # Ansible or compose files) and canonicalize to lowercase true/false. The
 # values end up raw inside JSON, where anything else is invalid. Empty values
 # are left untouched so the ${VAR:-default} fallbacks still apply.
-normalize_bool() {
-  local var val
+#
+# normalize_bool: an unrecognized value warns and becomes false.
+# require_bool:   an unrecognized value aborts startup. Use it for
+#                 security-relevant flags (JWT), where silently falling back
+#                 to false would disable authentication.
+_normalize_bool() {
+  local mode="$1" var val
+  shift
   for var in "$@"; do
     val="${!var:-}"
     case "${val,,}" in
@@ -96,16 +102,22 @@ normalize_bool() {
       true|yes|y|on|1)  printf -v "$var" '%s' true ;;
       false|no|n|off|0) printf -v "$var" '%s' false ;;
       *)
+        if [[ "$mode" == "strict" ]]; then
+          echo "ERROR: ${var}='${val}' is not a recognized boolean (use true or false). Refusing to start rather than guess." >&2
+          exit 1
+        fi
         echo "WARNING: ${var}='${val}' is not a recognized boolean (use true/false); treating it as false" >&2
         printf -v "$var" '%s' false
         ;;
     esac
   done
 }
+normalize_bool() { _normalize_bool lenient "$@"; }
+require_bool()   { _normalize_bool strict "$@"; }
 
 JWT_ENABLED="${JWT_ENABLED:-true}"
-normalize_bool JWT_ENABLED JWT_ENABLED_INBOX JWT_ENABLED_OUTBOX JWT_IN_BODY \
-  METRICS_ENABLED WOPI_ENABLED ALLOW_PRIVATE_IP_ADDRESS ALLOW_META_IP_ADDRESS
+require_bool JWT_ENABLED JWT_ENABLED_INBOX JWT_ENABLED_OUTBOX
+normalize_bool JWT_IN_BODY METRICS_ENABLED WOPI_ENABLED ALLOW_PRIVATE_IP_ADDRESS ALLOW_META_IP_ADDRESS
 
 if [[ "${JWT_ENABLED}" == "true" && -z "${JWT_SECRET:-}" ]]; then
   echo "JWT is enabled but JWT_SECRET is not set." >&2
