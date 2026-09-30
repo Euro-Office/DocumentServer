@@ -1,0 +1,91 @@
+name: Close unassigned old issues
+
+on:
+
+  schedule:
+    - cron: '44 4 * * 0'
+
+  # Allows manual testing from the Actions tab.
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+concurrency:
+  group: close-unassigned-old-issues
+  cancel-in-progress: false
+
+jobs:
+  close-old-issues:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Close unassigned issues older than 100 days
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            // Change this value to adjust the maximum supported issue age.
+            const maximumIssueAgeDays = 100;
+
+            // Calculate the date before which an issue is eligible for closure.
+            const maximumAgeCutoff = new Date(
+              Date.now() - maximumIssueAgeDays * 24 * 60 * 60 * 1000
+            );
+            
+            // Retrieve all open repository issues from oldest to newest.
+            // github.paginate handles repositories with more than 100 open issues.
+            const issues = await github.paginate(
+              github.rest.issues.listForRepo,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'open',
+                sort: 'created',
+                direction: 'asc',
+                per_page: 100,
+              }
+            );
+
+            for (const issue of issues) {
+              // GitHub's Issues API also returns pull requests; do not process them.
+              if (issue.pull_request) continue;
+
+              // Only issues older than the configured age are eligible.
+              const createdAt = new Date(issue.created_at);
+
+              // Issues are ordered oldest first. Once an issue is newer than the
+              // maximum permitted age, all remaining issues are also too new.
+              if (createdAt >= maximumAgeCutoff) break;
+
+              // Only process issues that have no assigned developers.
+              if (issue.assignees.length > 0) continue;
+
+              // Explain the closure before changing the issue state.
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: [
+                  'Thank you for taking the time to report this issue.',
+                  '',
+                  'Unfortunately, this issue has not received attention from the community due to other project priorities.',
+                  '',
+                  'If the problem still exists, please open a new issue and include any additional details, reproduction steps, logs, environment information, or other context beyond what was originally provided.',
+                  '',
+                  'This issue is being closed as not planned. Sorry.',
+                ].join('\n'),
+              });
+
+              // Close the issue and explicitly set GitHub's "not planned" reason.
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed',
+                state_reason: 'not_planned',
+              });
+
+              core.info(
+                `Closed unassigned issue #${issue.number} as not planned.`
+              );
+            }
