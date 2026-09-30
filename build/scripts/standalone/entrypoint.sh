@@ -418,12 +418,17 @@ fi
 update_welcome_page() {
   WELCOME_PAGE="${EO_ROOT}-example/welcome/docker.html"
   EXAMPLE_DISABLED_PAGE="${EO_ROOT}-example/welcome/example-disabled.html"
+  ADMIN_DISABLED_PAGE="${EO_ROOT}-example/welcome/admin-disabled.html"
 
   sed 's/linux/docker/' -i /etc/nginx/includes/ds-example.conf
 
   [ -f "$EXAMPLE_DISABLED_PAGE" ] && \
-    sed -i 's|sudo systemctl start ds-example|sudo docker exec $(sudo docker ps -q) supervisorctl start ds:example|g' \
+    sed -i 's|sudo systemctl start ds-example|sudo docker exec $(sudo docker ps -q) supervisorctl start example|g' \
         "$EXAMPLE_DISABLED_PAGE"
+
+  [ -f "$ADMIN_DISABLED_PAGE" ] && \
+    sed -i 's|sudo systemctl start ds-adminpanel|sudo docker exec $(sudo docker ps -q) supervisorctl start adminpanel|g' \
+        "$ADMIN_DISABLED_PAGE"
 
   if [ -e "$WELCOME_PAGE" ]; then
     DOCKER_CONTAINER_ID=$(basename "$(cat /proc/1/cpuset 2>/dev/null)")
