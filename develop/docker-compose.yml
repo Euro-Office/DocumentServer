@@ -17,6 +17,7 @@ services:
     environment:
       ALLOW_PRIVATE_IP_ADDRESS: true
       USE_UNAUTHORIZED_STORAGE: true
+      EXAMPLE_ENABLED: true
       JWT_SECRET: ${EO_JWT_SECRET:-euro-office-dev-jwt-secret-key-2026}
       THEME: euro-office
     volumes:
