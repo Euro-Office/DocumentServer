@@ -78,7 +78,7 @@ Troubleshooting: if `make` fails with `Makefile: No such file or directory`, the
 - **Conversion check**: opening a `.docx`/`.xlsx` in the example app exercises FileConverter + x2t; watch `converter/out.log` for errors.
 - **Nextcloud connector flow** (only when testing the integration): `docker compose up -d`, then `make refresh-urls` to wait for install and wire URLs/JWT; Nextcloud at `http://localhost:8081/` (admin/admin).
 
-### Error reporting (GlitchTip)
+### Error reporting (GlitchTip or Sentry)
 
 The opt-in `sentry` profile runs [GlitchTip](https://glitchtip.com/), a Sentry-compatible error tracker, next to `eo`:
 
@@ -90,6 +90,8 @@ docker compose --profile sentry up -d glitchtip glitchtip-db
 1. Open http://localhost:8083, register a user, create an organization and a project, and copy the project's DSN.
 2. Replace the DSN host with the in-network service name, e.g. `http://<key>@glitchtip:8000/<id>`, and put it in `develop/.env` (gitignored) as `EO_SENTRY_DSN=...`.
 3. Recreate the server with `docker compose up -d eo`; it receives the value as `SENTRY_DSN`. Empty or unset means reporting is disabled.
+
+To use Sentry instead, create a Node.js project on [sentry.io](https://sentry.io), set its DSN as `EO_SENTRY_DSN` unchanged, and skip the profile. Events then leave your machine, so only use it with test documents.
 
 The server-side reporter that reads `SENTRY_DSN` lands in stage 2 of #392. `eo.sh` instances are not on the compose network and cannot reach `glitchtip`.
 
