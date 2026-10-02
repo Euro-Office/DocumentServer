@@ -7,6 +7,7 @@ set -e
 EO_ROOT="${EO_ROOT:-/var/www/euro-office/documentserver}"
 EO_LOG="${EO_LOG:-/var/log/euro-office/documentserver}"
 EO_CONF="${EO_CONF:-/etc/euro-office/documentserver}"
+EO_LIB="${EO_LIB:-/var/lib/euro-office/documentserver}"
 DATA_DIR="/var/www/euro-office/Data"
 PRIVATE_DIR="${DATA_DIR}/.private"
 CONFIG_FILE="${EO_CONF}/local.json"
@@ -468,8 +469,10 @@ fi
 #
 # The UIDs are pinned in the Dockerfile now, so this cannot recur, but
 # volumes written before that still carry the old ones and a bind mount can
-# arrive owned by anything. Chown only what is actually mismatched, since
-# the data directories can be large.
+# arrive owned by anything. That includes $EO_LIB, where the converter
+# creates App_Data, which is commonly mounted alongside $DATA_DIR (#335).
+# Chown only what is actually mismatched, since the data directories can be
+# large.
 # --------------------------------------------------------------------
 ensure_owner() {
   owner="$1"
@@ -490,7 +493,7 @@ ensure_owner() {
 
 [ "$DB_HOST"   = "localhost" ] && ensure_owner postgres /var/lib/postgresql
 [ "$AMQP_HOST" = "localhost" ] && [ -z "${AMQP_URI:-}" ] && ensure_owner rabbitmq /var/lib/rabbitmq
-ensure_owner ds "$DATA_DIR" "$EO_LOG"
+ensure_owner ds "$DATA_DIR" "$EO_LOG" "$EO_LIB"
 
 # $DATA_DIR holds the persisted secrets and the repair above is recursive, so
 # put the owner back: on a fresh install $PRIVATE_DIR is root-owned (mode 700,

@@ -2,7 +2,7 @@
 # Helpers for the upgrade-path job in build.yml. Sourced, not executed: the two
 # steps that boot a container run in separate shells and both need `boot`.
 #
-# Expects VOLUME_DB, VOLUME_DATA and BOOT_TIMEOUT from the job env.
+# Expects VOLUME_DB, VOLUME_DATA, VOLUME_LIB and BOOT_TIMEOUT from the job env.
 
 # boot <image> <container-name> — start the standalone image on the shared
 # volumes and block until /healthcheck answers true. Fails fast if the
@@ -15,6 +15,7 @@ boot() {
   docker run -d --name "$name" \
     -v "${VOLUME_DB}:/var/lib/postgresql" \
     -v "${VOLUME_DATA}:/var/www/euro-office/Data" \
+    -v "${VOLUME_LIB}:/var/lib/euro-office/documentserver" \
     "$image" >/dev/null
 
   deadline=$(( $(date +%s) + BOOT_TIMEOUT ))
