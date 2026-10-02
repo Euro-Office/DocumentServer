@@ -32,6 +32,12 @@ services:
       REDIS_SERVER_USER: default
       REDIS_SERVER_PASS: redis-test-pass
       REDIS_SERVER_DB: 0
+      TEST_REDIS_CLUSTER: "true"
+      TEST_REDIS_CLUSTER_NODES: redis://redis-cluster-1:7000,redis://redis-cluster-2:7001,redis://redis-cluster-3:7002,redis://redis-cluster-4:7003,redis://redis-cluster-5:7004,redis://redis-cluster-6:7005
+      TEST_REDIS_NODE_PASSWORD: redis-test-pass
+      TEST_REDIS_TOPOLOGY_REQUIRED: "true"
+      TEST_REDIS_CLUSTER_PRIMARY_CONTAINER: eo-test-redis-cluster-1-compose
+      TEST_REDIS_CLUSTER_FAILOVER_REPLICA_PORT: 7003
       NODE_CONFIG: >-
         {"services":{"CoAuthoring":{"server":{"editorDataStorage":"editorDataRedis","editorStatStorage":"editorDataRedis"},"redis":{"optionsCluster":{"rootNodes":[{"url":"redis://redis-cluster-1:7000"},{"url":"redis://redis-cluster-2:7001"},{"url":"redis://redis-cluster-3:7002"},{"url":"redis://redis-cluster-4:7003"},{"url":"redis://redis-cluster-5:7004"},{"url":"redis://redis-cluster-6:7005"}],"defaults":{"username":"default","password":"redis-test-pass"}}}}}}
     depends_on:

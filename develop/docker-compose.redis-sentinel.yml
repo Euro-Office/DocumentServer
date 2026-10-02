@@ -6,6 +6,13 @@ services:
       REDIS_SERVER_USER: default
       REDIS_SERVER_PASS: redis-test-pass
       REDIS_SERVER_DB: 0
+      TEST_REDIS_SENTINEL: "true"
+      TEST_REDIS_SENTINEL_NODES: redis://redis-sentinel-1:26379,redis://redis-sentinel-2:26379,redis://redis-sentinel-3:26379
+      TEST_REDIS_NODE_PASSWORD: redis-test-pass
+      TEST_REDIS_SENTINEL_PASSWORD: sentinel-test-pass
+      TEST_REDIS_TOPOLOGY_REQUIRED: "true"
+      TEST_REDIS_SENTINEL_PRIMARY_CONTAINER: eo-test-redis-primary-compose
+      TEST_REDIS_SENTINEL_REPLICA_PORT: 6379
       NODE_CONFIG: >-
         {"services":{"CoAuthoring":{"server":{"editorDataStorage":"editorDataRedis","editorStatStorage":"editorDataRedis"},"redis":{"optionsSentinel":{"name":"mymaster","sentinelRootNodes":[{"host":"redis-sentinel-1","port":26379},{"host":"redis-sentinel-2","port":26379},{"host":"redis-sentinel-3","port":26379}],"nodeClientOptions":{"username":"default","password":"redis-test-pass","database":0},"sentinelClientOptions":{"password":"sentinel-test-pass"}}}}}}
     depends_on:
