@@ -6,8 +6,10 @@ services:
       REDIS_SERVER_USER: default
       REDIS_SERVER_PASS: redis-test-pass
       REDIS_SERVER_DB: 0
+      TEST_REDIS_FAILURE_CONTAINER: eo-test-redis-compose
+      TEST_REDIS_NODE_PASSWORD: redis-test-pass
       NODE_CONFIG: >-
-        {"services":{"CoAuthoring":{"server":{"editorDataStorage":"editorDataRedis","editorStatStorage":"editorDataRedis"}}}}
+        {"services":{"CoAuthoring":{"server":{"editorDataStorage":"editorDataRedis","editorStatStorage":"editorDataRedis"},"redis":{"host":"redis","port":6379,"options":{"password":"redis-test-pass"}}}}}
     depends_on:
       redis:
         condition: service_healthy

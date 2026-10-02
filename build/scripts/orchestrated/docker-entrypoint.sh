@@ -42,39 +42,27 @@ case $AMQP_PROTO in
     ;;
 esac
 
-if [[ -n "$REDIS_SENTINEL_NODES" ]]; then
-  IFS=', ' read -ra REDIS_SENTINEL_NODES_ALL <<< "$REDIS_SENTINEL_NODES"
-  REDIS_SENTINEL_NODES_ARRAY=()
-  for node in "${REDIS_SENTINEL_NODES_ALL[@]}"; do
-    host="${node%%:*}"
-    port="${node##*:}"
-    REDIS_SENTINEL_NODES_ARRAY+=('{ "host": "'$host'", "port": '$port' }')
-  done
-  OLD_IFS="$IFS"
-  IFS=","
-  NODES=$(echo "${REDIS_SENTINEL_NODES_ARRAY[*]}")
-  IFS="$OLD_IFS"
-  REDIS_SENTINEL='[ '$NODES' ]'
-  REDIS_SENTINEL_OPTIONS='"name": "'${REDIS_SENTINEL_GROUP_NAME:-mymaster}'", "sentinelRootNodes": '$REDIS_SENTINEL', "nodeClientOptions": { "username": "'${REDIS_SERVER_USER:-default}'", "password": "'$REDIS_SERVER_PWD'", "database": '${REDIS_SERVER_DB_NUM:-0}' }, "sentinelClientOptions": { "password": "'$REDIS_SENTINEL_PWD'" }'
-else
-  REDIS_SENTINEL='[]'
-  REDIS_SENTINEL_OPTIONS=''
+REDIS_TOPOLOGY_HELPER="${REDIS_TOPOLOGY_HELPER:-$(dirname "$0")/../redis-topology.sh}"
+[ -r "$REDIS_TOPOLOGY_HELPER" ] || REDIS_TOPOLOGY_HELPER=/usr/local/lib/euro-office/redis-topology.sh
+. "$REDIS_TOPOLOGY_HELPER"
+redis_topology_init
+REDIS_SENTINEL_OPTIONS='{}'
+if [[ "$REDIS_SENTINEL_REQUESTED" == true ]]; then
+  REDIS_SENTINEL_OPTIONS=$(redis_build_sentinel_options \
+    "$REDIS_SENTINEL_GROUP_NAME" "$REDIS_SENTINEL_NODES_JSON" \
+    "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PWD:-}" "${REDIS_SERVER_DB_NUM:-0}" \
+    "$REDIS_SENTINEL_USER" "$REDIS_SENTINEL_PASS")
 fi
-
-if [[ -n "$REDIS_CLUSTER_NODES" ]]; then
-  IFS=', ' read -ra REDIS_CLUSTER_NODES_ALL <<< "$REDIS_CLUSTER_NODES"
-  REDIS_CLUSTER_NODES_ARRAY=()
-  for node in "${REDIS_CLUSTER_NODES_ALL[@]}"; do
-    REDIS_CLUSTER_NODES_ARRAY+=('{ "url": "redis://'$node'" }')
-  done
-  OLD_IFS="$IFS"
-  IFS=","
-  NODES=$(echo "${REDIS_CLUSTER_NODES_ARRAY[*]}")
-  IFS="$OLD_IFS"
-  REDIS_CLUSTER='"rootNodes": [ '$NODES' ], "defaults": { "username": "'${REDIS_SERVER_USER:-default}'", "password": "'$REDIS_SERVER_PWD'" }'
-else
-  REDIS_CLUSTER=''
+REDIS_CLUSTER='{}'
+if [[ -n "${REDIS_CLUSTER_NODES:-}" ]]; then
+  REDIS_CLUSTER=$(redis_build_cluster_options "$REDIS_CLUSTER_NODES_JSON" \
+    "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PWD:-}")
 fi
+REDIS_OPTIONS=$(jq -cn \
+  --arg redisUser "${REDIS_SERVER_USER:-}" \
+  --arg redisPass "${REDIS_SERVER_PWD:-}" \
+  --arg redisDb "${REDIS_SERVER_DB_NUM:-0}" \
+  '{user: (if $redisUser != "" then $redisUser else null end), password: (if $redisPass != "" then $redisPass else null end), db: $redisDb} | with_entries(select(.value != null))')
 
 # --------------------------------------------------------------------
 # Editor-data storage
@@ -155,13 +143,9 @@ export NODE_CONFIG='{
         "name": "'${REDIS_CONNECTOR_NAME:-redis}'",
         "host": "'${REDIS_SERVER_HOST:-${REDIST_SERVER_HOST:-localhost}}'",
         "port": '${REDIS_SERVER_PORT:-${REDIST_SERVER_PORT:-6379}}',
-        "options": {
-          "user": "'${REDIS_SERVER_USER:-default}'",
-          "password": "'${REDIS_SERVER_PWD}'",
-          "db": "'${REDIS_SERVER_DB_NUM:-0}'"
-        },
-        "optionsCluster": { '${REDIS_CLUSTER}' },
-        "optionsSentinel": { '${REDIS_SENTINEL_OPTIONS}' }
+        "options": '${REDIS_OPTIONS}',
+        "optionsCluster": '${REDIS_CLUSTER}',
+        "optionsSentinel": '${REDIS_SENTINEL_OPTIONS}'
       },
       "token": {
         "enable": {
@@ -256,6 +240,11 @@ export NODE_CONFIG='{
     "storageFolderName": "files"
   }
 }'
+
+if [[ "${ENTRYPOINT_CONFIG_ONLY:-false}" == "true" ]]; then
+  printf '%s\n' "$NODE_CONFIG"
+  exit 0
+fi
 
 WORK_DIR="/var/www/$COMPANY_NAME/documentserver"
 BUILD_FONTS=false
