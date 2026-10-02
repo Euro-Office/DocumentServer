@@ -7,7 +7,7 @@ set -e
 EO_ROOT="${EO_ROOT:-/var/www/euro-office/documentserver}"
 EO_LOG="${EO_LOG:-/var/log/euro-office/documentserver}"
 EO_CONF="${EO_CONF:-/etc/euro-office/documentserver}"
-DATA_DIR="/var/www/euro-office/Data"
+DATA_DIR="${DATA_DIR:-/var/www/euro-office/Data}"
 PRIVATE_DIR="${DATA_DIR}/.private"
 CONFIG_FILE="${EO_CONF}/local.json"
 LOG4JS_CONFIG="${EO_CONF}/log4js/production.json"
@@ -40,6 +40,11 @@ AMQP_START_TIMEOUT="${AMQP_START_TIMEOUT:-60}"
 
 REDIS_SERVER_HOST="${REDIS_SERVER_HOST:-localhost}"
 REDIS_SERVER_PORT="${REDIS_SERVER_PORT:-6379}"
+
+REDIS_TOPOLOGY_HELPER="${REDIS_TOPOLOGY_HELPER:-$(dirname "$0")/../redis-topology.sh}"
+[ -r "$REDIS_TOPOLOGY_HELPER" ] || REDIS_TOPOLOGY_HELPER=/usr/local/lib/euro-office/redis-topology.sh
+. "$REDIS_TOPOLOGY_HELPER"
+redis_topology_init
 
 WOPI_ENABLED="${WOPI_ENABLED:-false}"
 PLUGINS_ENABLED="${PLUGINS_ENABLED:-true}"
@@ -165,7 +170,8 @@ waiting_for_connection() {
 }
 
 [ "$DB_HOST" != "localhost" ] && waiting_for_connection "$DB_HOST" "$DB_PORT"
-[ "$REDIS_SERVER_HOST" != "localhost" ] && waiting_for_connection "$REDIS_SERVER_HOST" "$REDIS_SERVER_PORT"
+[ "$REDIS_SERVER_HOST" != "localhost" ] && [ "$REDIS_SENTINEL_REQUESTED" != true ] && \
+  waiting_for_connection "$REDIS_SERVER_HOST" "$REDIS_SERVER_PORT"
 if [ -n "${AMQP_URI:-}" ]; then
   : # caller picks their host; we don't parse the URI here
 elif [ "$AMQP_HOST" != "localhost" ]; then
@@ -211,6 +217,23 @@ jq_set '.services.CoAuthoring.redis.port = ($redisPort | tonumber? // $redisPort
 [ -n "${REDIS_SERVER_USER:-}" ] && jq_set '.services.CoAuthoring.redis.options.username = $redisUser'
 [ -n "${REDIS_SERVER_PASS:-}" ] && jq_set '.services.CoAuthoring.redis.options.password = $redisPass'
 [ -n "${REDIS_SERVER_DB:-}"   ] && jq_set '.services.CoAuthoring.redis.options.database = ($redisDb | tonumber? // $redisDb)'
+
+# Redis topology. The server adapter consumes optionsSentinel directly; do not
+# silently leave Sentinel configuration out.
+REDIS_SENTINEL_OPTIONS_JSON='{}'
+if [ "$REDIS_SENTINEL_REQUESTED" = true ]; then
+  REDIS_SENTINEL_OPTIONS_JSON=$(redis_build_sentinel_options \
+    "$REDIS_SENTINEL_GROUP_NAME" "$REDIS_SENTINEL_NODES_JSON" \
+    "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PASS:-}" "${REDIS_SERVER_DB:-0}" \
+    "$REDIS_SENTINEL_USER" "$REDIS_SENTINEL_PASS")
+fi
+REDIS_CLUSTER_OPTIONS_JSON='{}'
+if [ -n "${REDIS_CLUSTER_NODES:-}" ]; then
+  REDIS_CLUSTER_OPTIONS_JSON=$(redis_build_cluster_options "$REDIS_CLUSTER_NODES_JSON" \
+    "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PASS:-}")
+fi
+jq_set '.services.CoAuthoring.redis.optionsSentinel = $redisSentinelOptions'
+jq_set '.services.CoAuthoring.redis.optionsCluster = $redisClusterOptions'
 
 # AMQP / RabbitMQ
 if [ -n "${AMQP_URI:-}" ]; then
@@ -302,6 +325,8 @@ jq \
   --arg redisUser        "${REDIS_SERVER_USER:-}" \
   --arg redisPass        "${REDIS_SERVER_PASS:-}" \
   --arg redisDb          "${REDIS_SERVER_DB:-}" \
+  --argjson redisSentinelOptions "$REDIS_SENTINEL_OPTIONS_JSON" \
+  --argjson redisClusterOptions "$REDIS_CLUSTER_OPTIONS_JSON" \
   --arg amqpUri          "$AMQP_URI_VALUE" \
   --arg wopiEnabled      "$WOPI_ENABLED" \
   --arg wopiPriv         "$WOPI_PRIVATE_KEY_DATA" \
@@ -317,6 +342,12 @@ jq \
   "$jq_filter" \
   "$CONFIG_FILE" > "${CONFIG_FILE}.tmp"
 mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+
+# Allow the standalone configuration generation to be tested without starting
+# bundled services. This is intentionally limited to the generated config.
+if [ "${ENTRYPOINT_CONFIG_ONLY:-false}" = "true" ]; then
+  exit 0
+fi
 
 # --------------------------------------------------------------------
 # log4js level
@@ -561,7 +592,7 @@ if [ "$AMQP_HOST" = "localhost" ] && [ -z "${AMQP_URI:-}" ]; then
   start_rabbitmq \
     || echo "ERROR: RabbitMQ did not become ready within ${AMQP_START_TIMEOUT}s; docservice will fail to connect." >&2
 fi
-[ "$REDIS_SERVER_HOST"  = "localhost" ] && service redis-server start
+[ "$REDIS_SERVER_HOST"  = "localhost" ] && [ "$REDIS_SENTINEL_REQUESTED" != true ] && service redis-server start
 service nginx start
 
 # --------------------------------------------------------------------
