@@ -539,6 +539,7 @@ jobs:
       CONTAINER: eo-upgrade-${{ github.run_id }}
       VOLUME_DB: eo-upgrade-db-${{ github.run_id }}
       VOLUME_DATA: eo-upgrade-data-${{ github.run_id }}
+      VOLUME_LIB: eo-upgrade-lib-${{ github.run_id }}
       BOOT_TIMEOUT: 300
 
     steps:
@@ -586,6 +587,7 @@ jobs:
 
           docker volume create "$VOLUME_DB" >/dev/null
           docker volume create "$VOLUME_DATA" >/dev/null
+          docker volume create "$VOLUME_LIB" >/dev/null
           boot "$FROM_IMAGE" "$CONTAINER-old"
 
           # A row of our own, so the check after the upgrade proves the same
@@ -603,6 +605,12 @@ jobs:
           set -euo pipefail
           . .github/scripts/upgrade-lib.sh
 
+          # Hand the ds-owned volumes to a foreign owner, the way a bind mount
+          # created on the host arrives (#335), so the boot has to repair them.
+          docker run --rm --entrypoint chown \
+            -v "${VOLUME_DATA}:/data" -v "${VOLUME_LIB}:/lib-ds" \
+            "$IMAGE_REF" 65534:65534 /data /lib-ds
+
           boot "$IMAGE_REF" "$CONTAINER-new"
 
           probe=$(docker exec "$CONTAINER-new" sudo -u postgres psql -tAq -d eurooffice \
@@ -611,10 +619,17 @@ jobs:
             echo "::error::Postgres data from the previous release did not survive the upgrade (probe='$probe')"
             exit 1
           fi
-          echo "Upgrade check passed: pre-existing Postgres volume in use after the upgrade."
+          for dir in /var/www/euro-office/Data /var/lib/euro-office/documentserver; do
+            owner=$(docker exec "$CONTAINER-new" stat -c '%U' "$dir")
+            if [ "$owner" != "ds" ]; then
+              echo "::error::$dir is owned by '$owner' after boot, expected ds"
+              exit 1
+            fi
+          done
+          echo "Upgrade check passed: pre-existing Postgres volume in use after the upgrade, ds volumes repaired."
 
       - name: Clean up
         if: always()
         run: |
           docker rm -f "$CONTAINER-old" "$CONTAINER-new" >/dev/null 2>&1 || true
-          docker volume rm -f "$VOLUME_DB" "$VOLUME_DATA" >/dev/null 2>&1 || true
+          docker volume rm -f "$VOLUME_DB" "$VOLUME_DATA" "$VOLUME_LIB" >/dev/null 2>&1 || true
