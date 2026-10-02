@@ -6,40 +6,88 @@ ENTRYPOINT="$SCRIPT_DIR/docker-entrypoint.sh"
 TRACE=$(mktemp)
 trap 'rm -f "$TRACE"' EXIT
 
+run_config() {
+  env -i \
+    PATH="$PATH" \
+    COMPANY_NAME=euro-office \
+    JWT_ENABLED=false \
+    ENTRYPOINT_CONFIG_ONLY=true \
+    "$@" \
+    bash "$ENTRYPOINT" docservice
+}
+
+assert_config() {
+  local config=$1
+  local expression=$2
+  printf '%s' "$config" | jq -e "$expression" >/dev/null
+}
+
+unauthenticated_config=$(run_config \
+  EDITOR_DATA_STORAGE=editorDataRedis \
+  EDITOR_STAT_STORAGE=editorDataRedis \
+  REDIS_SENTINEL_NODES='sentinel-a:26379 sentinel-b:26380')
+assert_config "$unauthenticated_config" '
+  .services.CoAuthoring.redis.optionsSentinel == {
+    name: "mymaster",
+    sentinelRootNodes: [
+      {host: "sentinel-a", port: 26379},
+      {host: "sentinel-b", port: 26380}
+    ],
+    nodeClientOptions: {database: 0},
+    sentinelClientOptions: {}
+  } and
+  .services.CoAuthoring.redis.optionsCluster == {} and
+  .services.CoAuthoring.server.editorDataStorage == "editorDataRedis" and
+  .services.CoAuthoring.server.editorStatStorage == "editorDataRedis"
+'
+
+authenticated_config=$(run_config \
+  REDIS_SERVER_USER=redis-user \
+  REDIS_SERVER_PWD=redis-pass \
+  REDIS_SENTINEL_USER=sentinel-user \
+  REDIS_SENTINEL_PWD=sentinel-pass \
+  REDIS_SENTINEL_NODES='sentinel-a:26379')
+assert_config "$authenticated_config" '
+  .services.CoAuthoring.redis.optionsSentinel == {
+    name: "mymaster",
+    sentinelRootNodes: [{host: "sentinel-a", port: 26379}],
+    nodeClientOptions: {database: 0, username: "redis-user", password: "redis-pass"},
+    sentinelClientOptions: {username: "sentinel-user", password: "sentinel-pass"}
+  }
+'
+
 set +e
 env -i \
   PATH="$PATH" \
   COMPANY_NAME=euro-office \
   JWT_ENABLED=false \
-  EDITOR_DATA_STORAGE=editorDataRedis \
-  EDITOR_STAT_STORAGE=editorDataRedis \
-  REDIS_SENTINEL_NODES='sentinel-a:26379 sentinel-b:26380' \
-  REDIS_CLUSTER_NODES='cluster-a:7000 cluster-b:7001' \
-  bash -x "$ENTRYPOINT" docservice >"$TRACE" 2>&1
+  REDIS_SENTINEL_NODES='sentinel-a:26379' \
+  REDIS_CLUSTER_NODES='cluster-a:7000' \
+  bash "$ENTRYPOINT" docservice >"$TRACE" 2>&1
 status=$?
 set -e
 
-# The test image is not present here, so the final docservice exec is expected
-# to fail. The xtrace above still contains the NODE_CONFIG assembled by the
-# entrypoint, which is the part under test.
-if [[ $status -eq 0 ]]; then
-  echo "orchestrated entrypoint unexpectedly succeeded without docservice" >&2
+if [[ $status -eq 0 ]] || ! grep -Fq 'Redis Sentinel and Redis Cluster cannot be configured together' "$TRACE"; then
+  echo "conflicting Redis topologies were not rejected" >&2
+  cat "$TRACE" >&2
   exit 1
 fi
 
-for expected in \
-  'sentinel-a", "port": 26379' \
-  'sentinel-b", "port": 26380' \
-  'redis://cluster-a:7000' \
-  'redis://cluster-b:7001' \
-  'editorDataStorage": "editorDataRedis' \
-  'editorStatStorage": "editorDataRedis'; do
-  if ! grep -Fq "$expected" "$TRACE"; then
-    echo "missing Redis configuration in orchestrated entrypoint output: $expected" >&2
-    cat "$TRACE" >&2
-    exit 1
-  fi
-done
+set +e
+env -i \
+  PATH="$PATH" \
+  COMPANY_NAME=euro-office \
+  JWT_ENABLED=false \
+  REDIS_SENTINEL_NODES='sentinel-a:26379,,sentinel-b:26380' \
+  bash "$ENTRYPOINT" docservice >"$TRACE" 2>&1
+status=$?
+set -e
+
+if [[ $status -eq 0 ]] || ! grep -Fq 'empty node entries' "$TRACE"; then
+  echo "malformed Sentinel node list was not rejected" >&2
+  cat "$TRACE" >&2
+  exit 1
+fi
 
 set +e
 env -i \
