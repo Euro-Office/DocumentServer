@@ -109,6 +109,9 @@ export NODE_CONFIG='{
   "runtimeConfig": {
     "filePath": "/var/www/'${COMPANY_NAME}'/config/runtime.json"
   },
+  "security": {
+    "allowLocalNetworkAccessIframes": '${ALLOW_LOCAL_NETWORK_ACCESS_IFRAMES:-false}'
+  },
   "services": {
     "CoAuthoring": {
       "sql": {
