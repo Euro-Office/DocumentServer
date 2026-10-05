@@ -20,6 +20,7 @@ services:
       EXAMPLE_ENABLED: true
       JWT_SECRET: ${EO_JWT_SECRET:-euro-office-dev-jwt-secret-key-2026}
       THEME: euro-office
+      SENTRY_DSN: ${EO_SENTRY_DSN:-}
     volumes:
       - ../:/develop:z # mounts deployed files to application
       - ./setup/Makefile:/Makefile:z # mounts deployed files to application
@@ -49,8 +50,30 @@ services:
       ALLOW_PRIVATE_IP_ADDRESS: true
       USE_UNAUTHORIZED_STORAGE: true
       JWT_SECRET: ${EO_JWT_SECRET:-euro-office-dev-jwt-secret-key-2026}
+  glitchtip:
+    image: glitchtip/glitchtip:6
+    profiles: [sentry]
+    depends_on: [glitchtip-db]
+    restart: unless-stopped # retries until the db accepts connections
+    ports:
+      - "8083:8000"
+    environment:
+      SERVER_ROLE: all_in_one
+      DATABASE_URL: postgres://postgres:postgres@glitchtip-db:5432/postgres
+      VALKEY_URL: ""
+      SECRET_KEY: euro-office-dev-glitchtip-secret
+      EMAIL_URL: consolemail://
+      GLITCHTIP_DOMAIN: http://localhost:8083
+  glitchtip-db:
+    image: postgres:18-alpine
+    profiles: [sentry]
+    environment:
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - glitchtip_db:/var/lib/postgresql
 
 volumes:
+  glitchtip_db:
   nc_data:
     # Per-version volume. NC_VERSION selects both the image tag and the volume,
     # so each pinned version keeps its own state. Defaults to 'latest'.

@@ -160,6 +160,10 @@ The Docker image and dev Makefile handle ARM64 automatically:
 
 A multi-arch `:latest-dev` image (amd64 + arm64) is published to GHCR on every merge to `main`, so ARM64 users can `make pull` like everyone else — `make build` is only needed for offline work or to rebuild the image itself.
 
+#### Error reporting (GlitchTip or Sentry)
+
+`docker compose --profile sentry up -d glitchtip glitchtip-db` starts a local [GlitchTip](https://glitchtip.com/) at http://localhost:8083. Register, create an organization and project, then put its DSN with the host replaced by `glitchtip:8000` into `develop/.env` as `EO_SENTRY_DSN=http://<key>@glitchtip:8000/<id>` and run `docker compose up -d eo`. The server reads it as `SENTRY_DSN` (stage 2 of #392); empty means disabled. For Sentry, set the DSN of a [sentry.io](https://sentry.io) Node.js project as `EO_SENTRY_DSN` instead and skip the profile; events then leave your machine.
+
 ## Parallel test servers (`eo.sh`)
 
 The `make` workflow above runs a single Nextcloud-integrated stack with fixed
