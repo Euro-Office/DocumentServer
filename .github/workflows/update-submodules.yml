@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '0 6 * * *'   # 06:00 UTC daily — after the mirror job (05:30 UTC)
+  workflow_call:
 
 jobs:
   update-submodules:
