@@ -1,0 +1,86 @@
+name: Gitlink guard
+
+# Keeps feature-branch submodule pins (as used on dev/* branches, see
+# docs/dev-images.md) out of main: every submodule must be pinned to a commit
+# on that submodule's default branch.
+on:
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: gitlink-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Submodule pins are on default branches
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read  # checkout
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # All submodule repos are public, so the built-in token can read them.
+      - name: Check submodule pins
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          failed=0
+          err="$(mktemp)"
+
+          if [[ "$HEAD_REF" == dev/* ]]; then
+            echo "::error::$HEAD_REF is a dev image branch and must not be merged into main (see docs/dev-images.md)."
+            failed=1
+          fi
+
+          while read -r key path; do
+            name="${key#submodule.}"
+            name="${name%.path}"
+            url="$(git config -f .gitmodules --get "submodule.${name}.url")"
+            sha="$(git ls-tree HEAD -- "$path" | awk '$1 == "160000" { print $3 }')"
+            if [[ -z "$sha" ]]; then
+              echo "::error::${path}: no gitlink found."
+              failed=1
+              continue
+            fi
+            if [[ ! "$url" =~ ^https://github\.com/([^/]+/[^/]+)$ ]]; then
+              echo "::error::${path}: unsupported submodule URL ${url}."
+              failed=1
+              continue
+            fi
+            repo="${BASH_REMATCH[1]%.git}"
+            if ! default="$(gh api "repos/${repo}" --jq .default_branch 2>"$err")"; then
+              echo "::error::${path}: could not look up the default branch of ${repo}, check not completed: $(tr '\n' ' ' <"$err")"
+              failed=1
+              continue
+            fi
+            # base=pinned commit, head=default branch: "ahead" or "identical"
+            # means the pinned commit is contained in the default branch.
+            if ! status="$(gh api "repos/${repo}/compare/${sha}...${default}?per_page=1" --jq .status 2>"$err")"; then
+              if grep -q 'HTTP 404' "$err"; then
+                echo "::error::${path}: pinned commit ${sha} not found in ${repo} ($(tr '\n' ' ' <"$err"))."
+              else
+                echo "::error::${path}: could not compare ${sha} with ${repo}@${default}, check not completed: $(tr '\n' ' ' <"$err")"
+              fi
+              failed=1
+              continue
+            fi
+            case "$status" in
+              ahead | identical)
+                echo "${path}: ${sha} is on ${repo}@${default}"
+                ;;
+              *)
+                echo "::error::${path}: pinned commit ${sha} is not on the default branch ${default} of ${repo} (compare status: ${status}). Pin a commit that is merged into ${default}."
+                failed=1
+                ;;
+            esac
+          done < <(git config -f .gitmodules --get-regexp '^submodule\..*\.path$')
+
+          exit "$failed"
