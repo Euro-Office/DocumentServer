@@ -37,6 +37,11 @@ variable "BUILD_NUMBER" {
   default = "dev.1"
 }
 
+# "DocumentServer=<sha> web-apps=<sha> ...", shown in the editor About dialog
+variable "BUILD_COMMITS" {
+  default = ""
+}
+
 variable "DS_VERSION_HASH" {
   default = "dev001"
 }
@@ -89,6 +94,7 @@ target "_common" {
   args = {
     PRODUCT_VERSION     = "${PRODUCT_VERSION}"
     BUILD_NUMBER        = "${BUILD_NUMBER}"
+    BUILD_COMMITS       = "${BUILD_COMMITS}"
     BUILD_ROOT          = "${BUILD_ROOT}"
     DS_VERSION_HASH     = "${DS_VERSION_HASH}"
     NUGET_CACHE         = "${NUGET_CACHE}"

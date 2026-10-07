@@ -18,6 +18,13 @@ WEBAPPS_FLAGS :=
 #   PRODUCT_VERSION=9.4.0 make web-apps-dev
 PRODUCT_VERSION ?= $(shell cat $(EO_DEV)/VERSION)
 
+# "DocumentServer=<sha> web-apps=<sha> ..." for the About dialog, read from the mounted checkout
+ifndef BUILD_COMMITS
+BUILD_COMMITS := $(shell cd $(EO_DEV) && export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*' && \
+	HEAD=$$(git rev-parse HEAD 2>/dev/null) && echo "DocumentServer=$$HEAD $$(git submodule foreach --quiet 'echo $$name=$$(git rev-parse HEAD)')")
+endif
+export BUILD_COMMITS
+
 CHECK_WEBAPPS_DEPS = @test -d $(EO_DEV)/web-apps/build/node_modules || { echo "Run 'make web-apps' first to install dependencies"; exit 1; }
 
 # Dev-friendly cache flush: regenerate nginx cache tag and reload, without
