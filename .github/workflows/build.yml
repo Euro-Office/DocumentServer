@@ -255,8 +255,14 @@ jobs:
             echo "build_number=${{ env.BUILD_NUMBER }}" >> $GITHUB_OUTPUT
           else
             VERSION_FILE=$(cat VERSION 2>/dev/null | tr -d '[:space:]')
-            echo "product_version=${VERSION_FILE:-${{ env.PRODUCT_VERSION }}}" >> $GITHUB_OUTPUT
-            echo "build_number=${{ env.BUILD_NUMBER }}"                        >> $GITHUB_OUTPUT
+            # Split VERSION file the same way as tags: 9.3.5-rc.1 → version=9.3.5 build=rc.1
+            if [[ "${VERSION_FILE}" =~ ^([^-]+)-(.+)$ ]]; then
+              echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
+              echo "build_number=${BASH_REMATCH[2]}"    >> $GITHUB_OUTPUT
+            else
+              echo "product_version=${VERSION_FILE:-${{ env.PRODUCT_VERSION }}}" >> $GITHUB_OUTPUT
+              echo "build_number=${{ env.BUILD_NUMBER }}"                        >> $GITHUB_OUTPUT
+            fi
           fi
 
       - name: Build all targets (packages → docker → develop)
