@@ -181,6 +181,10 @@ jobs:
           echo "PKGS_BEFORE=$before" >> "$GITHUB_ENV"
           echo "--- archive before merge ($before packages) ---"
           find repo -type f \( -name '*.deb' -o -name '*.rpm' \) | sort
+          # Checksums of the RPMs as they are on the server, so "Sign rpm
+          # packages" can tell which already-published files it rewrote.
+          (cd repo && find . -type f -name '*.rpm' -print0 | xargs -0 -r sha256sum) \
+            > "$RUNNER_TEMP/rpm-fetched.sha256"
 
       - name: Merge new packages into the pool
         run: |
@@ -285,20 +289,43 @@ jobs:
           %__gpg /usr/bin/gpg
           %_gpg_sign_cmd_extra_args --batch --pinentry-mode loopback
           EOF
+          # Always create the list Publish reads, even when there is nothing to sign.
+          : > "$RUNNER_TEMP/rpm-resigned.txt"
           rpms=(repo/rpm/"$SUITE"/**/*.rpm)
           [ "${#rpms[@]}" -gt 0 ] || { echo "no rpm packages to sign"; exit 0; }
           rpmsign --addsign "${rpms[@]}"
 
           # Verify against a throwaway rpmdb that trusts only our key, the
-          # same check dnf performs on the client.
+          # same check dnf performs on the client. rpmkeys --checksig exits 0
+          # for an unsigned package too ("digests OK"), so require the
+          # "signatures OK" a valid signature produces.
           db=$(mktemp -d)
           gpg --armor --export "$KEYID" > "$db/key.asc"
           rpmkeys --dbpath "$db" --import "$db/key.asc"
           for f in "${rpms[@]}"; do
-            rpmkeys --dbpath "$db" --checksig "$f" \
-              || { echo "::error::signature check failed for $f"; exit 1; }
+            out=$(rpmkeys --dbpath "$db" --checksig "$f" 2>&1) || true
+            [[ "$out" == *" signatures OK"* ]] \
+              || { echo "::error::signature check failed for $f: $out"; exit 1; }
           done
           rm -rf "$db"
+
+          # Already-published RPMs whose bytes signing just changed (unsigned
+          # ones from earlier runs or from DesktopEditors). Uploading these in
+          # Publish phase 1 would put new bytes next to the old repodata/, and
+          # dnf would reject them with a checksum mismatch until phase 2. List
+          # them so Publish holds them back for phase 2, where --delay-updates
+          # swaps them in together with the new metadata.
+          while read -r sum path; do
+            f="repo/${path#./}"
+            [ -f "$f" ] || continue          # pruned since the fetch
+            if [ "$(sha256sum "$f" | cut -d' ' -f1)" != "$sum" ]; then
+              echo "/${path#./}" >> "$RUNNER_TEMP/rpm-resigned.txt"
+            fi
+          done < "$RUNNER_TEMP/rpm-fetched.sha256"
+          if [ -s "$RUNNER_TEMP/rpm-resigned.txt" ]; then
+            echo "::notice::re-signed $(wc -l < "$RUNNER_TEMP/rpm-resigned.txt") already-published rpm(s); they go out with the metadata in phase 2"
+            cat "$RUNNER_TEMP/rpm-resigned.txt"
+          fi
 
       - name: Build rpm indices
         run: |
@@ -327,9 +354,12 @@ jobs:
 
           # Phase 1: add new packages without touching indices or deleting
           # anything, so clients never see an index that points at a
-          # package that is not there yet.
+          # package that is not there yet. Published RPMs that were re-signed
+          # in this run are held back: their old bytes still match the live
+          # repodata/ (see "Sign rpm packages").
           rsync -a --info=stats2 -e "$SSH_CMD" \
             --exclude='dists/' --exclude='repodata/' \
+            --exclude-from="$RUNNER_TEMP/rpm-resigned.txt" \
             repo/ "$REMOTE:$REMOTE_BASE/repo/"
           # Phase 2: swap in indices + signatures, drop pruned packages.
           rsync -a --delete --delay-updates --info=stats2 -e "$SSH_CMD" \
