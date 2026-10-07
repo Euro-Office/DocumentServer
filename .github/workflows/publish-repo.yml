@@ -59,9 +59,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       actions: read          # download-artifact from the calling run
-    # Must stay below the stale-lock threshold (60 min) used below, otherwise
-    # a slow-but-alive run could have its lock broken by a waiting run.
-    timeout-minutes: 50
+    # Up to 90 min waiting for the cross-repo lock plus the publish itself.
+    # Independent of the stale-lock threshold: a live holder keeps its lock
+    # fresh via a heartbeat (see "Acquire archive lock").
+    timeout-minutes: 150
     concurrency:
       # Guards within a single repo. Cross-repo is handled by the SSH lock below.
       group: nextcloud-office-archive
@@ -130,25 +131,39 @@ jobs:
       # mkdir is atomic and needs no software installed on the server.
       # Acquired after the artifact download so the lock is held as briefly
       # as possible.
+      #
+      # While held, a background heartbeat refreshes the lock's mtime every
+      # 60s. A lock counts as stale only after 10 min without a heartbeat,
+      # i.e. when its holder is dead (crashed, cancelled, timed out). A slow
+      # but live holder is never broken, however long it runs, so waiters can
+      # wait as long as needed instead of giving up before the holder is done.
+      # Background processes survive across steps and are killed by the
+      # runner at job end, which is exactly when the heartbeat should stop.
       - name: Acquire archive lock
+        timeout-minutes: 95
         run: |
           set -uo pipefail
+          LOCK="$REMOTE_BASE/.repo-lock"
           $SSH_CMD "$REMOTE" "mkdir -p '$REMOTE_BASE'" \
             || { echo "::error::cannot reach server or create $REMOTE_BASE"; exit 1; }
-          for i in $(seq 1 60); do
-            if $SSH_CMD "$REMOTE" "mkdir '$REMOTE_BASE/.repo-lock'" 2>/dev/null; then
+          for i in $(seq 1 180); do
+            if $SSH_CMD "$REMOTE" "mkdir '$LOCK'" 2>/dev/null; then
+              # touch -c: never re-create the lock as a plain file once it
+              # has been released.
+              nohup bash -c "while sleep 60; do $SSH_CMD '$REMOTE' \"touch -c '$LOCK'\" || true; done" \
+                >/dev/null 2>&1 &
+              echo "HEARTBEAT_PID=$!" >> "$GITHUB_ENV"
               echo "LOCK_HELD=1" >> "$GITHUB_ENV"
               echo "lock acquired (attempt $i)"
               exit 0
             fi
-            # Clear a stale lock left behind by a run that died without
-            # cleanup. 60 min > job timeout, so a live holder is never hit.
+            # Clear a lock whose holder stopped sending heartbeats.
             $SSH_CMD "$REMOTE" \
-              "find '$REMOTE_BASE/.repo-lock' -maxdepth 0 -mmin +60 -exec rmdir {} + 2>/dev/null" || true
+              "find '$LOCK' -maxdepth 0 -type d -mmin +10 -exec rmdir {} + 2>/dev/null" || true
             echo "archive busy, waiting 30s ..."
             sleep 30
           done
-          echo "::error::could not acquire the archive lock within 30 minutes"
+          echo "::error::could not acquire the archive lock within 90 minutes"
           exit 1
 
       - name: Fetch current archive
@@ -255,6 +270,36 @@ jobs:
             echo "$arch: $(grep -c '^Package:' "dists/$SUITE/main/binary-$arch/Packages" || true)"
           done
 
+      # dnf defaults to gpgcheck=1, which checks the signature of every
+      # package, not just repomd.xml. Sign the whole pool: rpmsign skips files
+      # that already carry an identical signature (no byte change, so rsync
+      # leaves them alone), and anything left unsigned by an earlier run gets
+      # signed on the way through. Must run before createrepo_c, since the
+      # signature changes the checksums recorded in the metadata.
+      - name: Sign rpm packages
+        run: |
+          set -euo pipefail
+          shopt -s nullglob globstar
+          cat > ~/.rpmmacros <<EOF
+          %_gpg_name $KEYID
+          %__gpg /usr/bin/gpg
+          %_gpg_sign_cmd_extra_args --batch --pinentry-mode loopback
+          EOF
+          rpms=(repo/rpm/"$SUITE"/**/*.rpm)
+          [ "${#rpms[@]}" -gt 0 ] || { echo "no rpm packages to sign"; exit 0; }
+          rpmsign --addsign "${rpms[@]}"
+
+          # Verify against a throwaway rpmdb that trusts only our key, the
+          # same check dnf performs on the client.
+          db=$(mktemp -d)
+          gpg --armor --export "$KEYID" > "$db/key.asc"
+          rpmkeys --dbpath "$db" --import "$db/key.asc"
+          for f in "${rpms[@]}"; do
+            rpmkeys --dbpath "$db" --checksig "$f" \
+              || { echo "::error::signature check failed for $f"; exit 1; }
+          done
+          rm -rf "$db"
+
       - name: Build rpm indices
         run: |
           set -euo pipefail
@@ -292,4 +337,10 @@ jobs:
 
       - name: Release archive lock
         if: always() && env.LOCK_HELD == '1'
-        run: $SSH_CMD "$REMOTE" "rmdir '$REMOTE_BASE/.repo-lock'" || true
+        run: |
+          # Stop the heartbeat first so it cannot touch a lock taken by the
+          # next run.
+          if [ -n "${HEARTBEAT_PID:-}" ]; then
+            kill "$HEARTBEAT_PID" 2>/dev/null || true
+          fi
+          $SSH_CMD "$REMOTE" "rmdir '$REMOTE_BASE/.repo-lock'" || true

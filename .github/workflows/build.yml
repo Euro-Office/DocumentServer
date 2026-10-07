@@ -137,6 +137,10 @@ jobs:
   build:
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     needs: clone
+    outputs:
+      # Identical in every matrix leg (depends on the ref only), so it does
+      # not matter which leg writes it last.
+      is_stable: ${{ steps.meta.outputs.is_stable }}
     permissions:
       contents: write
       packages: write
@@ -242,9 +246,20 @@ jobs:
           fi
           echo "e2e_image=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
 
+          # Stable release tags are exactly vX.Y.Z-N (e.g. v9.3.1-0). Only
+          # these are published into the public APT/DNF archive; rc, beta, tp
+          # and hotfix tags (v9.3.5-rc.1, v9.3.4-hotfix.1, ...) and bare
+          # vX.Y.Z tags are not.
+          if [[ "$IS_TAG" == "true" && "${{ github.ref_name }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[0-9]+$ ]]; then
+            echo "is_stable=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "is_stable=false" >> "$GITHUB_OUTPUT"
+          fi
+
           # Parse PRODUCT_VERSION / BUILD_NUMBER from the git tag.
           # Supported formats:
-          #   v9.3.3-stable.1  →  product_version=9.3.3  build_number=stable.1
+          #   v9.3.1-0         →  product_version=9.3.1  build_number=0
+          #   v9.3.5-rc.1      →  product_version=9.3.5  build_number=rc.1
           #   v9.3.3           →  product_version=9.3.3  build_number=<env default>
           # Fall back to the VERSION file, then env defaults, for non-tag builds.
           if [[ "$IS_TAG" == "true" && "${{ github.ref_name }}" =~ ^v([^-]+)-(.+)$ ]]; then
@@ -284,6 +299,11 @@ jobs:
           # cache-to still repopulates fresh cache. pull refreshes base images.
           no-cache: ${{ steps.meta.outputs.no_cache == 'true' }}
           pull: ${{ steps.meta.outputs.no_cache == 'true' }}
+          # Pin every target's build context to the repo root (".." from
+          # workdir ./build). Without this override bake resolves the context
+          # to ../../../build and every leg fails with "lstat ../../../build:
+          # no such file or directory". (Note: comments must stay outside the
+          # set: block below, which is parsed line by line.)
           set: |
             *.context=..
             core.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}core-buildcache-${{ matrix.arch }}
@@ -369,10 +389,10 @@ jobs:
             build/deploy/packages/*.deb build/deploy/packages/*.rpm \
             "$SSH_USER@$SSH_HOST:$TARGET/"
 
-      # Handed to the publish-repo job below. Same gate as publish-repo, so
-      # only stable tags ever produce these artifacts.
+      # Handed to the publish-repo job below. Same gate as publish-repo
+      # (stable vX.Y.Z-N tags only), so no other tag produces these artifacts.
       - name: Upload packages as artifact (nextcloud-office)
-        if: matrix.brand.name == 'nextcloud-office' && startsWith(github.ref, 'refs/tags/')
+        if: matrix.brand.name == 'nextcloud-office' && steps.meta.outputs.is_stable == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: nc-packages-${{ matrix.arch }}
@@ -462,11 +482,12 @@ jobs:
   # PUBLISH-REPO
   #
   # Merges the nextcloud-office .deb/.rpm packages into the shared
-  # signed APT/DNF archive. Stable tags only (vX.Y.Z-stable.N).
+  # signed APT/DNF archive. Stable tags only (vX.Y.Z-N, e.g. v9.3.1-0);
+  # see is_stable in the build job's meta step.
   # ─────────────────────────────────────────────────────────────
   publish-repo:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/')
+    if: needs.build.outputs.is_stable == 'true'
     permissions:
       actions: read
     uses: ./.github/workflows/publish-repo.yml
