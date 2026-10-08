@@ -1,8 +1,51 @@
 PRODUCT_VERSION ?= $(shell cat ../VERSION)
 export PRODUCT_VERSION
 
+# Keep the full development environment as the default target.
+.DEFAULT_GOAL := local
+
 EO_JWT_SECRET ?= euro-office-dev-jwt-secret-key-2026
 export EO_JWT_SECRET
+
+# Redis topology test-stack settings. These are exported so values supplied
+# either from the shell or on the make command line reach Docker Compose.
+TYPE ?= STANDALONE
+EO_IMAGE ?= ghcr.io/euro-office/documentserver:latest-dev
+REDIS_IMAGE ?= redis:7-alpine
+REDIS_SERVER_COMMAND ?= redis-server
+REDIS_CLI_COMMAND ?= redis-cli
+export EO_IMAGE REDIS_IMAGE REDIS_SERVER_COMMAND REDIS_CLI_COMMAND
+
+REDIS_TOPOLOGY_COMPOSE_BASE := docker-compose.redis-base.yml
+
+.PHONY: redis-up redis-down
+
+# Start one Redis topology test stack.
+# Examples:
+#   make redis-up TYPE=STANDALONE
+#   make redis-up TYPE=SENTINEL REDIS_IMAGE=valkey/valkey:8-alpine REDIS_SERVER_COMMAND=valkey-server REDIS_CLI_COMMAND=valkey-cli
+#   make redis-up TYPE=CLUSTER
+redis-up:
+	@topology="$$(printf '%s' "$(TYPE)" | tr '[:upper:]' '[:lower:]')"; \
+	case "$$topology" in \
+	  standalone|sentinel|cluster) ;; \
+	  *) echo "error: TYPE must be STANDALONE, SENTINEL, or CLUSTER (got '$(TYPE)')" >&2; exit 2 ;; \
+	esac; \
+	docker compose -f "$(REDIS_TOPOLOGY_COMPOSE_BASE)" -f "docker-compose.redis-$$topology.yml" up -d
+
+# Stop one Redis topology test stack. Add PURGE=1 to remove its volumes too.
+# Examples:
+#   make redis-down TYPE=SENTINEL
+#   make redis-down TYPE=CLUSTER PURGE=1
+redis-down:
+	@topology="$$(printf '%s' "$(TYPE)" | tr '[:upper:]' '[:lower:]')"; \
+	case "$$topology" in \
+	  standalone|sentinel|cluster) ;; \
+	  *) echo "error: TYPE must be STANDALONE, SENTINEL, or CLUSTER (got '$(TYPE)')" >&2; exit 2 ;; \
+	esac; \
+	flags=""; \
+	if [ "$(PURGE)" = "1" ]; then flags="-v"; fi; \
+	docker compose -f "$(REDIS_TOPOLOGY_COMPOSE_BASE)" -f "docker-compose.redis-$$topology.yml" down $$flags --remove-orphans
 
 # Detect host LAN IP for phones/emulators/LAN devices. Used by `make mobile`
 # and `make refresh-urls`.

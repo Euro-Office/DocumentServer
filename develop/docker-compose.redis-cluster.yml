@@ -1,0 +1,119 @@
+x-redis-cluster-node: &redis-cluster-node
+  image: ${REDIS_IMAGE:-redis:7-alpine}
+  command:
+    - sh
+    - -c
+    - |
+      exec ${REDIS_SERVER_COMMAND:-redis-server} \
+        --bind 0.0.0.0 \
+        --port "$$REDIS_CLUSTER_NODE_PORT" \
+        --protected-mode no \
+        --appendonly no \
+        --requirepass redis-test-pass \
+        --masterauth redis-test-pass \
+        --cluster-enabled yes \
+        --cluster-config-file nodes.conf \
+        --cluster-node-timeout 5000 \
+        --cluster-announce-hostname "$$REDIS_CLUSTER_NODE_NAME" \
+        --cluster-preferred-endpoint-type hostname \
+        --cluster-announce-port "$$REDIS_CLUSTER_NODE_PORT" \
+        --cluster-announce-bus-port "$$REDIS_CLUSTER_NODE_BUS_PORT"
+  healthcheck:
+    test: ["CMD-SHELL", "${REDIS_CLI_COMMAND:-redis-cli} -h 127.0.0.1 -p $$REDIS_CLUSTER_NODE_PORT -a redis-test-pass ping"]
+    interval: 2s
+    timeout: 5s
+    retries: 30
+
+services:
+  eo:
+    environment:
+      REDIS_SERVER_HOST: redis-cluster-1
+      REDIS_SERVER_PORT: 7000
+      REDIS_SERVER_USER: default
+      REDIS_SERVER_PASS: redis-test-pass
+      REDIS_SERVER_DB: 0
+      TEST_REDIS_CLUSTER: "true"
+      TEST_REDIS_CLUSTER_NODES: redis://redis-cluster-1:7000,redis://redis-cluster-2:7001,redis://redis-cluster-3:7002,redis://redis-cluster-4:7003,redis://redis-cluster-5:7004,redis://redis-cluster-6:7005
+      TEST_REDIS_NODE_PASSWORD: redis-test-pass
+      TEST_REDIS_TOPOLOGY_REQUIRED: "true"
+      TEST_REDIS_CLUSTER_PRIMARY_CONTAINER: eo-test-redis-cluster-1-compose
+      TEST_REDIS_CLUSTER_FAILOVER_REPLICA_PORT: 7003
+      NODE_CONFIG: >-
+        {"services":{"CoAuthoring":{"server":{"editorDataStorage":"editorDataRedis","editorStatStorage":"editorDataRedis"},"redis":{"optionsCluster":{"rootNodes":[{"url":"redis://redis-cluster-1:7000"},{"url":"redis://redis-cluster-2:7001"},{"url":"redis://redis-cluster-3:7002"},{"url":"redis://redis-cluster-4:7003"},{"url":"redis://redis-cluster-5:7004"},{"url":"redis://redis-cluster-6:7005"}],"defaults":{"username":"default","password":"redis-test-pass"}}}}}}
+    depends_on:
+      redis-cluster-init:
+        condition: service_completed_successfully
+
+  redis-cluster-1:
+    <<: *redis-cluster-node
+    container_name: eo-test-redis-cluster-1-compose
+    environment:
+      REDIS_CLUSTER_NODE_NAME: redis-cluster-1
+      REDIS_CLUSTER_NODE_PORT: 7000
+      REDIS_CLUSTER_NODE_BUS_PORT: 17000
+
+  redis-cluster-2:
+    <<: *redis-cluster-node
+    container_name: eo-test-redis-cluster-2-compose
+    environment:
+      REDIS_CLUSTER_NODE_NAME: redis-cluster-2
+      REDIS_CLUSTER_NODE_PORT: 7001
+      REDIS_CLUSTER_NODE_BUS_PORT: 17001
+
+  redis-cluster-3:
+    <<: *redis-cluster-node
+    container_name: eo-test-redis-cluster-3-compose
+    environment:
+      REDIS_CLUSTER_NODE_NAME: redis-cluster-3
+      REDIS_CLUSTER_NODE_PORT: 7002
+      REDIS_CLUSTER_NODE_BUS_PORT: 17002
+
+  redis-cluster-4:
+    <<: *redis-cluster-node
+    container_name: eo-test-redis-cluster-4-compose
+    environment:
+      REDIS_CLUSTER_NODE_NAME: redis-cluster-4
+      REDIS_CLUSTER_NODE_PORT: 7003
+      REDIS_CLUSTER_NODE_BUS_PORT: 17003
+
+  redis-cluster-5:
+    <<: *redis-cluster-node
+    container_name: eo-test-redis-cluster-5-compose
+    environment:
+      REDIS_CLUSTER_NODE_NAME: redis-cluster-5
+      REDIS_CLUSTER_NODE_PORT: 7004
+      REDIS_CLUSTER_NODE_BUS_PORT: 17004
+
+  redis-cluster-6:
+    <<: *redis-cluster-node
+    container_name: eo-test-redis-cluster-6-compose
+    environment:
+      REDIS_CLUSTER_NODE_NAME: redis-cluster-6
+      REDIS_CLUSTER_NODE_PORT: 7005
+      REDIS_CLUSTER_NODE_BUS_PORT: 17005
+
+  redis-cluster-init:
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    command:
+      - sh
+      - -c
+      - |
+        exec "$$REDIS_CLI_COMMAND" -a redis-test-pass --cluster create \
+          redis-cluster-1:7000 redis-cluster-2:7001 redis-cluster-3:7002 \
+          redis-cluster-4:7003 redis-cluster-5:7004 redis-cluster-6:7005 \
+          --cluster-replicas 1 --cluster-yes
+    environment:
+      REDIS_CLI_COMMAND: ${REDIS_CLI_COMMAND:-redis-cli}
+    depends_on:
+      redis-cluster-1:
+        condition: service_healthy
+      redis-cluster-2:
+        condition: service_healthy
+      redis-cluster-3:
+        condition: service_healthy
+      redis-cluster-4:
+        condition: service_healthy
+      redis-cluster-5:
+        condition: service_healthy
+      redis-cluster-6:
+        condition: service_healthy

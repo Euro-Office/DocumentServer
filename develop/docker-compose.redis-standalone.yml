@@ -1,0 +1,36 @@
+services:
+  eo:
+    environment:
+      REDIS_SERVER_HOST: redis
+      REDIS_SERVER_PORT: 6379
+      REDIS_SERVER_USER: default
+      REDIS_SERVER_PASS: redis-test-pass
+      REDIS_SERVER_DB: 0
+      TEST_REDIS_FAILURE_CONTAINER: eo-test-redis-compose
+      TEST_REDIS_NODE_PASSWORD: redis-test-pass
+      NODE_CONFIG: >-
+        {"services":{"CoAuthoring":{"server":{"editorDataStorage":"editorDataRedis","editorStatStorage":"editorDataRedis"},"redis":{"host":"redis","port":6379,"options":{"password":"redis-test-pass"}}}}}
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    container_name: eo-test-redis-compose
+    command:
+      - ${REDIS_SERVER_COMMAND:-redis-server}
+      - --bind
+      - 0.0.0.0
+      - --port
+      - "6379"
+      - --protected-mode
+      - "no"
+      - --appendonly
+      - "no"
+      - --requirepass
+      - redis-test-pass
+    healthcheck:
+      test: ["CMD-SHELL", "${REDIS_CLI_COMMAND:-redis-cli} -a redis-test-pass ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 30

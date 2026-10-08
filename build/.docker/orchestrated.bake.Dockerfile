@@ -30,7 +30,8 @@ FROM fedora:43 AS ds-base
                     gettext \
                     nginx \
                     httpd-tools \
-                    wget -y && \
+                    wget \
+                    jq -y && \
         pip3 install --no-cache-dir redis && \
         wget -O /usr/local/bin/dumb-init https://github.com/Yelp/dumb-init/releases/download/v1.2.5/dumb-init_1.2.5_$(uname -m) && \
         chmod +x /usr/local/bin/dumb-init && \
@@ -190,6 +191,7 @@ FROM ds-base AS docs
         /var/www/$COMPANY_NAME_LOW/documentserver-example/welcome \
         /var/www/$COMPANY_NAME_LOW/documentserver-example/welcome
     COPY build/scripts/orchestrated/docker-entrypoint.sh build/scripts/orchestrated/proxy-docker-entrypoint.sh /usr/local/bin/
+    COPY build/scripts/redis-topology.sh /usr/local/lib/euro-office/redis-topology.sh
     COPY build/scripts/orchestrated/init-docker-entrypoint.sh /init/
     RUN sed 's|\(application\/zip.*\)|\1\n    application\/wasm wasm;|' \
             -i /etc/nginx/mime.types && \

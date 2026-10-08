@@ -164,9 +164,279 @@ A multi-arch `:latest-dev` image (amd64 + arm64) is published to GHCR on every m
 
 `docker compose --profile sentry up -d glitchtip glitchtip-db` starts a local [GlitchTip](https://glitchtip.com/) at http://localhost:8083. Register, create an organization and project, then put its DSN with the host replaced by `glitchtip:8000` into `develop/.env` as `EO_SENTRY_DSN=http://<key>@glitchtip:8000/<id>` and run `docker compose up -d eo`. The server reads it as `SENTRY_DSN` (stage 2 of #392); empty means disabled. For Sentry, set the DSN of a [sentry.io](https://sentry.io) Node.js project as `EO_SENTRY_DSN` instead and skip the profile; events then leave your machine.
 
+## Redis and Valkey topology test stacks
+
+These test stacks run DocumentServer with PostgreSQL, RabbitMQ, and one of
+three Redis-compatible topologies:
+
+All dependencies—PostgreSQL, RabbitMQ, and Redis/Valkey—are deliberately run
+in separate containers outside the DocumentServer container. This is
+intentional: the purpose of these stacks is to exercise DocumentServer's
+connections to external services and, specifically, its connection and
+failover behavior against external Redis/Valkey deployments using standalone,
+Sentinel, and Cluster topologies. This differs from the regular development
+image, which bundles these services in one container.
+
+| Type | Services |
+| --- | --- |
+| `STANDALONE` | One Redis server on `redis:6379` |
+| `SENTINEL` | One primary, one replica, and three Sentinel processes |
+| `CLUSTER` | Six Redis nodes: three masters and three replicas |
+
+The Compose files are split into a common base and one topology overlay:
+
+```text
+docker-compose.redis-base.yml
+docker-compose.redis-standalone.yml
+docker-compose.redis-sentinel.yml
+docker-compose.redis-cluster.yml
+```
+
+The published `latest-dev` image uses the standalone entrypoint. The overlays
+use its supported `REDIS_SERVER_PASS` and `REDIS_SERVER_DB` variables for the
+base connection, while the Sentinel and Cluster topology settings are supplied
+through `NODE_CONFIG`.
+
+For deployments using the orchestrated image, select the Redis-backed
+editor-data stores with `EDITOR_DATA_STORAGE=editorDataRedis` and, when an
+explicit statistics backend is desired, `EDITOR_STAT_STORAGE=editorDataRedis`.
+Both variables are optional; leaving them unset preserves the packaged memory
+backend. The orchestrated image uses `REDIS_SERVER_PWD` and
+`REDIS_SERVER_DB_NUM` for the Redis password and database settings.
+
+### First-time setup
+
+The default image is the same multi-architecture development image used by the
+regular environment:
+
+```sh
+docker pull ghcr.io/euro-office/documentserver:latest-dev
+```
+
+The image includes DocumentServer, the example app, and the test tooling. The
+Compose overlays provide the external dependency containers and configure
+DocumentServer to use the selected Redis topology. The default compose setup
+uses this published image as-is: it does not build from or mount the current
+checkout. The default commands therefore validate the topology against the
+published image, not local server changes. The published image cannot use the
+Redis-backed editor-data store until server PR #46 has been merged and a new
+`latest-dev` image has been published.
+
+To validate this Redis integration before server PR #46 is merged, temporarily
+check out the server PR in the `server` submodule, then build a local image
+from this checkout. The following uses GitHub's pull-request ref and does not
+change the DocumentServer submodule pointer:
+
+```sh
+git -C server fetch https://github.com/Euro-Office/server.git pull/46/head:server-pr-46
+git -C server checkout --detach server-pr-46
+```
+
+Build the local image and pass it through `EO_IMAGE` when starting the stack:
+
+```sh
+cd build
+REGISTRY=local TAG=<my-custom-tag> \
+  docker buildx bake standalone \
+  --set standalone.tags=local/documentserver:<my-custom-tag> \
+  --load
+cd ..
+
+EO_IMAGE=local/documentserver:<my-custom-tag> make -C develop redis-up TYPE=SENTINEL
+```
+
+After server PR #46 is merged and the automated submodule bump has landed,
+the temporary checkout is no longer needed; the published `latest-dev` image
+can be used with the default commands above.
+
+### Start and stop a topology
+
+Run these commands from the repository root, or use `make -C develop` from
+any directory:
+
+```sh
+make -C develop redis-up TYPE=STANDALONE
+make -C develop redis-up TYPE=SENTINEL
+make -C develop redis-up TYPE=CLUSTER
+```
+
+Run only one topology at a time. Stop the current one before switching:
+
+```sh
+make -C develop redis-down TYPE=SENTINEL
+make -C develop redis-up TYPE=CLUSTER
+```
+
+To remove the test PostgreSQL volume as well:
+
+```sh
+make -C develop redis-down TYPE=CLUSTER PURGE=1
+```
+
+DocumentServer is exposed at `http://127.0.0.1:8000/`; its health endpoint is
+`http://127.0.0.1:8000/healthcheck`.
+
+### Run with Valkey
+
+The same commands work with Valkey. Set the image, server command, and CLI
+command in the shell so the startup and verification commands use the same
+values:
+
+```sh
+export REDIS_IMAGE=valkey/valkey:8-alpine
+export REDIS_SERVER_COMMAND=valkey-server
+export REDIS_CLI_COMMAND=valkey-cli
+make -C develop redis-up TYPE=SENTINEL
+```
+
+Use `TYPE=STANDALONE` or `TYPE=CLUSTER` instead when needed. The verification
+commands below default to `redis-cli`; when using Valkey, keep
+`REDIS_CLI_COMMAND=valkey-cli` exported in the shell.
+
+### Verify the topology and DocumentServer configuration
+
+These are some commands to validate Redis/Valkey is configured and used correctly by the DocumentServer.
+
+Check that all services are healthy (replace the second yml file based on your topology):
+
+```sh
+docker compose \
+  -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-sentinel.yml ps
+```
+
+For standalone Redis, confirm that DocumentServer selected the Redis-backed
+editor-data storage and inspect the Redis configuration generated by the
+standalone entrypoint:
+
+```sh
+docker compose \
+  -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-standalone.yml \
+  exec eo sh -lc '
+  printf "Storage selection from NODE_CONFIG:\n"
+  printenv NODE_CONFIG |
+    jq ".services.CoAuthoring.server | {editorDataStorage, editorStatStorage}"
+  printf "Generated Redis configuration from local.json:\n"
+  jq "
+    {
+      host: .services.CoAuthoring.redis.host,
+      port: .services.CoAuthoring.redis.port,
+      options: ((.services.CoAuthoring.redis.options // {}) |
+        .password = (if .password then \"<set>\" else null end)),
+      optionsCluster: (.services.CoAuthoring.redis.optionsCluster // null),
+      optionsSentinel: (.services.CoAuthoring.redis.optionsSentinel // null)
+    }
+  " /etc/euro-office/documentserver/local.json
+  '
+```
+
+The first output should contain `editorDataRedis`. The generated Redis
+configuration should point to `redis:6379`, contain the configured database
+and credentials, and show `optionsCluster` and `optionsSentinel` as `null`.
+Confirm that the configured endpoint accepts those credentials:
+
+```sh
+docker compose \
+  -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-standalone.yml \
+  exec redis "${REDIS_CLI_COMMAND:-redis-cli}" -a redis-test-pass PING
+```
+
+Expected output:
+
+```text
+PONG
+```
+
+For Sentinel, confirm that DocumentServer received the Sentinel configuration,
+that DocService is healthy with the Redis-backed editor-data store, and that
+Sentinel elected a master:
+
+```sh
+docker compose \
+  -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-sentinel.yml \
+  exec eo sh -lc '
+  config="$(printenv NODE_CONFIG)"
+  printf "%s" "$config" | grep -q "\\\"optionsSentinel\\\"" &&
+    echo "DocumentServer optionsSentinel: CONFIGURED" ||
+    { echo "DocumentServer optionsSentinel: MISSING"; exit 1; }
+  '
+
+docker compose \
+  -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-sentinel.yml \
+  exec eo sh -lc '
+  curl -fsS http://localhost/healthcheck | grep -qx true &&
+    echo "DocService healthcheck: PASS" ||
+    { echo "DocService healthcheck: FAIL"; exit 1; }
+  '
+
+docker compose \
+  -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-sentinel.yml \
+  exec redis-sentinel-1 "${REDIS_CLI_COMMAND:-redis-cli}" \
+  -h redis-sentinel-1 -p 26379 -a sentinel-test-pass \
+  SENTINEL get-master-addr-by-name mymaster
+```
+
+For Cluster, confirm the cluster state and node membership:
+
+```sh
+docker compose \
+  -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-cluster.yml \
+  exec redis-cluster-1 \
+  "${REDIS_CLI_COMMAND:-redis-cli}" -c -p 7000 -a redis-test-pass cluster info
+
+docker compose \
+  -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-cluster.yml \
+  exec redis-cluster-1 \
+  "${REDIS_CLI_COMMAND:-redis-cli}" -c -p 7000 -a redis-test-pass cluster nodes
+```
+
+### Watch DocumentServer Redis traffic live
+
+`MONITOR` prints every command received by a Redis server. Start it in one
+terminal, then create or edit a document in the example app in another:
+
+Standalone:
+
+```sh
+docker compose \
+  -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-standalone.yml \
+  exec redis "${REDIS_CLI_COMMAND:-redis-cli}" -a redis-test-pass MONITOR
+```
+
+Sentinel: monitor the elected primary (not the Sentinel port):
+
+```sh
+docker compose \
+  -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-sentinel.yml \
+  exec redis-primary "${REDIS_CLI_COMMAND:-redis-cli}" -a redis-test-pass MONITOR
+```
+
+Cluster: monitor each master because commands are distributed across slots:
+
+```sh
+docker compose \
+  -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-cluster.yml \
+  exec redis-cluster-1 "${REDIS_CLI_COMMAND:-redis-cli}" -p 7000 -a redis-test-pass MONITOR
+```
+
+Repeat that command for `redis-cluster-2` on port `7001` and
+`redis-cluster-3` on port `7002` if you need to observe all master traffic.
+`MONITOR` can expose document data and credentials, so use it only in this
+local test environment.
+
 ## Parallel test servers (`eo.sh`)
 
-The `make` workflow above runs a single Nextcloud-integrated stack with fixed
+The regular `make local` workflow described earlier runs a single Nextcloud-integrated stack with fixed
 container names and ports — use it for interactive, integration-style testing.
 
 When you instead need **several throwaway document servers at once** — e.g. a coding

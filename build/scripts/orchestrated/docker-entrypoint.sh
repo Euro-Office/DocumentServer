@@ -42,36 +42,55 @@ case $AMQP_PROTO in
     ;;
 esac
 
-if [[ -n "$REDIS_SENTINEL_NODES" ]]; then
-  declare -a REDIS_SENTINEL_NODES_ALL=($REDIS_SENTINEL_NODES)
-  REDIS_SENTINEL_NODES_ARRAY=()
-  for node in "${REDIS_SENTINEL_NODES_ALL[@]}"; do
-    host="${node%%:*}"
-    port="${node##*:}"
-    REDIS_SENTINEL_NODES_ARRAY+=('{ "host": "'$host'", "port": '$port' }')
-  done
-  OLD_IFS="$IFS"
-  IFS=","
-  NODES=$(echo "${REDIS_SENTINEL_NODES_ARRAY[*]}")
-  IFS="$OLD_IFS"
-  REDIS_SENTINEL='[ '$NODES' ],'
-else
-  REDIS_SENTINEL='[ { "host": "'${REDIS_SERVER_HOST:-localhost}'", "port": '${REDIS_SERVER_PORT:-6379}' } ],'
+REDIS_TOPOLOGY_HELPER="${REDIS_TOPOLOGY_HELPER:-$(dirname "$0")/../redis-topology.sh}"
+[ -r "$REDIS_TOPOLOGY_HELPER" ] || REDIS_TOPOLOGY_HELPER=/usr/local/lib/euro-office/redis-topology.sh
+. "$REDIS_TOPOLOGY_HELPER"
+redis_topology_init
+REDIS_SENTINEL_OPTIONS='{}'
+if [[ "$REDIS_SENTINEL_REQUESTED" == true ]]; then
+  REDIS_SENTINEL_OPTIONS=$(redis_build_sentinel_options \
+    "$REDIS_SENTINEL_GROUP_NAME" "$REDIS_SENTINEL_NODES_JSON" \
+    "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PWD:-}" "${REDIS_SERVER_DB_NUM:-0}" \
+    "$REDIS_SENTINEL_USER" "$REDIS_SENTINEL_PASS")
 fi
+REDIS_CLUSTER='{}'
+if [[ -n "${REDIS_CLUSTER_NODES:-}" ]]; then
+  REDIS_CLUSTER=$(redis_build_cluster_options "$REDIS_CLUSTER_NODES_JSON" \
+    "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PWD:-}")
+fi
+REDIS_OPTIONS=$(jq -cn \
+  --arg redisUser "${REDIS_SERVER_USER:-}" \
+  --arg redisPass "${REDIS_SERVER_PWD:-}" \
+  --arg redisDb "${REDIS_SERVER_DB_NUM:-0}" \
+  '{user: (if $redisUser != "" then $redisUser else null end), password: (if $redisPass != "" then $redisPass else null end), db: $redisDb} | with_entries(select(.value != null))')
 
-if [[ -n "$REDIS_CLUSTER_NODES" ]]; then
-  declare -a REDIS_CLUSTER_NODES_ALL=($REDIS_CLUSTER_NODES)
-  REDIS_CLUSTER_NODES_ARRAY=()
-  for node in "${REDIS_CLUSTER_NODES_ALL[@]}"; do
-    REDIS_CLUSTER_NODES_ARRAY+=('{ "url": "redis://'$node'" }')
-  done
-  OLD_IFS="$IFS"
-  IFS=","
-  NODES=$(echo "${REDIS_CLUSTER_NODES_ARRAY[*]}")
-  IFS="$OLD_IFS"
-  REDIS_CLUSTER='"rootNodes": [ '$NODES' ], "defaults": { "username": "'${REDIS_SERVER_USER:-default}'", "password": "'$REDIS_SERVER_PWD'" }'
-else
-  REDIS_CLUSTER=''
+# --------------------------------------------------------------------
+# Editor-data storage
+#
+# The server package defaults to editorDataMemory. Keep the storage keys out
+# of NODE_CONFIG unless an operator explicitly selects a backend, so the
+# orchestrated image preserves that default. Values become module names in
+# DocService and must therefore be plain basenames rather than paths or JSON.
+# --------------------------------------------------------------------
+EDITOR_STORAGE_CONFIG=""
+for storage_var in EDITOR_DATA_STORAGE EDITOR_STAT_STORAGE; do
+  storage_value="${!storage_var:-}"
+  if [[ -n "$storage_value" && ! "$storage_value" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    echo "$storage_var must be a plain module name (letters, digits, '_' or '-')." >&2
+    exit 1
+  fi
+done
+
+if [[ -n "${EDITOR_DATA_STORAGE:-}" || -n "${EDITOR_STAT_STORAGE:-}" ]]; then
+  EDITOR_STORAGE_CONFIG='"server": {'
+  if [[ -n "${EDITOR_DATA_STORAGE:-}" ]]; then
+    EDITOR_STORAGE_CONFIG+='"editorDataStorage": "'"$EDITOR_DATA_STORAGE"'"'
+  fi
+  if [[ -n "${EDITOR_STAT_STORAGE:-}" ]]; then
+    [[ "$EDITOR_STORAGE_CONFIG" == *'"editorDataStorage"'* ]] && EDITOR_STORAGE_CONFIG+=', '
+    EDITOR_STORAGE_CONFIG+='"editorStatStorage": "'"$EDITOR_STAT_STORAGE"'"'
+  fi
+  EDITOR_STORAGE_CONFIG+='},'
 fi
 
 # --------------------------------------------------------------------
@@ -111,6 +130,7 @@ export NODE_CONFIG='{
   },
   "services": {
     "CoAuthoring": {
+      '${EDITOR_STORAGE_CONFIG}'
       "sql": {
         "type": "'${DB_TYPE:-postgres}'",
         "dbHost": "'${DB_HOST:-localhost}'",
@@ -123,20 +143,9 @@ export NODE_CONFIG='{
         "name": "'${REDIS_CONNECTOR_NAME:-redis}'",
         "host": "'${REDIS_SERVER_HOST:-${REDIST_SERVER_HOST:-localhost}}'",
         "port": '${REDIS_SERVER_PORT:-${REDIST_SERVER_PORT:-6379}}',
-        "options": {
-          "user": "'${REDIS_SERVER_USER:-default}'",
-          "password": "'${REDIS_SERVER_PWD}'",
-          "db": "'${REDIS_SERVER_DB_NUM:-0}'"
-        },
-        "optionsCluster": { '${REDIS_CLUSTER}' },
-        "iooptions": {
-          "sentinels": '${REDIS_SENTINEL}'
-          "name": "'${REDIS_SENTINEL_GROUP_NAME:-mymaster}'",
-          "sentinelPassword": "'${REDIS_SENTINEL_PWD}'",
-          "username": "'${REDIS_SERVER_USER:-default}'",
-          "password": "'${REDIS_SERVER_PWD}'",
-          "db": "'${REDIS_SERVER_DB_NUM:-0}'"
-        }
+        "options": '${REDIS_OPTIONS}',
+        "optionsCluster": '${REDIS_CLUSTER}',
+        "optionsSentinel": '${REDIS_SENTINEL_OPTIONS}'
       },
       "token": {
         "enable": {
@@ -231,6 +240,11 @@ export NODE_CONFIG='{
     "storageFolderName": "files"
   }
 }'
+
+if [[ "${ENTRYPOINT_CONFIG_ONLY:-false}" == "true" ]]; then
+  printf '%s\n' "$NODE_CONFIG"
+  exit 0
+fi
 
 WORK_DIR="/var/www/$COMPANY_NAME/documentserver"
 BUILD_FONTS=false
