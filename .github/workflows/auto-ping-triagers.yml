@@ -42,6 +42,10 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.payload.issue.number,
-              body: `${mentions} Please triage this community-created issue within 48 hours.`,
+              body: [
+                      '<!-- community-triage-request -->',          // tags required for: 
+                      `<!-- triagers: ${picked.join(',')} -->`,     // remind-community-issue-triage.yml
+                      `${mentions} Please triage this community-created issue within 48 hours.`,
+                    ].join('\n'),
             });
             core.info(`Requested community triage from: ${picked.join(', ')}`);
