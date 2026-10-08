@@ -1,14 +1,12 @@
 # Dev images
 
 Build and test Docker images from any combination of submodule commits,
-including unmerged feature branches, without touching `main` or the release
-images.
+including unmerged feature branches, without touching `main` or the release images.
 
 A `dev/<feature>` branch in DocumentServer pins each submodule to an exact
 commit. Every push to that branch builds and publishes dev images
-([`dev-images.yml`](../.github/workflows/dev-images.yml)). After the branch is
-deleted, the daily sweep (03:00 UTC) deletes its images and build cache
-within 24 hours.
+([`dev-images.yml`](../.github/workflows/dev-images.yml)); deleting the
+branch deletes them.
 
 ## 1. Create a dev branch
 
@@ -78,21 +76,10 @@ Delete the branch when you are done:
 git push origin --delete dev/<feature>
 ```
 
-The daily sweep (03:00 UTC) then deletes the branch's images and build cache
-within 24 hours. For live branches it keeps only the 5 newest commits, and
-deletes commit tags older than 30 days unless they are the branch's current
-`<slug>` tag.
-
-Optionally, delete them immediately. This needs a token that can delete
-packages (`gh auth refresh -s read:packages,delete:packages`) and admin access
-to the packages. Try `DRY_RUN=1` first:
-
-```sh
-export ORG=euro-office CACHE_PACKAGE=documentserver-build-cache \
-  DEV_PACKAGES="documentserver-dev cluster-docs-dev cluster-example-dev cluster-utils-dev"
-DRY_RUN=1 .github/scripts/dev-images.sh cleanup dev/<feature>
-.github/scripts/dev-images.sh cleanup dev/<feature>
-```
+This deletes the branch's images and build cache. A daily sweep also deletes
+images of branches that no longer exist. It keeps only the 5 newest commits
+per branch, and deletes commit tags older than 30 days unless they are the
+branch's current `<slug>` tag.
 
 ## Rules
 
@@ -104,12 +91,5 @@ DRY_RUN=1 .github/scripts/dev-images.sh cleanup dev/<feature>
   commits can disappear, and old dev images can no longer be rebuilt.
 - **Refresh a long-lived dev branch by merging `origin/main` into it.** Do not
   rebase shared dev branches.
-- In the submodule repos, `master`, `develop` and most tags are copies of
-  ONLYOFFICE upstream. Euro-Office's own branch is `main`, so use
-  `server=main`, not `server=master`.
 - Do not use the branch name `develop`; the upstream mirror job writes to it.
 - Branch names may only contain letters, digits, `.`, `_`, `-` and `/`.
-
-All submodule repositories are public, so the workflows read them with the
-built-in `GITHUB_TOKEN`. If one ever becomes private, they need a GitHub App
-token with `contents: read`, not the mirror token.
