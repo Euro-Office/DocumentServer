@@ -1,0 +1,376 @@
+# ─────────────────────────────────────────────────────────────
+# Shared APT/DNF archive for nextcloud-office
+#
+# Lives in Euro-Office/DocumentServer/.github/workflows/publish-repo.yml
+# and is called from both product workflows via `uses:`.
+#
+# Model: the archive on the server is the source of truth. Every run pulls
+# it down in full, merges the new packages in, rebuilds the indices and
+# signatures, and pushes everything back. Because CI holds the complete
+# tree, --delete is correct here - but ONLY if the pull succeeded, so a
+# failed fetch aborts the run instead of publishing an empty archive.
+#
+# Serialisation: concurrency groups apply per repository, and this workflow
+# runs in the context of the CALLING repo. Hence the additional mkdir-based
+# lock on the server, which also guards DocumentServer against
+# DesktopEditors.
+# ─────────────────────────────────────────────────────────────
+name: Publish APT/DNF repository
+
+on:
+  workflow_call:
+    inputs:
+      product:
+        description: 'documentserver | desktopeditors - used for logging'
+        required: true
+        type: string
+      artifact_pattern:
+        description: 'Artifact pattern holding the .deb/.rpm files of the nextcloud-office brand'
+        required: true
+        type: string
+      suite:
+        description: 'APT suite. Only stable builds belong in the archive.'
+        required: false
+        type: string
+        default: stable
+      keep_versions:
+        description: 'How many versions per package and arch stay in the pool'
+        required: false
+        type: number
+        default: 2
+    secrets:
+      NEXTCLOUD_SSH_KEY:
+        required: true
+      NEXTCLOUD_SSH_HOST:
+        required: true
+      NEXTCLOUD_SSH_USER:
+        required: true
+      NEXTCLOUD_SSH_PORT:
+        required: false
+      NEXTCLOUD_SSH_REMOTE_PATH:
+        required: true
+      NEXTCLOUD_GPG_PRIVATE_KEY:
+        required: true
+
+permissions: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read          # download-artifact from the calling run
+    # Up to 90 min waiting for the cross-repo lock plus the publish itself.
+    # Independent of the stale-lock threshold: a live holder keeps its lock
+    # fresh via a heartbeat (see "Acquire archive lock").
+    timeout-minutes: 150
+    concurrency:
+      # Guards within a single repo. Cross-repo is handled by the SSH lock below.
+      group: nextcloud-office-archive
+      cancel-in-progress: false      # cancelling mid-rsync corrupts the archive
+    env:
+      PRODUCT: ${{ inputs.product }}
+      SUITE: ${{ inputs.suite }}
+      KEEP: ${{ inputs.keep_versions }}
+      SSH_HOST: ${{ secrets.NEXTCLOUD_SSH_HOST }}
+      SSH_USER: ${{ secrets.NEXTCLOUD_SSH_USER }}
+      SSH_PORT: ${{ secrets.NEXTCLOUD_SSH_PORT || 22 }}
+      REMOTE_BASE: ${{ secrets.NEXTCLOUD_SSH_REMOTE_PATH }}
+    steps:
+      - name: Validate inputs
+        run: |
+          set -euo pipefail
+          [ -n "$REMOTE_BASE" ] && [ "$REMOTE_BASE" != "/" ] \
+            || { echo "::error::NEXTCLOUD_SSH_REMOTE_PATH is empty or /"; exit 1; }
+          [[ "$KEEP" =~ ^[1-9][0-9]*$ ]] \
+            || { echo "::error::keep_versions must be a positive integer"; exit 1; }
+          [[ "$SUITE" =~ ^[a-z0-9][a-z0-9.-]*$ ]] \
+            || { echo "::error::invalid suite name '$SUITE'"; exit 1; }
+          echo "publishing $PRODUCT into suite $SUITE (keep $KEEP)"
+
+      - name: Install repo tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y createrepo-c dpkg-dev apt-utils rpm rsync
+
+      - name: Set up SSH
+        env:
+          SSH_KEY: ${{ secrets.NEXTCLOUD_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          echo "SSH_CMD=ssh -i $HOME/.ssh/id_deploy -p $SSH_PORT -o BatchMode=yes" >> "$GITHUB_ENV"
+          echo "REMOTE=$SSH_USER@$SSH_HOST" >> "$GITHUB_ENV"
+
+      - name: Import signing key
+        env:
+          GPG_KEY: ${{ secrets.NEXTCLOUD_GPG_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$GPG_KEY" | gpg --batch --import
+          KEYID=$(gpg --list-secret-keys --with-colons | awk -F: '/^sec/{print $5; exit}')
+          [ -n "$KEYID" ] || { echo "::error::no secret key imported"; exit 1; }
+          echo "KEYID=$KEYID" >> "$GITHUB_ENV"
+
+      - name: Download built packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: ${{ inputs.artifact_pattern }}
+          path: incoming
+          merge-multiple: true
+
+      - name: Check incoming packages
+        run: |
+          set -euo pipefail
+          n=$(find incoming -type f \( -name '*.deb' -o -name '*.rpm' \) | wc -l)
+          [ "$n" -gt 0 ] || { echo "::error::no .deb/.rpm found in artifacts matching the pattern"; exit 1; }
+          find incoming -type f \( -name '*.deb' -o -name '*.rpm' \) | sort
+
+      # mkdir is atomic and needs no software installed on the server.
+      # Acquired after the artifact download so the lock is held as briefly
+      # as possible.
+      #
+      # While held, a background heartbeat refreshes the lock's mtime every
+      # 60s. A lock counts as stale only after 10 min without a heartbeat,
+      # i.e. when its holder is dead (crashed, cancelled, timed out). A slow
+      # but live holder is never broken, however long it runs, so waiters can
+      # wait as long as needed instead of giving up before the holder is done.
+      # Background processes survive across steps and are killed by the
+      # runner at job end, which is exactly when the heartbeat should stop.
+      - name: Acquire archive lock
+        timeout-minutes: 95
+        run: |
+          set -uo pipefail
+          LOCK="$REMOTE_BASE/.repo-lock"
+          $SSH_CMD "$REMOTE" "mkdir -p '$REMOTE_BASE'" \
+            || { echo "::error::cannot reach server or create $REMOTE_BASE"; exit 1; }
+          for i in $(seq 1 180); do
+            if $SSH_CMD "$REMOTE" "mkdir '$LOCK'" 2>/dev/null; then
+              # touch -c: never re-create the lock as a plain file once it
+              # has been released.
+              nohup bash -c "while sleep 60; do $SSH_CMD '$REMOTE' \"touch -c '$LOCK'\" || true; done" \
+                >/dev/null 2>&1 &
+              echo "HEARTBEAT_PID=$!" >> "$GITHUB_ENV"
+              echo "LOCK_HELD=1" >> "$GITHUB_ENV"
+              echo "lock acquired (attempt $i)"
+              exit 0
+            fi
+            # Clear a lock whose holder stopped sending heartbeats.
+            $SSH_CMD "$REMOTE" \
+              "find '$LOCK' -maxdepth 0 -type d -mmin +10 -exec rmdir {} + 2>/dev/null" || true
+            echo "archive busy, waiting 30s ..."
+            sleep 30
+          done
+          echo "::error::could not acquire the archive lock within 90 minutes"
+          exit 1
+
+      - name: Fetch current archive
+        run: |
+          set -euo pipefail
+          mkdir -p repo
+          # Distinguish "first run" from "fetch failed". Swallowing rsync
+          # errors here would make the --delete in Publish wipe the archive.
+          if $SSH_CMD "$REMOTE" "test -d '$REMOTE_BASE/repo'"; then
+            rsync -a --info=stats2 -e "$SSH_CMD" "$REMOTE:$REMOTE_BASE/repo/" repo/
+          else
+            echo "::notice::no archive on the server yet - creating a new one"
+          fi
+          before=$(find repo -type f \( -name '*.deb' -o -name '*.rpm' \) | wc -l)
+          echo "PKGS_BEFORE=$before" >> "$GITHUB_ENV"
+          echo "--- archive before merge ($before packages) ---"
+          find repo -type f \( -name '*.deb' -o -name '*.rpm' \) | sort
+          # Checksums of the RPMs as they are on the server, so "Sign rpm
+          # packages" can tell which already-published files it rewrote.
+          (cd repo && find . -type f -name '*.rpm' -print0 | xargs -0 -r sha256sum) \
+            > "$RUNNER_TEMP/rpm-fetched.sha256"
+
+      - name: Merge new packages into the pool
+        run: |
+          set -euo pipefail
+          shopt -s nullglob globstar
+
+          for f in incoming/**/*.deb; do
+            pkg=$(dpkg-deb -f "$f" Package)
+            # Derive the pool path from the package name instead of hardcoding
+            # it - this is the change that admits a second product at all.
+            dest="repo/deb/pool/main/${pkg:0:1}/${pkg}"
+            mkdir -p "$dest"
+            cp -v "$f" "$dest/"
+          done
+
+          for f in incoming/**/*.rpm; do
+            # Arch from the RPM header, not from the filename.
+            arch=$(rpm -qp --qf '%{ARCH}' "$f" 2>/dev/null)
+            [ -n "$arch" ] || { echo "::error::cannot read arch of $f"; exit 1; }
+            mkdir -p "repo/rpm/$SUITE/$arch"
+            cp -v "$f" "repo/rpm/$SUITE/$arch/"
+          done
+
+      # Group by the package metadata (name + arch), not by filename
+      # patterns, so pruning works regardless of how files are named and
+      # never mixes up packages whose names contain "-<digit>".
+      - name: Prune old versions
+        run: |
+          set -euo pipefail
+          shopt -s nullglob globstar
+
+          prune() {  # stdin: "<group>\t<version>\t<file>"
+            sort -t $'\t' -k1,1 -k2,2V | awk -F'\t' -v keep="$KEEP" '
+              { g[$1]++; files[$1, g[$1]] = $3 }
+              END { for (k in g) for (i = 1; i <= g[k] - keep; i++) print files[k, i] }
+            ' | xargs -r -d '\n' rm -v
+          }
+
+          for f in repo/deb/pool/**/*.deb; do
+            printf '%s\t%s\t%s\n' \
+              "$(dpkg-deb -f "$f" Package)/$(dpkg-deb -f "$f" Architecture)" \
+              "$(dpkg-deb -f "$f" Version)" "$f"
+          done | prune
+
+          for f in repo/rpm/"$SUITE"/**/*.rpm; do
+            printf '%s\t%s\t%s\n' \
+              "$(rpm -qp --qf '%{NAME}/%{ARCH}' "$f" 2>/dev/null)" \
+              "$(rpm -qp --qf '%{EPOCHNUM}:%{VERSION}-%{RELEASE}' "$f" 2>/dev/null)" "$f"
+          done | prune
+
+      - name: Build deb indices
+        run: |
+          set -euo pipefail
+          cd repo/deb
+
+          rm -f "dists/$SUITE/Release" "dists/$SUITE/Release.gpg" "dists/$SUITE/InRelease"
+
+          for arch in amd64 arm64; do
+            d="dists/$SUITE/main/binary-$arch"
+            mkdir -p "$d"
+            dpkg-scanpackages --multiversion --arch "$arch" pool > "$d/Packages"
+            gzip -9kf "$d/Packages"
+          done
+
+          # Write Release outside the scanned tree: redirecting straight into
+          # dists/$SUITE/Release makes apt-ftparchive hash the (empty) file
+          # it is currently writing into itself.
+          tmp=$(mktemp)
+          apt-ftparchive \
+            -o APT::FTPArchive::Release::Origin="Nextcloud Office" \
+            -o APT::FTPArchive::Release::Label="Nextcloud Office" \
+            -o APT::FTPArchive::Release::Suite="$SUITE" \
+            -o APT::FTPArchive::Release::Codename="$SUITE" \
+            -o APT::FTPArchive::Release::Components=main \
+            -o APT::FTPArchive::Release::Architectures="amd64 arm64" \
+            release "dists/$SUITE" > "$tmp"
+          mv "$tmp" "dists/$SUITE/Release"
+          chmod 644 "dists/$SUITE/Release"
+
+          gpg --batch --yes --default-key "$KEYID" --digest-algo SHA512 \
+            --clearsign -o "dists/$SUITE/InRelease" "dists/$SUITE/Release"
+          gpg --batch --yes --default-key "$KEYID" --digest-algo SHA512 \
+            -abs -o "dists/$SUITE/Release.gpg" "dists/$SUITE/Release"
+
+          echo "--- packages in the index ---"
+          for arch in amd64 arm64; do
+            echo "$arch: $(grep -c '^Package:' "dists/$SUITE/main/binary-$arch/Packages" || true)"
+          done
+
+      # dnf defaults to gpgcheck=1, which checks the signature of every
+      # package, not just repomd.xml. Sign the whole pool: rpmsign skips files
+      # that already carry an identical signature (no byte change, so rsync
+      # leaves them alone), and anything left unsigned by an earlier run gets
+      # signed on the way through. Must run before createrepo_c, since the
+      # signature changes the checksums recorded in the metadata.
+      - name: Sign rpm packages
+        run: |
+          set -euo pipefail
+          shopt -s nullglob globstar
+          cat > ~/.rpmmacros <<EOF
+          %_gpg_name $KEYID
+          %__gpg /usr/bin/gpg
+          %_gpg_sign_cmd_extra_args --batch --pinentry-mode loopback
+          EOF
+          # Always create the list Publish reads, even when there is nothing to sign.
+          : > "$RUNNER_TEMP/rpm-resigned.txt"
+          rpms=(repo/rpm/"$SUITE"/**/*.rpm)
+          [ "${#rpms[@]}" -gt 0 ] || { echo "no rpm packages to sign"; exit 0; }
+          rpmsign --addsign "${rpms[@]}"
+
+          # Verify against a throwaway rpmdb that trusts only our key, the
+          # same check dnf performs on the client. rpmkeys --checksig exits 0
+          # for an unsigned package too ("digests OK"), so require the
+          # "signatures OK" a valid signature produces.
+          db=$(mktemp -d)
+          gpg --armor --export "$KEYID" > "$db/key.asc"
+          rpmkeys --dbpath "$db" --import "$db/key.asc"
+          for f in "${rpms[@]}"; do
+            out=$(rpmkeys --dbpath "$db" --checksig "$f" 2>&1) || true
+            [[ "$out" == *" signatures OK"* ]] \
+              || { echo "::error::signature check failed for $f: $out"; exit 1; }
+          done
+          rm -rf "$db"
+
+          # Already-published RPMs whose bytes signing just changed (unsigned
+          # ones from earlier runs or from DesktopEditors). Uploading these in
+          # Publish phase 1 would put new bytes next to the old repodata/, and
+          # dnf would reject them with a checksum mismatch until phase 2. List
+          # them so Publish holds them back for phase 2, where --delay-updates
+          # swaps them in together with the new metadata.
+          while read -r sum path; do
+            f="repo/${path#./}"
+            [ -f "$f" ] || continue          # pruned since the fetch
+            if [ "$(sha256sum "$f" | cut -d' ' -f1)" != "$sum" ]; then
+              echo "/${path#./}" >> "$RUNNER_TEMP/rpm-resigned.txt"
+            fi
+          done < "$RUNNER_TEMP/rpm-fetched.sha256"
+          if [ -s "$RUNNER_TEMP/rpm-resigned.txt" ]; then
+            echo "::notice::re-signed $(wc -l < "$RUNNER_TEMP/rpm-resigned.txt") already-published rpm(s); they go out with the metadata in phase 2"
+            cat "$RUNNER_TEMP/rpm-resigned.txt"
+          fi
+
+      - name: Build rpm indices
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for d in repo/rpm/"$SUITE"/*/; do
+            # Drop the old signature first; createrepo_c will not overwrite it
+            # and a stale .asc fails verification on the client.
+            rm -f "${d}repodata/repomd.xml.asc"
+            createrepo_c --update "$d"
+            gpg --batch --yes --default-key "$KEYID" \
+              --detach-sign --armor "${d}repodata/repomd.xml"
+          done
+
+      - name: Export public key
+        run: gpg --armor --export "$KEYID" > repo/nextcloud-office.asc
+
+      - name: Publish
+        run: |
+          set -euo pipefail
+          after=$(find repo -type f \( -name '*.deb' -o -name '*.rpm' \) | wc -l)
+          echo "--- archive after merge ($after packages, before: $PKGS_BEFORE) ---"
+          find repo -type f \( -name '*.deb' -o -name '*.rpm' \) | sort
+          # Last line of defence before --delete.
+          [ "$after" -gt 0 ] || { echo "::error::refusing to publish an empty archive"; exit 1; }
+
+          # Phase 1: add new packages without touching indices or deleting
+          # anything, so clients never see an index that points at a
+          # package that is not there yet. Published RPMs that were re-signed
+          # in this run are held back: their old bytes still match the live
+          # repodata/ (see "Sign rpm packages").
+          rsync -a --info=stats2 -e "$SSH_CMD" \
+            --exclude='dists/' --exclude='repodata/' \
+            --exclude-from="$RUNNER_TEMP/rpm-resigned.txt" \
+            repo/ "$REMOTE:$REMOTE_BASE/repo/"
+          # Phase 2: swap in indices + signatures, drop pruned packages.
+          rsync -a --delete --delay-updates --info=stats2 -e "$SSH_CMD" \
+            repo/ "$REMOTE:$REMOTE_BASE/repo/"
+
+      - name: Release archive lock
+        if: always() && env.LOCK_HELD == '1'
+        run: |
+          # Stop the heartbeat first so it cannot touch a lock taken by the
+          # next run.
+          if [ -n "${HEARTBEAT_PID:-}" ]; then
+            kill "$HEARTBEAT_PID" 2>/dev/null || true
+          fi
+          $SSH_CMD "$REMOTE" "rmdir '$REMOTE_BASE/.repo-lock'" || true

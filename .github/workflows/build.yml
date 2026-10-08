@@ -137,6 +137,10 @@ jobs:
   build:
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     needs: clone
+    outputs:
+      # Identical in every matrix leg (depends on the ref only), so it does
+      # not matter which leg writes it last.
+      is_stable: ${{ steps.meta.outputs.is_stable }}
     permissions:
       contents: write
       packages: write
@@ -242,14 +246,36 @@ jobs:
           fi
           echo "e2e_image=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
 
+          # Stable release tags are the ones scripts/tag_release.sh creates
+          # without -p: vX.Y.Z for build 0 and vX.Y.Z+N for rebuilds (e.g.
+          # v9.3.4, v9.3.4+1). Only these are published into the public
+          # APT/DNF archive; pre-release tags (v9.3.5-rc.1, v9.3.1-tp.3,
+          # v9.3.1-beta.1, v9.3.4-hotfix.1, ...) all carry a "-" and are not.
+          # Read the tag via $GITHUB_REF_NAME rather than a template expression:
+          # the tag name is attacker-controllable (zizmor template-injection).
+          if [[ "$IS_TAG" == "true" && "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(\+[0-9]+)?$ ]]; then
+            echo "is_stable=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "is_stable=false" >> "$GITHUB_OUTPUT"
+          fi
+
           # Parse PRODUCT_VERSION / BUILD_NUMBER from the git tag.
           # Supported formats:
-          #   v9.3.3-stable.1  →  product_version=9.3.3  build_number=stable.1
-          #   v9.3.3           →  product_version=9.3.3  build_number=<env default>
+          #   v9.3.5-rc.1      →  product_version=9.3.5  build_number=rc.1
+          #   v9.3.4+1         →  product_version=9.3.4  build_number=1
+          #   v9.3.4           →  product_version=9.3.4  build_number=0
+          # Stable tags get a numeric build number, so a rebuild (9.3.4-1)
+          # sorts after the original release (9.3.4-0) in apt/dnf.
           # Fall back to the VERSION file, then env defaults, for non-tag builds.
           if [[ "$IS_TAG" == "true" && "${{ github.ref_name }}" =~ ^v([^-]+)-(.+)$ ]]; then
             echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
             echo "build_number=${BASH_REMATCH[2]}"    >> $GITHUB_OUTPUT
+          elif [[ "$IS_TAG" == "true" && "${{ github.ref_name }}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)\+([0-9]+)$ ]]; then
+            echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
+            echo "build_number=${BASH_REMATCH[2]}"    >> $GITHUB_OUTPUT
+          elif [[ "$IS_TAG" == "true" && "${{ github.ref_name }}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
+            echo "build_number=0"                     >> $GITHUB_OUTPUT
           elif [[ "$IS_TAG" == "true" && "${{ github.ref_name }}" =~ ^v(.+)$ ]]; then
             echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
             echo "build_number=${{ env.BUILD_NUMBER }}" >> $GITHUB_OUTPUT
@@ -284,7 +310,13 @@ jobs:
           # cache-to still repopulates fresh cache. pull refreshes base images.
           no-cache: ${{ steps.meta.outputs.no_cache == 'true' }}
           pull: ${{ steps.meta.outputs.no_cache == 'true' }}
+          # Pin every target's build context to the repo root (".." from
+          # workdir ./build). Without this override bake resolves the context
+          # to ../../../build and every leg fails with "lstat ../../../build:
+          # no such file or directory". (Note: comments must stay outside the
+          # set: block below, which is parsed line by line.)
           set: |
+            *.context=..
             core.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}core-buildcache-${{ matrix.arch }}
             core.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ github.sha }}-${{ matrix.brand.cache_prefix }}core-buildcache-${{ matrix.arch }},mode=max
             core.tags=
@@ -362,11 +394,25 @@ jobs:
           chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
-          TARGET="$REMOTE_BASE/$PRODUCT_VERSION/$BUILD_NUMBER"
+          TARGET="$REMOTE_BASE/docserver/$PRODUCT_VERSION/$BUILD_NUMBER"
           ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "mkdir -p '$TARGET'"
           scp -i ~/.ssh/id_deploy -P "$SSH_PORT" \
             build/deploy/packages/*.deb build/deploy/packages/*.rpm \
             "$SSH_USER@$SSH_HOST:$TARGET/"
+
+      # Handed to the publish-repo job below. Same gate as publish-repo
+      # (stable vX.Y.Z / vX.Y.Z+N tags only), so no other tag produces these
+      # artifacts.
+      - name: Upload packages as artifact (nextcloud-office)
+        if: matrix.brand.name == 'nextcloud-office' && steps.meta.outputs.is_stable == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nc-packages-${{ matrix.arch }}
+          path: |
+            build/deploy/packages/*.deb
+            build/deploy/packages/*.rpm
+          if-no-files-found: error
+          retention-days: 1
 
   # ─────────────────────────────────────────────────────────────
   # MANIFEST
@@ -443,6 +489,30 @@ jobs:
               create_manifest "$repo" "${REF}" "latest"
             done
           fi
+
+  # ─────────────────────────────────────────────────────────────
+  # PUBLISH-REPO
+  #
+  # Merges the nextcloud-office .deb/.rpm packages into the shared
+  # signed APT/DNF archive. Stable tags only (vX.Y.Z or vX.Y.Z+N, e.g.
+  # v9.3.4, v9.3.4+1); see is_stable in the build job's meta step.
+  # ─────────────────────────────────────────────────────────────
+  publish-repo:
+    needs: build
+    if: needs.build.outputs.is_stable == 'true'
+    permissions:
+      actions: read
+    uses: ./.github/workflows/publish-repo.yml
+    with:
+      product: documentserver
+      artifact_pattern: 'nc-packages-*'
+    secrets:
+      NEXTCLOUD_SSH_KEY: ${{ secrets.NEXTCLOUD_SSH_KEY }}
+      NEXTCLOUD_SSH_HOST: ${{ secrets.NEXTCLOUD_SSH_HOST }}
+      NEXTCLOUD_SSH_USER: ${{ secrets.NEXTCLOUD_SSH_USER }}
+      NEXTCLOUD_SSH_PORT: ${{ secrets.NEXTCLOUD_SSH_PORT }}
+      NEXTCLOUD_SSH_REMOTE_PATH: ${{ secrets.NEXTCLOUD_SSH_REMOTE_PATH }}
+      NEXTCLOUD_GPG_PRIVATE_KEY: ${{ secrets.NEXTCLOUD_GPG_PRIVATE_KEY }}
 
   e2e:
     runs-on: self-hosted
