@@ -392,12 +392,21 @@ enable_supervisor_program() {
 [ "$METRICS_ENABLED" = "true" ]              && enable_supervisor_program ds-metrics
 
 # --------------------------------------------------------------------
-# Example app local.json (kept from previous entrypoint).
+# Example app local.json.
+#
+# Written whenever the example is installed, NOT only when EXAMPLE_ENABLED
+# is true: the example can also be started later via
+# `supervisorctl start example`, and it must then share the document
+# server's JWT settings. Otherwise it keeps the independently generated
+# secret from package install and every token fails with "invalid
+# signature" (#395). token.enable follows JWT_ENABLED so that
+# JWT_ENABLED=false also disables signing in the example.
 # --------------------------------------------------------------------
-if [ "${EXAMPLE_ENABLED:-false}" = "true" ] && [ -d "$EXAMPLE_CONF_DIR" ]; then
+if [ -d "$EXAMPLE_CONF_DIR" ]; then
   jq -n \
     --arg secret      "$JWT_SECRET" \
     --arg header      "$JWT_HEADER" \
+    --arg jwtEnabled  "$JWT_ENABLED" \
     --arg maxFileSize "$MAX_FILE_SIZE" \
     '{
       "server": {
@@ -405,12 +414,13 @@ if [ "${EXAMPLE_ENABLED:-false}" = "true" ] && [ -d "$EXAMPLE_CONF_DIR" ]; then
         "exampleUrl": "http://localhost/example/",
         "maxFileSize": ($maxFileSize | tonumber? // $maxFileSize),
         "token": {
-          "enable": true,
+          "enable": ($jwtEnabled == "true"),
           "secret": $secret,
           "authorizationHeader": $header
         }
       }
-    }' > "$EXAMPLE_LOCAL"
+    }' > "${EXAMPLE_LOCAL}.tmp"
+  mv "${EXAMPLE_LOCAL}.tmp" "$EXAMPLE_LOCAL"
 fi
 
 # --------------------------------------------------------------------
