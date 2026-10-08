@@ -496,9 +496,11 @@ ensure_owner() {
 ensure_owner ds "$DATA_DIR" "$EO_LOG" "$EO_LIB"
 
 # $DATA_DIR holds the persisted secrets and the repair above is recursive, so
-# put the owner back: on a fresh install $PRIVATE_DIR is root-owned (mode 700,
-# ds group inherited from $DATA_DIR) and only this script reads it.
+# put the owner back: on a fresh install $PRIVATE_DIR and the WOPI keypair are
+# root-owned and only this script reads them. The services never open these
+# files; they get the values from $CONFIG_FILE, which this script fills.
 [ -d "$PRIVATE_DIR" ] && chown -R root "$PRIVATE_DIR"
+chown root "$WOPI_PRIVATE_KEY" "$WOPI_PUBLIC_KEY" 2>/dev/null || true
 
 # --------------------------------------------------------------------
 # Start bundled services only when the corresponding host points at
