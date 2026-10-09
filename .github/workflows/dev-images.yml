@@ -1,0 +1,256 @@
+name: Dev images
+
+# Builds dev images from dev/* branches, whose submodule pins are set with
+# scripts/dev-pin.sh, and publishes them to separate *-dev packages. A daily
+# sweep enforces retention and deletes the images of deleted branches.
+# See docs/dev-images.md.
+#
+# Scheduled runs always use this file from the default branch.
+on:
+  push:
+    branches: ['dev/**']
+  schedule:
+    - cron: '0 3 * * *'   # 03:00 UTC daily
+
+permissions: {}
+
+concurrency:
+  group: dev-images-${{ github.event_name == 'schedule' && 'sweep' || github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io/euro-office
+  ORG: euro-office
+  IMAGE_NAME: documentserver-dev
+  CLUSTER_IMG_DOCS: cluster-docs-dev
+  CLUSTER_IMG_EXAMPLE: cluster-example-dev
+  CLUSTER_IMG_UTILS: cluster-utils-dev
+  DEV_PACKAGES: documentserver-dev cluster-docs-dev cluster-example-dev cluster-utils-dev
+  CACHE_PACKAGE: documentserver-build-cache
+  BUILD_ROOT: /package
+  # Retention (sweep job)
+  KEEP_VERSIONS: 5    # newest <slug>-<sha8> versions kept per branch
+  MAX_AGE_DAYS: 30    # older <slug>-<sha8> versions are deleted unless tagged <slug>
+  UNTAGGED_MIN_AGE_HOURS: 24  # untagged versions in the *-dev packages older than this are deleted
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }})
+    if: github.event_name == 'push' && !github.event.deleted
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    permissions:
+      contents: read    # checkout
+      packages: write   # push images and build cache to ghcr.io
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - amd64
+    steps:
+      - name: Checkout (with pinned submodules)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+          token: ${{ github.token }}
+          persist-credentials: false
+
+      - name: Compute slug, version and pinned revisions
+        id: meta
+        env:
+          BRANCH: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+          RUN_NUMBER: ${{ github.run_number }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+
+          # Branch names end up in tags, labels and bake overrides.
+          if [[ ! "$BRANCH" =~ ^dev/[A-Za-z0-9._/-]+$ ]]; then
+            echo "::error::Branch name '$BRANCH' may only contain letters, digits, '.', '_', '-' and '/'."
+            exit 1
+          fi
+
+          # Build exactly the committed gitlinks: every submodule must be
+          # checked out at its pinned commit (no '-', '+' or 'U' prefix).
+          status="$(git submodule status --recursive)"
+          if grep -v '^ ' <<<"$status"; then
+            echo "::error::Submodules are not checked out at their pinned commits (see above)."
+            exit 1
+          fi
+
+          slug="$(.github/scripts/dev-images.sh slug "$BRANCH")"
+          sha="$(git rev-parse HEAD)"
+          version="$(tr -d '[:space:]' < VERSION)"
+          version="${version%%-*}"
+          build_number="dev.${RUN_NUMBER}"
+
+          {
+            echo "slug=${slug}"
+            echo "sha8=${sha:0:8}"
+            echo "product_version=${version}"
+            echo "build_number=${build_number}"
+          } >> "$GITHUB_OUTPUT"
+
+          # OCI labels on the four published images, as bake overrides.
+          labels=(
+            "org.opencontainers.image.source=https://github.com/${REPO}"
+            "org.opencontainers.image.revision=${sha}"
+            "org.opencontainers.image.version=${version}-${build_number}"
+            "io.github.euro-office.dev.branch=${BRANCH}"
+            "io.github.euro-office.dev.slug=${slug}"
+          )
+          while read -r sub_sha sub_path _; do
+            labels+=("io.github.euro-office.submodule.${sub_path}=${sub_sha}")
+          done < <(git submodule status | cut -c2-)
+          delim="EOF_$(openssl rand -hex 8)"
+          {
+            echo "labels<<${delim}"
+            for target in standalone cluster-docs cluster-example cluster-utils; do
+              for label in "${labels[@]}"; do
+                echo "${target}.labels.${label}"
+              done
+            done
+            echo "${delim}"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Dev images for \`${BRANCH}\` (${ARCH})"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| DocumentServer | \`${sha}\` |"
+            echo "| Slug | \`${slug}\` |"
+            echo "| Version | \`${version}-${build_number}\` |"
+            echo
+            echo "### Pinned submodules"
+            echo
+            echo "| Submodule | Commit |"
+            echo "|---|---|"
+            git submodule status --recursive | cut -c2- | awk '{ printf "| %s | `%s` |\n", $2, $1 }'
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Dependency targets: no tags, cache-only output. Published targets get
+      # <slug>-<sha8> and <slug>. Attestations are disabled so each image is a
+      # single manifest and deleting its tag removes everything.
+      - name: Build and push dev images
+        uses: docker/bake-action@4a9a8d494466d37134e2bfca2d3a8de8fb2681ad # v5.13.0
+        with:
+          workdir: ./build
+          files: ./docker-bake.hcl
+          targets: standalone,cluster-docs,cluster-example,cluster-utils
+          push: false
+          provenance: false
+          sbom: false
+          set: |
+            core.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-core-${{ matrix.arch }}
+            core.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-core-${{ matrix.arch }},mode=max
+            core.tags=
+            core.output=type=cacheonly
+            core-wasm.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-core-wasm-${{ matrix.arch }}
+            core-wasm.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-core-wasm-${{ matrix.arch }},mode=max
+            core-wasm.tags=
+            core-wasm.output=type=cacheonly
+            sdkjs.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-sdkjs-${{ matrix.arch }}
+            sdkjs.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-sdkjs-${{ matrix.arch }},mode=max
+            sdkjs.tags=
+            sdkjs.output=type=cacheonly
+            web-apps.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-web-apps-${{ matrix.arch }}
+            web-apps.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-web-apps-${{ matrix.arch }},mode=max
+            web-apps.tags=
+            web-apps.output=type=cacheonly
+            server.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-server-${{ matrix.arch }}
+            server.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-server-${{ matrix.arch }},mode=max
+            server.tags=
+            server.output=type=cacheonly
+            example.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-example-${{ matrix.arch }}
+            example.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-example-${{ matrix.arch }},mode=max
+            example.tags=
+            example.output=type=cacheonly
+            bundle.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-bundle-${{ matrix.arch }}
+            bundle.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-bundle-${{ matrix.arch }},mode=max
+            bundle.tags=
+            bundle.output=type=cacheonly
+            packages.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-packages-${{ matrix.arch }}
+            packages.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-packages-${{ matrix.arch }},mode=max
+            packages.tags=
+            packages.output=type=cacheonly
+            standalone.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-standalone-${{ matrix.arch }}
+            standalone.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-standalone-${{ matrix.arch }},mode=max
+            standalone.tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.slug }}-${{ steps.meta.outputs.sha8 }}
+            standalone.tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.slug }}
+            standalone.output=type=registry
+            cluster-docs.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-cluster-docs-${{ matrix.arch }}
+            cluster-docs.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-cluster-docs-${{ matrix.arch }},mode=max
+            cluster-docs.tags=${{ env.REGISTRY }}/${{ env.CLUSTER_IMG_DOCS }}:${{ steps.meta.outputs.slug }}-${{ steps.meta.outputs.sha8 }}
+            cluster-docs.tags=${{ env.REGISTRY }}/${{ env.CLUSTER_IMG_DOCS }}:${{ steps.meta.outputs.slug }}
+            cluster-docs.output=type=registry
+            cluster-example.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-cluster-example-${{ matrix.arch }}
+            cluster-example.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-cluster-example-${{ matrix.arch }},mode=max
+            cluster-example.tags=${{ env.REGISTRY }}/${{ env.CLUSTER_IMG_EXAMPLE }}:${{ steps.meta.outputs.slug }}-${{ steps.meta.outputs.sha8 }}
+            cluster-example.tags=${{ env.REGISTRY }}/${{ env.CLUSTER_IMG_EXAMPLE }}:${{ steps.meta.outputs.slug }}
+            cluster-example.output=type=registry
+            cluster-utils.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-cluster-utils-${{ matrix.arch }}
+            cluster-utils.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-cluster-utils-${{ matrix.arch }},mode=max
+            cluster-utils.tags=${{ env.REGISTRY }}/${{ env.CLUSTER_IMG_UTILS }}:${{ steps.meta.outputs.slug }}-${{ steps.meta.outputs.sha8 }}
+            cluster-utils.tags=${{ env.REGISTRY }}/${{ env.CLUSTER_IMG_UTILS }}:${{ steps.meta.outputs.slug }}
+            cluster-utils.output=type=registry
+            ${{ steps.meta.outputs.labels }}
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          TAG: ${{ steps.meta.outputs.slug }}-${{ steps.meta.outputs.sha8 }}
+          PRODUCT_VERSION: ${{ steps.meta.outputs.product_version }}
+          BUILD_NUMBER: ${{ steps.meta.outputs.build_number }}
+          BUILD_ROOT: ${{ env.BUILD_ROOT }}
+          NUGET_CACHE: local
+
+      - name: Verify single-manifest images and record tags
+        env:
+          SLUG: ${{ steps.meta.outputs.slug }}
+          SHA8: ${{ steps.meta.outputs.sha8 }}
+        run: |
+          set -euo pipefail
+          echo "### Images" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          for img in "$IMAGE_NAME" "$CLUSTER_IMG_DOCS" "$CLUSTER_IMG_EXAMPLE" "$CLUSTER_IMG_UTILS"; do
+            ref="${REGISTRY}/${img}:${SLUG}-${SHA8}"
+            media_type="$(docker buildx imagetools inspect --raw "$ref" | jq -r '.mediaType')"
+            case "$media_type" in
+              application/vnd.oci.image.manifest.v1+json|application/vnd.docker.distribution.manifest.v2+json) ;;
+              *)
+                echo "::error::$ref is $media_type, expected a single image manifest (attestations disabled)."
+                exit 1
+                ;;
+            esac
+            echo "- \`${ref}\` (also \`:${SLUG}\`)" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+  sweep:
+    name: Retention sweep
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read    # checkout, list dev/* branches
+      packages: write   # delete package versions
+    steps:
+      - name: Checkout helper script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - name: Apply retention to dev images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: .github/scripts/dev-images.sh sweep
