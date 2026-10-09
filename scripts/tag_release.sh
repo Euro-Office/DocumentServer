@@ -23,18 +23,16 @@ fi
 
 # Parse arguments
 DRY_RUN=0
-BUILD_NUMBER=""
 PRE_ID=""
 PUSH=0
 
 usage() {
-    echo "Usage: $0 [-b BUILD_NUMBER] [-p PRE_ID] [--dry-run] [--push]"
+    echo "Usage: $0 [-p PRE_ID] [--dry-run] [--push]"
     echo ""
-    echo "Tags the main repo and all submodules with vVERSION[-PRE_ID]+BUILD_NUMBER"
+    echo "Tags the main repo and all submodules with vVERSION[-PRE_ID]"
     echo ""
     echo "Options:"
-    echo "  -b, --build BUILD_NUMBER   Build number (default: last build + 1)"
-    echo "  -p, --pre-id ID            Pre-release identifier (default: none)"
+    echo "  -p, --pre-id ID            Pre-release identifier, e.g. rc.1 (default: none)"
     echo "  --dry-run                  Print tags without creating them"
     echo "  --push                     Push tags to remote after creating"
     echo "  -h, --help                 Show this help"
@@ -43,10 +41,6 @@ usage() {
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -b|--build)
-            BUILD_NUMBER="$2"
-            shift 2
-            ;;
         -p|--pre-id)
             PRE_ID="$2"
             shift 2
@@ -69,39 +63,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Build the tag prefix. With a pre-release id it's "vX.Y.Z-ID+", without it "vX.Y.Z".
-# Build metadata is separated by "+" per semver.org.
+# vX.Y.Z is a stable release, vX.Y.Z-PRE_ID a pre-release. A broken release
+# gets a new patch version instead of a rebuild tag.
 if [ -n "$PRE_ID" ]; then
-    TAG_PREFIX="v${VERSION}-${PRE_ID}"
+    TAG="v${VERSION}-${PRE_ID}"
 else
-    TAG_PREFIX="v${VERSION}"
-fi
-
-if [ -z "$BUILD_NUMBER" ]; then
-    # Find the highest existing build number for this version/pre-id.
-    # The [0-9] in the glob keeps numeric builds only, so a "vX.Y.Z-" prefix
-    # won't accidentally pick up "vX.Y.Z-tp.N" style tags.
-    LAST_BUILD=$(git -C "$REPO_ROOT" tag --list "${TAG_PREFIX}[0-9]*" \
-        | sed "s|^${TAG_PREFIX}||" \
-        | sort -n \
-        | tail -1)
-    if [ -z "$LAST_BUILD" ]; then
-        BUILD_NUMBER=0
-    else
-        BUILD_NUMBER=$((LAST_BUILD + 1))
-    fi
-    echo "Auto-detected build number: $BUILD_NUMBER (last: ${LAST_BUILD:-none})"
-fi
-
-if ! [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
-    echo "ERROR: Build number must be a positive integer (or zero)"
-    exit 1
-fi
-
-if [ $BUILD_NUMBER -eq 0 ]; then
-    TAG="${TAG_PREFIX}"
-else
-    TAG="${TAG_PREFIX}+${BUILD_NUMBER}"
+    TAG="v${VERSION}"
 fi
 
 tag_repo() {
