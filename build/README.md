@@ -37,6 +37,25 @@ If you only want to build one of the components, you can specify the respective 
 docker buildx bake TARGET
 ```
 
+### Using an alternate BuildKit cache directory
+
+By default, local BuildKit caches are stored under `/tmp`.  
+Full builds can require more than 20 GB of cache space, so you can override the cache root using the `CACHE_ROOT` environment variable:
+
+```sh
+cd DocumentServer/build
+CACHE_ROOT=/path/with/enough/space docker buildx bake
+```
+
+The same option can be used when building a specific target:
+
+```sh
+CACHE_ROOT=/path/with/enough/space docker buildx bake develop
+```
+
+`CACHE_ROOT` should be an absolute path on a filesystem with sufficient
+available space.
+
 ## Running the Container
 
 After building the image, you can run it with a simple `docker run`.
