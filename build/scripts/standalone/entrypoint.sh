@@ -43,7 +43,6 @@ REDIS_SERVER_HOST="${REDIS_SERVER_HOST:-localhost}"
 REDIS_SERVER_PORT="${REDIS_SERVER_PORT:-6379}"
 
 WOPI_ENABLED="${WOPI_ENABLED:-false}"
-PLUGINS_ENABLED="${PLUGINS_ENABLED:-true}"
 METRICS_ENABLED="${METRICS_ENABLED:-false}"
 METRICS_HOST="${METRICS_HOST:-localhost}"
 METRICS_PORT="${METRICS_PORT:-8125}"
@@ -613,19 +612,10 @@ fi
 service nginx start
 
 # --------------------------------------------------------------------
-# Fonts + plugins (background where appropriate).
+# Fonts.
 # --------------------------------------------------------------------
 if [ "$GENERATE_FONTS" = "true" ] && command -v /usr/bin/documentserver-generate-allfonts.sh >/dev/null 2>&1; then
   /usr/bin/documentserver-generate-allfonts.sh
-fi
-
-if [ "$PLUGINS_ENABLED" = "true" ] && command -v documentserver-pluginsmanager.sh >/dev/null 2>&1 \
-   && [ -f "${EO_ROOT}/sdkjs-plugins/plugin-list-default.json" ]; then
-  (
-    documentserver-pluginsmanager.sh -r false \
-      --update="${EO_ROOT}/sdkjs-plugins/plugin-list-default.json" >/dev/null
-    echo "[pluginsmanager] Plugins initialization finished"
-  ) &
 fi
 
 # --------------------------------------------------------------------
