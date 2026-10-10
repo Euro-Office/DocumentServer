@@ -82,13 +82,15 @@ for storage_var in EDITOR_DATA_STORAGE EDITOR_STAT_STORAGE; do
 done
 
 if [[ -n "${EDITOR_DATA_STORAGE:-}" || -n "${EDITOR_STAT_STORAGE:-}" ]]; then
+  # An omitted statistics backend follows the editor-data backend.
+  EDITOR_STAT_STORAGE_EFFECTIVE="${EDITOR_STAT_STORAGE:-${EDITOR_DATA_STORAGE:-}}"
   EDITOR_STORAGE_CONFIG='"server": {'
   if [[ -n "${EDITOR_DATA_STORAGE:-}" ]]; then
     EDITOR_STORAGE_CONFIG+='"editorDataStorage": "'"$EDITOR_DATA_STORAGE"'"'
   fi
-  if [[ -n "${EDITOR_STAT_STORAGE:-}" ]]; then
+  if [[ -n "$EDITOR_STAT_STORAGE_EFFECTIVE" ]]; then
     [[ "$EDITOR_STORAGE_CONFIG" == *'"editorDataStorage"'* ]] && EDITOR_STORAGE_CONFIG+=', '
-    EDITOR_STORAGE_CONFIG+='"editorStatStorage": "'"$EDITOR_STAT_STORAGE"'"'
+    EDITOR_STORAGE_CONFIG+='"editorStatStorage": "'"$EDITOR_STAT_STORAGE_EFFECTIVE"'"'
   fi
   EDITOR_STORAGE_CONFIG+='},'
 fi

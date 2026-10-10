@@ -41,6 +41,12 @@ assert_config "$unauthenticated_config" '
   .services.CoAuthoring.server.editorStatStorage == "editorDataRedis"
 '
 
+omitted_stat_config=$(run_config EDITOR_DATA_STORAGE=editorDataRedis)
+assert_config "$omitted_stat_config" '
+  .services.CoAuthoring.server.editorDataStorage == "editorDataRedis" and
+  .services.CoAuthoring.server.editorStatStorage == "editorDataRedis"
+'
+
 authenticated_config=$(run_config \
   REDIS_SERVER_USER=redis-user \
   REDIS_SERVER_PWD=redis-pass \
