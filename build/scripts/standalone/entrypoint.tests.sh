@@ -90,6 +90,20 @@ assert_config "$sentinel_config" '
   }
 '
 
+# NODE_CONFIG topology settings must suppress the legacy single-node wait even
+# when the REDIS_SENTINEL_* environment API is not used.
+node_config_sentinel='{"services":{"CoAuthoring":{"redis":{"optionsSentinel":{"name":"mymaster","sentinelRootNodes":[{"host":"sentinel-a","port":26379}]}}}}}'
+node_config_result=$(run_entrypoint node_config_sentinel \
+  REDIS_SERVER_HOST=unavailable-redis \
+  NODE_CONFIG="$node_config_sentinel")
+assert_config "$node_config_result" '.services.CoAuthoring.redis.optionsSentinel == {}'
+
+node_config_cluster='{"services":{"CoAuthoring":{"redis":{"optionsCluster":{"rootNodes":[{"url":"redis://cluster-a:7000"}]}}}}}'
+node_config_result=$(run_entrypoint node_config_cluster \
+  REDIS_SERVER_HOST=unavailable-redis \
+  NODE_CONFIG="$node_config_cluster")
+assert_config "$node_config_result" '.services.CoAuthoring.redis.optionsCluster == {}'
+
 expect_failure() {
   local name=$1
   local expected=$2

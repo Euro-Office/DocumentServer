@@ -47,6 +47,21 @@ REDIS_TOPOLOGY_HELPER="${REDIS_TOPOLOGY_HELPER:-$(dirname "$0")/../redis-topolog
 . "$REDIS_TOPOLOGY_HELPER"
 redis_topology_init
 
+# A topology may be supplied either through the REDIS_* environment variables
+# above or directly through NODE_CONFIG. Keep this separate from
+# REDIS_SENTINEL_REQUESTED, which specifically describes environment-based
+# Sentinel configuration and is also used to build local.json.
+REDIS_TOPOLOGY_CONFIGURED=false
+if [ "$REDIS_SENTINEL_REQUESTED" = true ] || [ -n "${REDIS_CLUSTER_NODES:-}" ]; then
+  REDIS_TOPOLOGY_CONFIGURED=true
+fi
+if [ -n "${NODE_CONFIG:-}" ] && printf '%s' "$NODE_CONFIG" | jq -e '
+  (.services.CoAuthoring.redis.optionsSentinel? != null) or
+  (.services.CoAuthoring.redis.optionsCluster? != null)
+' >/dev/null 2>&1; then
+  REDIS_TOPOLOGY_CONFIGURED=true
+fi
+
 WOPI_ENABLED="${WOPI_ENABLED:-false}"
 PLUGINS_ENABLED="${PLUGINS_ENABLED:-true}"
 METRICS_ENABLED="${METRICS_ENABLED:-false}"
@@ -171,7 +186,7 @@ waiting_for_connection() {
 }
 
 [ "$DB_HOST" != "localhost" ] && waiting_for_connection "$DB_HOST" "$DB_PORT"
-[ "$REDIS_SERVER_HOST" != "localhost" ] && [ "$REDIS_SENTINEL_REQUESTED" != true ] && \
+[ "$REDIS_SERVER_HOST" != "localhost" ] && [ "$REDIS_TOPOLOGY_CONFIGURED" != true ] && \
   waiting_for_connection "$REDIS_SERVER_HOST" "$REDIS_SERVER_PORT"
 if [ -n "${AMQP_URI:-}" ]; then
   : # caller picks their host; we don't parse the URI here
@@ -640,7 +655,7 @@ if [ "$AMQP_HOST" = "localhost" ] && [ -z "${AMQP_URI:-}" ]; then
   start_rabbitmq \
     || echo "ERROR: RabbitMQ did not become ready within ${AMQP_START_TIMEOUT}s; docservice will fail to connect." >&2
 fi
-[ "$REDIS_SERVER_HOST"  = "localhost" ] && [ "$REDIS_SENTINEL_REQUESTED" != true ] && service redis-server start
+[ "$REDIS_SERVER_HOST"  = "localhost" ] && [ "$REDIS_TOPOLOGY_CONFIGURED" != true ] && service redis-server start
 service nginx start
 
 # --------------------------------------------------------------------
