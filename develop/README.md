@@ -441,6 +441,14 @@ docker compose \
   "${REDIS_CLI_COMMAND:-redis-cli}" -c -p 7000 -a redis-test-pass cluster nodes
 ```
 
+The configuration and health checks above do not by themselves prove that
+DocService is using `editorDataRedis`; the memory backend can also pass them.
+Complete the validation by running the `MONITOR` command below, then create or
+open a document in the example app. The output must contain editor-data Redis
+traffic beyond connection or health-check `PING` commands. For Sentinel,
+monitor the primary returned by `SENTINEL get-master-addr-by-name`; for
+Cluster, monitor each master because commands are distributed across slots.
+
 ### Watch DocumentServer Redis traffic live
 
 `MONITOR` prints every command received by a Redis server. Start it in one
