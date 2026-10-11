@@ -38,6 +38,8 @@ services:
       - "no"
       - --requirepass
       - redis-test-pass
+      - --masterauth
+      - redis-test-pass
     healthcheck:
       test: ["CMD-SHELL", "${REDIS_CLI_COMMAND:-redis-cli} -a redis-test-pass ping"]
       interval: 2s
