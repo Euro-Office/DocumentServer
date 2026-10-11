@@ -98,6 +98,14 @@ services:
       - sh
       - -c
       - |
+        cluster_info="$$("$$REDIS_CLI_COMMAND" -h redis-cluster-1 -p 7000 \
+          -a redis-test-pass cluster info 2>/dev/null || true)"
+        case "$$cluster_info" in
+          *"cluster_state:ok"*|*"cluster_slots_assigned:16384"*)
+            echo "Redis cluster already exists; skipping cluster creation"
+            exit 0
+            ;;
+        esac
         exec "$$REDIS_CLI_COMMAND" -a redis-test-pass --cluster create \
           redis-cluster-1:7000 redis-cluster-2:7001 redis-cluster-3:7002 \
           redis-cluster-4:7003 redis-cluster-5:7004 redis-cluster-6:7005 \
