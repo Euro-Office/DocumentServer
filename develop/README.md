@@ -275,8 +275,50 @@ To remove the test PostgreSQL volume as well:
 make -C develop redis-down TYPE=CLUSTER PURGE=1
 ```
 
-DocumentServer is exposed at `http://127.0.0.1:8000/`; its health endpoint is
-`http://127.0.0.1:8000/healthcheck`.
+### Test Sentinel failover
+
+Start the Sentinel stack using the documented Make target:
+
+```sh
+make -C develop redis-up TYPE=SENTINEL
+```
+
+The Sentinel stack uses Docker Compose service names for Redis discovery. Do
+not use `docker stop redis-primary` as the failover trigger: stopping the
+container removes `redis-primary` from Docker DNS, so Sentinel may spend its
+time trying to resolve the hostname instead of completing failover. The
+following failover and inspection commands use Compose directly because they
+are operations on the already-running test stack, rather than stack
+start/stop operations.
+
+Use one of these deterministic triggers instead:
+
+```sh
+# Simulate an unresponsive primary while keeping its Docker DNS record.
+docker compose -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-sentinel.yml pause redis-primary
+
+# Or request a Sentinel-managed failover explicitly.
+docker compose -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-sentinel.yml \
+  exec redis-sentinel-1 redis-cli \
+  -h redis-sentinel-1 -p 26379 -a sentinel-test-pass \
+  SENTINEL FAILOVER mymaster
+```
+
+After failover, query Sentinel for the elected primary before monitoring it:
+
+```sh
+docker compose -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-sentinel.yml \
+  exec redis-sentinel-1 redis-cli \
+  -h redis-sentinel-1 -p 26379 -a sentinel-test-pass \
+  SENTINEL get-master-addr-by-name mymaster
+```
+
+The result may be `redis-primary` or `redis-replica`; use the elected host in
+the `MONITOR` command below. `docker pause` can be reversed with
+`docker compose ... unpause redis-primary` after the failover test.
 
 ### Run with Valkey
 
@@ -413,13 +455,15 @@ docker compose \
   exec redis "${REDIS_CLI_COMMAND:-redis-cli}" -a redis-test-pass MONITOR
 ```
 
-Sentinel: monitor the elected primary (not the Sentinel port):
+Sentinel: monitor the elected primary (not the Sentinel port). First run
+`SENTINEL get-master-addr-by-name mymaster` from the failover instructions
+above, then replace `<elected-primary>` below with the returned hostname:
 
 ```sh
 docker compose \
   -f develop/docker-compose.redis-base.yml \
   -f develop/docker-compose.redis-sentinel.yml \
-  exec redis-primary "${REDIS_CLI_COMMAND:-redis-cli}" -a redis-test-pass MONITOR
+  exec <elected-primary> "${REDIS_CLI_COMMAND:-redis-cli}" -a redis-test-pass MONITOR
 ```
 
 Cluster: monitor each master because commands are distributed across slots:
