@@ -39,7 +39,7 @@ docker buildx bake TARGET
 
 ### Using an alternate BuildKit cache directory
 
-By default, local BuildKit caches are stored under `/tmp`.  
+By default, local BuildKit caches are stored under `./.docker-cache/`.  
 Full builds can require more than 20 GB of cache space, so you can override the cache root using the `CACHE_ROOT` environment variable:
 
 ```sh

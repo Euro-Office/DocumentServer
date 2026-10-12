@@ -68,7 +68,7 @@ variable "CACHE_BUST" {
 # Root directory for local BuildKit cache import/export. Override with an
 # absolute path on a filesystem with enough space for the full build graph.
 variable "CACHE_ROOT" {
-  default = "/tmp"
+  default = "./.docker-cache/"
 }
 
 # ──────────────────────────────────────────────
