@@ -14,7 +14,7 @@ SPDX-License-Identifier: AGPL
 Get involved! You can file issues, propose pull requests and more. We are looking forward to make the digital sovereign office space better than ever before!
 
 ### Try out
-We currently provide a docker image for testing and integration purposes. We are going to publish deb/rpm packages shortly.
+We currently provide a docker image for testing and integration purposes. Check the [releases](https://github.com/Euro-Office/DocumentServer/releases) for deb/rpm packages.
 
 ```
 docker pull ghcr.io/euro-office/documentserver:latest
