@@ -206,6 +206,24 @@ leaving them unset preserves the packaged memory backend. The orchestrated
 image uses `REDIS_SERVER_PWD` and
 `REDIS_SERVER_DB_NUM` for the Redis password and database settings.
 
+The orchestrated entrypoint deep-merges an operator-supplied `NODE_CONFIG`
+over its generated configuration. Explicit `NODE_CONFIG` values take precedence
+over environment-derived settings; nested options such as
+`services.CoAuthoring.redis.options.socket.tls` are preserved. Arrays are
+replaced, rather than appended. Invalid JSON or a non-object configuration
+stops startup.
+
+Both image entrypoints support `REDIS_SERVER_TLS=true` to enable TLS for
+standalone Redis, Redis nodes discovered through Sentinel, and Cluster seed
+and discovered nodes. Set `REDIS_SENTINEL_TLS=true` separately when the Sentinel
+discovery endpoints also require TLS. These flags accept `true` or `false`;
+unset or empty values behave as `false` and do not inject TLS options or disable
+TLS supplied through custom configuration. Use the TLS ports configured on
+your Redis and Sentinel servers; the flags do not change port numbers.
+Certificate verification remains enabled. Custom CA certificates and client
+certificates/keys can still be supplied through mounted configuration. The
+provided Compose topology stacks use plaintext Redis and do not enable TLS.
+
 ### First-time setup
 
 The default image is the same multi-architecture development image used by the

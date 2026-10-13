@@ -233,6 +233,7 @@ jq_set '.services.CoAuthoring.redis.port = ($redisPort | tonumber? // $redisPort
 [ -n "${REDIS_SERVER_USER:-}" ] && jq_set '.services.CoAuthoring.redis.options.username = $redisUser'
 [ -n "${REDIS_SERVER_PASS:-}" ] && jq_set '.services.CoAuthoring.redis.options.password = $redisPass'
 [ -n "${REDIS_SERVER_DB:-}"   ] && jq_set '.services.CoAuthoring.redis.options.database = ($redisDb | tonumber? // $redisDb)'
+[ "${REDIS_SERVER_TLS:-false}" = true ] && jq_set '.services.CoAuthoring.redis.options.socket.tls = true'
 
 # Redis topology. The server adapter consumes optionsSentinel directly; do not
 # silently leave Sentinel configuration out.
