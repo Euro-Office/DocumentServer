@@ -2,10 +2,12 @@ name: Gitlink guard
 
 # Keeps feature-branch submodule pins (as used on dev/* branches, see
 # docs/dev-images.md) out of main: every submodule must be pinned to a commit
-# on that submodule's default branch.
+# on that submodule's default branch. Draft PRs are skipped, so a draft that
+# bumps gitlinks to feature branches to get test images stays green.
 on:
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions: {}
 
@@ -16,6 +18,7 @@ concurrency:
 jobs:
   check:
     name: Submodule pins are on default branches
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     permissions:
       contents: read  # checkout

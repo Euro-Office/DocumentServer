@@ -1,0 +1,40 @@
+name: Dev images cleanup
+
+# When a dev/* branch is deleted, delete its images and build caches. A
+# separate workflow: the push event GitHub sends for a branch deletion shares
+# dev-images.yml's concurrency group and would cancel the cleanup there.
+# See docs/dev-images.md.
+on:
+  delete:
+
+permissions: {}
+
+concurrency:
+  group: dev-images-cleanup-${{ github.event.ref }}
+  cancel-in-progress: false
+
+env:
+  ORG: euro-office
+  DEV_PACKAGES: documentserver-dev cluster-docs-dev cluster-example-dev cluster-utils-dev
+  CACHE_PACKAGE: documentserver-build-cache
+
+jobs:
+  cleanup:
+    name: Delete images of the branch
+    if: ${{ github.event.ref_type == 'branch' && startsWith(github.event.ref, 'dev/') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read    # checkout
+      packages: write   # delete package versions
+    steps:
+      - name: Checkout helper script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+
+      - name: Delete images and caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DELETED_BRANCH: ${{ github.event.ref }}
+        run: .github/scripts/dev-images.sh cleanup "$DELETED_BRANCH"
