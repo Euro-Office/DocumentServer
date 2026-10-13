@@ -1,21 +1,17 @@
 name: Dev images
 
 # Builds dev images from dev/* branches, whose submodule pins are set with
-# scripts/dev-pin.sh, and publishes them to separate *-dev packages. A daily
-# sweep enforces retention and deletes the images of deleted branches.
+# scripts/dev-pin.sh, and publishes them to separate *-dev packages. Images of
+# deleted branches are removed by dev-images-cleanup.yml.
 # See docs/dev-images.md.
-#
-# Scheduled runs always use this file from the default branch.
 on:
   push:
     branches: ['dev/**']
-  schedule:
-    - cron: '0 3 * * *'   # 03:00 UTC daily
 
 permissions: {}
 
 concurrency:
-  group: dev-images-${{ github.event_name == 'schedule' && 'sweep' || github.ref }}
+  group: dev-images-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -25,18 +21,13 @@ env:
   CLUSTER_IMG_DOCS: cluster-docs-dev
   CLUSTER_IMG_EXAMPLE: cluster-example-dev
   CLUSTER_IMG_UTILS: cluster-utils-dev
-  DEV_PACKAGES: documentserver-dev cluster-docs-dev cluster-example-dev cluster-utils-dev
   CACHE_PACKAGE: documentserver-build-cache
   BUILD_ROOT: /package
-  # Retention (sweep job)
-  KEEP_VERSIONS: 5    # newest <slug>-<sha8> versions kept per branch
-  MAX_AGE_DAYS: 30    # older <slug>-<sha8> versions are deleted unless tagged <slug>
-  UNTAGGED_MIN_AGE_HOURS: 24  # untagged versions in the *-dev packages older than this are deleted
 
 jobs:
   build:
     name: Build (${{ matrix.arch }})
-    if: github.event_name == 'push' && !github.event.deleted
+    if: ${{ !github.event.deleted }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     permissions:
       contents: read    # checkout
@@ -86,9 +77,12 @@ jobs:
 
           {
             echo "slug=${slug}"
-            echo "sha8=${sha:0:8}"
+            echo "sha=${sha}"
             echo "product_version=${version}"
             echo "build_number=${build_number}"
+            # Same format as build.yml; $name is expanded by git submodule foreach.
+            # shellcheck disable=SC2016
+            echo "build_commits=DocumentServer=${sha} $(git submodule foreach --quiet 'echo $name=$(git rev-parse HEAD)' | tr '\n' ' ')"
           } >> "$GITHUB_OUTPUT"
 
           # OCI labels on the four published images, as bake overrides.
@@ -140,9 +134,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Dependency targets: no tags, cache-only output. Published targets get
-      # <slug>-<sha8> and <slug>. Attestations are disabled so each image is a
-      # single manifest and deleting its tag removes everything.
+      - name: Compute bake overrides
+        id: bake
+        env:
+          CACHE_REF: ${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-{target}-${{ matrix.arch }}
+          PUBLISHED: standalone cluster-docs cluster-example cluster-utils
+          SKIP: develop
+        run: .github/scripts/bake-overrides.sh
+
+      # Dependency targets get no tags and push nothing. The four published
+      # targets get the moving <slug> tag. Attestations are disabled so each
+      # image is a single manifest.
       - name: Build and push dev images
         uses: docker/bake-action@4a9a8d494466d37134e2bfca2d3a8de8fb2681ad # v5.13.0
         with:
@@ -153,77 +155,39 @@ jobs:
           provenance: false
           sbom: false
           set: |
-            core.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-core-${{ matrix.arch }}
-            core.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-core-${{ matrix.arch }},mode=max
-            core.tags=
-            core.output=type=cacheonly
-            core-wasm.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-core-wasm-${{ matrix.arch }}
-            core-wasm.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-core-wasm-${{ matrix.arch }},mode=max
-            core-wasm.tags=
-            core-wasm.output=type=cacheonly
-            sdkjs.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-sdkjs-${{ matrix.arch }}
-            sdkjs.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-sdkjs-${{ matrix.arch }},mode=max
-            sdkjs.tags=
-            sdkjs.output=type=cacheonly
-            web-apps.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-web-apps-${{ matrix.arch }}
-            web-apps.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-web-apps-${{ matrix.arch }},mode=max
-            web-apps.tags=
-            web-apps.output=type=cacheonly
-            server.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-server-${{ matrix.arch }}
-            server.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-server-${{ matrix.arch }},mode=max
-            server.tags=
-            server.output=type=cacheonly
-            example.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-example-${{ matrix.arch }}
-            example.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-example-${{ matrix.arch }},mode=max
-            example.tags=
-            example.output=type=cacheonly
-            bundle.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-bundle-${{ matrix.arch }}
-            bundle.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-bundle-${{ matrix.arch }},mode=max
-            bundle.tags=
-            bundle.output=type=cacheonly
-            packages.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-packages-${{ matrix.arch }}
-            packages.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-packages-${{ matrix.arch }},mode=max
-            packages.tags=
-            packages.output=type=cacheonly
-            standalone.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-standalone-${{ matrix.arch }}
-            standalone.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-standalone-${{ matrix.arch }},mode=max
-            standalone.tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.slug }}-${{ steps.meta.outputs.sha8 }}
+            ${{ steps.bake.outputs.set }}
             standalone.tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.slug }}
             standalone.output=type=registry
-            cluster-docs.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-cluster-docs-${{ matrix.arch }}
-            cluster-docs.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-cluster-docs-${{ matrix.arch }},mode=max
-            cluster-docs.tags=${{ env.REGISTRY }}/${{ env.CLUSTER_IMG_DOCS }}:${{ steps.meta.outputs.slug }}-${{ steps.meta.outputs.sha8 }}
             cluster-docs.tags=${{ env.REGISTRY }}/${{ env.CLUSTER_IMG_DOCS }}:${{ steps.meta.outputs.slug }}
             cluster-docs.output=type=registry
-            cluster-example.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-cluster-example-${{ matrix.arch }}
-            cluster-example.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-cluster-example-${{ matrix.arch }},mode=max
-            cluster-example.tags=${{ env.REGISTRY }}/${{ env.CLUSTER_IMG_EXAMPLE }}:${{ steps.meta.outputs.slug }}-${{ steps.meta.outputs.sha8 }}
             cluster-example.tags=${{ env.REGISTRY }}/${{ env.CLUSTER_IMG_EXAMPLE }}:${{ steps.meta.outputs.slug }}
             cluster-example.output=type=registry
-            cluster-utils.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-cluster-utils-${{ matrix.arch }}
-            cluster-utils.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-cluster-utils-${{ matrix.arch }},mode=max
-            cluster-utils.tags=${{ env.REGISTRY }}/${{ env.CLUSTER_IMG_UTILS }}:${{ steps.meta.outputs.slug }}-${{ steps.meta.outputs.sha8 }}
             cluster-utils.tags=${{ env.REGISTRY }}/${{ env.CLUSTER_IMG_UTILS }}:${{ steps.meta.outputs.slug }}
             cluster-utils.output=type=registry
             ${{ steps.meta.outputs.labels }}
         env:
           REGISTRY: ${{ env.REGISTRY }}
-          TAG: ${{ steps.meta.outputs.slug }}-${{ steps.meta.outputs.sha8 }}
+          TAG: ${{ steps.meta.outputs.slug }}
           PRODUCT_VERSION: ${{ steps.meta.outputs.product_version }}
           BUILD_NUMBER: ${{ steps.meta.outputs.build_number }}
+          BUILD_COMMITS: ${{ steps.meta.outputs.build_commits }}
           BUILD_ROOT: ${{ env.BUILD_ROOT }}
           NUGET_CACHE: local
 
-      - name: Verify single-manifest images and record tags
+      - name: Verify single-manifest images and record digests
         env:
           SLUG: ${{ steps.meta.outputs.slug }}
-          SHA8: ${{ steps.meta.outputs.sha8 }}
+          SHA: ${{ steps.meta.outputs.sha }}
         run: |
           set -euo pipefail
-          echo "### Images" >> "$GITHUB_STEP_SUMMARY"
-          echo >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### Images"
+            echo
+            echo "| Image | Digest | DocumentServer |"
+            echo "|---|---|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
           for img in "$IMAGE_NAME" "$CLUSTER_IMG_DOCS" "$CLUSTER_IMG_EXAMPLE" "$CLUSTER_IMG_UTILS"; do
-            ref="${REGISTRY}/${img}:${SLUG}-${SHA8}"
+            ref="${REGISTRY}/${img}:${SLUG}"
             media_type="$(docker buildx imagetools inspect --raw "$ref" | jq -r '.mediaType')"
             case "$media_type" in
               application/vnd.oci.image.manifest.v1+json|application/vnd.docker.distribution.manifest.v2+json) ;;
@@ -232,25 +196,48 @@ jobs:
                 exit 1
                 ;;
             esac
-            echo "- \`${ref}\` (also \`:${SLUG}\`)" >> "$GITHUB_STEP_SUMMARY"
+            digest="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$ref")"
+            echo "| \`${ref}\` | \`${digest}\` | \`${SHA}\` |" >> "$GITHUB_STEP_SUMMARY"
           done
 
-  sweep:
-    name: Retention sweep
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read    # checkout, list dev/* branches
-      packages: write   # delete package versions
-    steps:
-      - name: Checkout helper script
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Each build moves <slug>, so the previous image of the branch becomes an
+      # untagged version. Deleting untagged versions is safe in these four
+      # packages: their images are single manifests (checked above), so no
+      # untagged version is a child of a tagged image. Never run this against
+      # CACHE_PACKAGE: it is shared with build.yml, whose images have untagged
+      # child manifests.
+      - name: Delete untagged versions (documentserver-dev)
+        uses: actions/delete-package-versions@e5bc658cc4c965c472efe991f8beea3981499c55 # v5.0.0
         with:
-          sparse-checkout: .github/scripts
-          persist-credentials: false
+          owner: ${{ env.ORG }}
+          package-name: ${{ env.IMAGE_NAME }}
+          package-type: container
+          delete-only-untagged-versions: 'true'
+          min-versions-to-keep: 0
 
-      - name: Apply retention to dev images
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-        run: .github/scripts/dev-images.sh sweep
+      - name: Delete untagged versions (cluster-docs-dev)
+        uses: actions/delete-package-versions@e5bc658cc4c965c472efe991f8beea3981499c55 # v5.0.0
+        with:
+          owner: ${{ env.ORG }}
+          package-name: ${{ env.CLUSTER_IMG_DOCS }}
+          package-type: container
+          delete-only-untagged-versions: 'true'
+          min-versions-to-keep: 0
+
+      - name: Delete untagged versions (cluster-example-dev)
+        uses: actions/delete-package-versions@e5bc658cc4c965c472efe991f8beea3981499c55 # v5.0.0
+        with:
+          owner: ${{ env.ORG }}
+          package-name: ${{ env.CLUSTER_IMG_EXAMPLE }}
+          package-type: container
+          delete-only-untagged-versions: 'true'
+          min-versions-to-keep: 0
+
+      - name: Delete untagged versions (cluster-utils-dev)
+        uses: actions/delete-package-versions@e5bc658cc4c965c472efe991f8beea3981499c55 # v5.0.0
+        with:
+          owner: ${{ env.ORG }}
+          package-name: ${{ env.CLUSTER_IMG_UTILS }}
+          package-type: container
+          delete-only-untagged-versions: 'true'
+          min-versions-to-keep: 0
