@@ -18,7 +18,10 @@ export EO_IMAGE REDIS_IMAGE REDIS_SERVER_COMMAND REDIS_CLI_COMMAND
 
 REDIS_TOPOLOGY_COMPOSE_BASE := docker-compose.redis-base.yml
 
-.PHONY: redis-up redis-down
+.PHONY: redis-up redis-down redis-tls
+
+redis-tls:
+	@sh ./redis-tls.sh
 
 # Start one Redis topology test stack.
 # Examples:
@@ -31,6 +34,7 @@ redis-up:
 	  standalone|sentinel|cluster) ;; \
 	  *) echo "error: TYPE must be STANDALONE, SENTINEL, or CLUSTER (got '$(TYPE)')" >&2; exit 2 ;; \
 	esac; \
+	sh ./redis-tls.sh && \
 	docker compose -f "$(REDIS_TOPOLOGY_COMPOSE_BASE)" -f "docker-compose.redis-$$topology.yml" up -d
 
 # Stop one Redis topology test stack. Add PURGE=1 to remove its volumes too.
@@ -50,11 +54,11 @@ redis-down:
 # Detect host LAN IP for phones/emulators/LAN devices. Used by `make mobile`
 # and `make refresh-urls`.
 ifeq ($(shell uname -s),Darwin)
-	DETECTED_HOST_LAN_IP := $(shell ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null)
+DETECTED_HOST_LAN_IP := $(shell ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null)
 else
-	# 1.1.1.1 is a dummy public target — `ip route get` just asks the kernel
-	# which local source IP it would use, without actually sending packets.
-	DETECTED_HOST_LAN_IP := $(shell ip route get 1.1.1.1 2>/dev/null | awk '{print $$7; exit}')
+# 1.1.1.1 is a dummy public target — `ip route get` just asks the kernel
+# which local source IP it would use, without actually sending packets.
+DETECTED_HOST_LAN_IP := $(shell ip route get 1.1.1.1 2>/dev/null | awk '{print $$7; exit}')
 endif
 
 # Empty by default: `make local` runs on localhost (desktop browser + iOS sim).

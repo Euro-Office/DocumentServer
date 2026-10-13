@@ -194,8 +194,9 @@ docker-compose.redis-cluster.yml
 
 The published `latest-dev` image uses the standalone entrypoint. The overlays
 use its supported `REDIS_SERVER_PASS` and `REDIS_SERVER_DB` variables for the
-base connection, while the Sentinel and Cluster topology settings are supplied
-through `NODE_CONFIG`.
+base connection, `REDIS_SENTINEL_*` / `REDIS_CLUSTER_NODES` for discovery, and
+the TLS variables below. `NODE_CONFIG` selects the Redis-backed editor-data
+and statistics stores.
 
 For deployments using the orchestrated image, select the Redis-backed
 editor-data store with `EDITOR_DATA_STORAGE=editorDataRedis`. If
@@ -221,8 +222,69 @@ unset or empty values behave as `false` and do not inject TLS options or disable
 TLS supplied through custom configuration. Use the TLS ports configured on
 your Redis and Sentinel servers; the flags do not change port numbers.
 Certificate verification remains enabled. Custom CA certificates and client
-certificates/keys can still be supplied through mounted configuration. The
-provided Compose topology stacks use plaintext Redis and do not enable TLS.
+certificates/keys can still be supplied through mounted configuration.
+
+All three Compose topology stacks use TLS-only Redis/Valkey listeners on their
+usual ports (6379, 7000–7005, and 26379 for Sentinel). Replication, Sentinel
+connections, and the Cluster bus also use TLS. Password authentication remains
+enabled; client certificates are not required. Certificate verification stays
+enabled on DocumentServer, which trusts the test CA through `NODE_EXTRA_CA_CERTS`.
+
+`make redis-up` requires OpenSSL on the host and automatically generates a local
+test CA and certificate under `develop/.redis-tls/` (gitignored). The certificate
+covers all Compose Redis/Valkey hostnames and loopback addresses. The same test
+key is shared by these local containers; do not use it outside this test setup.
+The CA private key is discarded after signing. Existing certificates are reused
+until close to expiry. Stop the stack before removing `.redis-tls/` to regenerate
+them, then recreate its containers so all processes load the new CA.
+
+If using Compose directly, generate certificates first:
+
+```sh
+make -C develop redis-tls
+```
+
+CLI checks inside Redis/Valkey containers require
+`--tls --cacert /tls/ca.crt`, as shown in the verification commands below.
+
+The image must contain the updated entrypoint as well as server PR #46's Redis
+backend. These stacks exercise the TLS environment variables on the standalone
+image; the orchestrated entrypoint's merge needs separate testing.
+
+To test TLS supplied through `NODE_CONFIG` instead, set both TLS variables to
+`false` in a temporary Compose override and merge the following Redis options
+into the overlay's `NODE_CONFIG` (keep its storage-selection settings). Include
+only the block matching the topology. The discovery and credential environment
+variables can remain set; they are merged with these nested TLS settings:
+
+```json
+{
+  "services": {
+    "CoAuthoring": {
+      "redis": {
+        "options": {"socket": {"tls": true}},
+        "optionsCluster": {
+          "rootNodes": [
+            {"url": "rediss://redis-cluster-1:7000"},
+            {"url": "rediss://redis-cluster-2:7001"},
+            {"url": "rediss://redis-cluster-3:7002"},
+            {"url": "rediss://redis-cluster-4:7003"},
+            {"url": "rediss://redis-cluster-5:7004"},
+            {"url": "rediss://redis-cluster-6:7005"}
+          ],
+          "defaults": {"socket": {"tls": true}}
+        },
+        "optionsSentinel": {
+          "nodeClientOptions": {"socket": {"tls": true}},
+          "sentinelClientOptions": {"socket": {"tls": true}}
+        }
+      }
+    }
+  }
+}
+```
+
+Cluster seed URLs must also use `rediss://`, matching `socket.tls: true`.
 
 ### First-time setup
 
@@ -319,7 +381,7 @@ docker compose -f develop/docker-compose.redis-base.yml \
 # Or request a Sentinel-managed failover explicitly.
 docker compose -f develop/docker-compose.redis-base.yml \
   -f develop/docker-compose.redis-sentinel.yml \
-  exec redis-sentinel-1 redis-cli \
+  exec redis-sentinel-1 "${REDIS_CLI_COMMAND:-redis-cli}" --tls --cacert /tls/ca.crt \
   -h redis-sentinel-1 -p 26379 -a sentinel-test-pass \
   SENTINEL FAILOVER mymaster
 ```
@@ -329,7 +391,7 @@ After failover, query Sentinel for the elected primary before monitoring it:
 ```sh
 docker compose -f develop/docker-compose.redis-base.yml \
   -f develop/docker-compose.redis-sentinel.yml \
-  exec redis-sentinel-1 redis-cli \
+  exec redis-sentinel-1 "${REDIS_CLI_COMMAND:-redis-cli}" --tls --cacert /tls/ca.crt \
   -h redis-sentinel-1 -p 26379 -a sentinel-test-pass \
   SENTINEL get-master-addr-by-name mymaster
 ```
@@ -395,14 +457,15 @@ docker compose \
 
 The first output should contain `editorDataRedis`. The generated Redis
 configuration should point to `redis:6379`, contain the configured database
-and credentials, and show `optionsCluster` and `optionsSentinel` as `null`.
+and credentials, show `options.socket.tls: true`, and show empty
+`optionsCluster` and `optionsSentinel` objects.
 Confirm that the configured endpoint accepts those credentials:
 
 ```sh
 docker compose \
   -f develop/docker-compose.redis-base.yml \
   -f develop/docker-compose.redis-standalone.yml \
-  exec redis "${REDIS_CLI_COMMAND:-redis-cli}" -a redis-test-pass PING
+  exec redis "${REDIS_CLI_COMMAND:-redis-cli}" --tls --cacert /tls/ca.crt -a redis-test-pass PING
 ```
 
 Expected output:
@@ -420,8 +483,8 @@ docker compose \
   -f develop/docker-compose.redis-base.yml \
   -f develop/docker-compose.redis-sentinel.yml \
   exec eo sh -lc '
-  config="$(printenv NODE_CONFIG)"
-  printf "%s" "$config" | grep -q "\\\"optionsSentinel\\\"" &&
+  jq -e ".services.CoAuthoring.redis.optionsSentinel.sentinelRootNodes | length > 0" \
+    /etc/euro-office/documentserver/local.json >/dev/null &&
     echo "DocumentServer optionsSentinel: CONFIGURED" ||
     { echo "DocumentServer optionsSentinel: MISSING"; exit 1; }
   '
@@ -438,7 +501,7 @@ docker compose \
 docker compose \
   -f develop/docker-compose.redis-base.yml \
   -f develop/docker-compose.redis-sentinel.yml \
-  exec redis-sentinel-1 "${REDIS_CLI_COMMAND:-redis-cli}" \
+  exec redis-sentinel-1 "${REDIS_CLI_COMMAND:-redis-cli}" --tls --cacert /tls/ca.crt \
   -h redis-sentinel-1 -p 26379 -a sentinel-test-pass \
   SENTINEL get-master-addr-by-name mymaster
 ```
@@ -450,13 +513,13 @@ docker compose \
   -f develop/docker-compose.redis-base.yml \
   -f develop/docker-compose.redis-cluster.yml \
   exec redis-cluster-1 \
-  "${REDIS_CLI_COMMAND:-redis-cli}" -c -p 7000 -a redis-test-pass cluster info
+  "${REDIS_CLI_COMMAND:-redis-cli}" --tls --cacert /tls/ca.crt -c -p 7000 -a redis-test-pass cluster info
 
 docker compose \
   -f develop/docker-compose.redis-base.yml \
   -f develop/docker-compose.redis-cluster.yml \
   exec redis-cluster-1 \
-  "${REDIS_CLI_COMMAND:-redis-cli}" -c -p 7000 -a redis-test-pass cluster nodes
+  "${REDIS_CLI_COMMAND:-redis-cli}" --tls --cacert /tls/ca.crt -c -p 7000 -a redis-test-pass cluster nodes
 ```
 
 The configuration and health checks above do not by themselves prove that
@@ -478,7 +541,7 @@ Standalone:
 docker compose \
   -f develop/docker-compose.redis-base.yml \
   -f develop/docker-compose.redis-standalone.yml \
-  exec redis "${REDIS_CLI_COMMAND:-redis-cli}" -a redis-test-pass MONITOR
+  exec redis "${REDIS_CLI_COMMAND:-redis-cli}" --tls --cacert /tls/ca.crt -a redis-test-pass MONITOR
 ```
 
 Sentinel: monitor the elected primary (not the Sentinel port). First run
@@ -489,7 +552,7 @@ above, then replace `<elected-primary>` below with the returned hostname:
 docker compose \
   -f develop/docker-compose.redis-base.yml \
   -f develop/docker-compose.redis-sentinel.yml \
-  exec <elected-primary> "${REDIS_CLI_COMMAND:-redis-cli}" -a redis-test-pass MONITOR
+  exec <elected-primary> "${REDIS_CLI_COMMAND:-redis-cli}" --tls --cacert /tls/ca.crt -a redis-test-pass MONITOR
 ```
 
 Cluster: monitor each master because commands are distributed across slots:
@@ -498,7 +561,7 @@ Cluster: monitor each master because commands are distributed across slots:
 docker compose \
   -f develop/docker-compose.redis-base.yml \
   -f develop/docker-compose.redis-cluster.yml \
-  exec redis-cluster-1 "${REDIS_CLI_COMMAND:-redis-cli}" -p 7000 -a redis-test-pass MONITOR
+  exec redis-cluster-1 "${REDIS_CLI_COMMAND:-redis-cli}" --tls --cacert /tls/ca.crt -p 7000 -a redis-test-pass MONITOR
 ```
 
 Repeat that command for `redis-cluster-2` on port `7001` and

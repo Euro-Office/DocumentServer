@@ -9,7 +9,7 @@ services:
       TEST_REDIS_FAILURE_CONTAINER: eo-test-redis-compose
       TEST_REDIS_NODE_PASSWORD: redis-test-pass
       NODE_CONFIG: >-
-        {"services":{"CoAuthoring":{"server":{"editorDataStorage":"editorDataRedis","editorStatStorage":"editorDataRedis"},"redis":{"host":"redis","port":6379,"options":{"password":"redis-test-pass"}}}}}
+        {"services":{"CoAuthoring":{"server":{"editorDataStorage":"editorDataRedis","editorStatStorage":"editorDataRedis"}}}}
     depends_on:
       redis:
         condition: service_healthy
@@ -22,15 +22,27 @@ services:
       - --bind
       - 0.0.0.0
       - --port
+      - "0"
+      - --tls-port
       - "6379"
+      - --tls-cert-file
+      - /tls/server.crt
+      - --tls-key-file
+      - /tls/server.key
+      - --tls-ca-cert-file
+      - /tls/ca.crt
+      - --tls-auth-clients
+      - "no"
       - --protected-mode
       - "no"
       - --appendonly
       - "no"
       - --requirepass
       - redis-test-pass
+    volumes:
+      - ./.redis-tls:/tls:ro
     healthcheck:
-      test: ["CMD-SHELL", "${REDIS_CLI_COMMAND:-redis-cli} -a redis-test-pass ping"]
+      test: ["CMD-SHELL", "${REDIS_CLI_COMMAND:-redis-cli} --tls --cacert /tls/ca.crt -a redis-test-pass ping"]
       interval: 2s
       timeout: 5s
       retries: 30
