@@ -21,6 +21,10 @@ services:
       AMQP_PORT: 5672
       AMQP_USER: eo
       AMQP_PWD: rabbit-test-pass
+      REDIS_SERVER_TLS: "true"
+      NODE_EXTRA_CA_CERTS: /redis-tls/ca.crt
+    volumes:
+      - ./.redis-tls/ca.crt:/redis-tls/ca.crt:ro
     depends_on:
       postgres:
         condition: service_healthy

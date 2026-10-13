@@ -6,7 +6,14 @@ x-redis-cluster-node: &redis-cluster-node
     - |
       exec ${REDIS_SERVER_COMMAND:-redis-server} \
         --bind 0.0.0.0 \
-        --port "$$REDIS_CLUSTER_NODE_PORT" \
+        --port 0 \
+        --tls-port "$$REDIS_CLUSTER_NODE_PORT" \
+        --tls-cert-file /tls/server.crt \
+        --tls-key-file /tls/server.key \
+        --tls-ca-cert-file /tls/ca.crt \
+        --tls-auth-clients no \
+        --tls-replication yes \
+        --tls-cluster yes \
         --protected-mode no \
         --appendonly no \
         --requirepass redis-test-pass \
@@ -16,10 +23,12 @@ x-redis-cluster-node: &redis-cluster-node
         --cluster-node-timeout 5000 \
         --cluster-announce-hostname "$$REDIS_CLUSTER_NODE_NAME" \
         --cluster-preferred-endpoint-type hostname \
-        --cluster-announce-port "$$REDIS_CLUSTER_NODE_PORT" \
+        --cluster-announce-tls-port "$$REDIS_CLUSTER_NODE_PORT" \
         --cluster-announce-bus-port "$$REDIS_CLUSTER_NODE_BUS_PORT"
+  volumes:
+    - ./.redis-tls:/tls:ro
   healthcheck:
-    test: ["CMD-SHELL", "${REDIS_CLI_COMMAND:-redis-cli} -h 127.0.0.1 -p $$REDIS_CLUSTER_NODE_PORT -a redis-test-pass ping"]
+    test: ["CMD-SHELL", "${REDIS_CLI_COMMAND:-redis-cli} --tls --cacert /tls/ca.crt -h 127.0.0.1 -p $$REDIS_CLUSTER_NODE_PORT -a redis-test-pass ping"]
     interval: 2s
     timeout: 5s
     retries: 30
@@ -32,14 +41,15 @@ services:
       REDIS_SERVER_USER: default
       REDIS_SERVER_PASS: redis-test-pass
       REDIS_SERVER_DB: 0
+      REDIS_CLUSTER_NODES: redis-cluster-1:7000,redis-cluster-2:7001,redis-cluster-3:7002,redis-cluster-4:7003,redis-cluster-5:7004,redis-cluster-6:7005
       TEST_REDIS_CLUSTER: "true"
-      TEST_REDIS_CLUSTER_NODES: redis://redis-cluster-1:7000,redis://redis-cluster-2:7001,redis://redis-cluster-3:7002,redis://redis-cluster-4:7003,redis://redis-cluster-5:7004,redis://redis-cluster-6:7005
+      TEST_REDIS_CLUSTER_NODES: rediss://redis-cluster-1:7000,rediss://redis-cluster-2:7001,rediss://redis-cluster-3:7002,rediss://redis-cluster-4:7003,rediss://redis-cluster-5:7004,rediss://redis-cluster-6:7005
       TEST_REDIS_NODE_PASSWORD: redis-test-pass
       TEST_REDIS_TOPOLOGY_REQUIRED: "true"
       TEST_REDIS_CLUSTER_PRIMARY_CONTAINER: eo-test-redis-cluster-1-compose
       TEST_REDIS_CLUSTER_FAILOVER_REPLICA_PORT: 7003
       NODE_CONFIG: >-
-        {"services":{"CoAuthoring":{"server":{"editorDataStorage":"editorDataRedis","editorStatStorage":"editorDataRedis"},"redis":{"optionsCluster":{"rootNodes":[{"url":"redis://redis-cluster-1:7000"},{"url":"redis://redis-cluster-2:7001"},{"url":"redis://redis-cluster-3:7002"},{"url":"redis://redis-cluster-4:7003"},{"url":"redis://redis-cluster-5:7004"},{"url":"redis://redis-cluster-6:7005"}],"defaults":{"username":"default","password":"redis-test-pass"}}}}}}
+        {"services":{"CoAuthoring":{"server":{"editorDataStorage":"editorDataRedis","editorStatStorage":"editorDataRedis"}}}}
     depends_on:
       redis-cluster-init:
         condition: service_completed_successfully
@@ -98,7 +108,7 @@ services:
       - sh
       - -c
       - |
-        cluster_info="$$("$$REDIS_CLI_COMMAND" -h redis-cluster-1 -p 7000 \
+        cluster_info="$$("$$REDIS_CLI_COMMAND" --tls --cacert /tls/ca.crt -h redis-cluster-1 -p 7000 \
           -a redis-test-pass cluster info 2>/dev/null || true)"
         case "$$cluster_info" in
           *"cluster_state:ok"*|*"cluster_slots_assigned:16384"*)
@@ -106,10 +116,12 @@ services:
             exit 0
             ;;
         esac
-        exec "$$REDIS_CLI_COMMAND" -a redis-test-pass --cluster create \
+        exec "$$REDIS_CLI_COMMAND" --tls --cacert /tls/ca.crt -a redis-test-pass --cluster create \
           redis-cluster-1:7000 redis-cluster-2:7001 redis-cluster-3:7002 \
           redis-cluster-4:7003 redis-cluster-5:7004 redis-cluster-6:7005 \
           --cluster-replicas 1 --cluster-yes
+    volumes:
+      - ./.redis-tls:/tls:ro
     environment:
       REDIS_CLI_COMMAND: ${REDIS_CLI_COMMAND:-redis-cli}
     depends_on:
