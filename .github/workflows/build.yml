@@ -69,7 +69,7 @@ env:
   NEXTCLOUD_RELEASES_IMAGE: ghcr.io/nextcloud-releases/office-documentserver
 
 jobs:
-  clone:
+  prepare-sources:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout fork repository (with submodules)
@@ -140,7 +140,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   build:
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
-    needs: clone
+    needs: prepare-sources
     outputs:
       # Identical in every matrix leg (depends on the ref only), so it does
       # not matter which leg writes it last.
@@ -485,7 +485,7 @@ jobs:
   # both brands. Runs on default branch (:nightly) and git tags
   # (sanitised ref tag, plus :latest for stable tags only).
   # ─────────────────────────────────────────────────────────────
-  manifest:
+  publish-euro-office-images:
     runs-on: ubuntu-latest
     needs: build
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/')
@@ -565,7 +565,7 @@ jobs:
   # signed APT/DNF archive. Stable tags only (vX.Y.Z, e.g.
   # v9.3.4); see is_stable in the build job's meta step.
   # ─────────────────────────────────────────────────────────────
-  publish-repo:
+  publish-nextcloud-apt-dnf:
     needs: build
     if: needs.build.outputs.is_stable == 'true'
     permissions:
@@ -589,7 +589,7 @@ jobs:
   # Separate job so an SSH failure cannot fail the build job, which every
   # euro-office publishing step after it (manifest, e2e) depends on.
   # ─────────────────────────────────────────────────────────────
-  publish-nextcloud-files:
+  publish-nextcloud-download-server:
     runs-on: ubuntu-latest
     needs: build
     if: startsWith(github.ref, 'refs/tags/')
@@ -635,9 +635,9 @@ jobs:
   # (scopes: public_repo, write:packages) of the nextcloud-releases bot
   # account, whose login is NEXTCLOUD_RELEASES_USER.
   # ─────────────────────────────────────────────────────────────
-  publish-nextcloud-image:
+  publish-nextcloud-images:
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, publish-nextcloud-download-server]
     if: startsWith(github.ref, 'refs/tags/')
     permissions: {}
     steps:
@@ -672,9 +672,9 @@ jobs:
   # Uses the same NEXTCLOUD_RELEASES_TOKEN as the image job. Runs after
   # the image job so the release never points at an image that isn't there.
   # ─────────────────────────────────────────────────────────────
-  publish-nextcloud-release:
+  publish-nextcloud-github-release:
     runs-on: ubuntu-latest
-    needs: [build, publish-nextcloud-image]
+    needs: [build, publish-nextcloud-images]
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
       actions: read
@@ -706,11 +706,11 @@ jobs:
           files: dist/**/*
           fail_on_unmatched_files: true
 
-  e2e:
+  test-e2e:
     runs-on: self-hosted
     # Depend on build (produces the image) and manifest (multi-arch tags on
     # main/tags). manifest is skipped on pull_request, so don't require it there.
-    needs: [build, manifest]
+    needs: [build, publish-euro-office-images]
     if: |
       !cancelled() &&
       needs.build.result == 'success' &&
@@ -718,7 +718,7 @@ jobs:
        github.event.pull_request.head.repo.full_name == github.repository) &&
       (github.event_name == 'pull_request' ||
        ((github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/'))
-        && needs.manifest.result == 'success'))
+        && needs.publish-euro-office-images.result == 'success'))
     permissions:
       contents: read
       packages: read
@@ -788,16 +788,16 @@ jobs:
   # Skipped on tag pushes: the manifest job has already moved :latest to the
   # image under test by then, so there would be nothing to upgrade from. PR and
   # main builds are where :latest is genuinely the previous release.
-  upgrade:
+  test-upgrade:
     runs-on: self-hosted
-    needs: [build, manifest]
+    needs: [build, publish-euro-office-images]
     if: |
       !cancelled() &&
       needs.build.result == 'success' &&
       !startsWith(github.ref, 'refs/tags/') &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository) &&
-      (github.event_name == 'pull_request' || needs.manifest.result == 'success')
+      (github.event_name == 'pull_request' || needs.publish-euro-office-images.result == 'success')
     permissions:
       contents: read
       packages: read
