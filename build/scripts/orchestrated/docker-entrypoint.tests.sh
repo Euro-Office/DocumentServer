@@ -22,6 +22,26 @@ assert_config() {
   printf '%s' "$config" | jq -e "$expression" >/dev/null
 }
 
+merged_config=$(run_config \
+  REDIS_SERVER_HOST=generated-host \
+  REDIS_SERVER_PWD=redis-pass \
+  NODE_CONFIG='{"services":{"CoAuthoring":{"redis":{"host":"override-host","options":{"socket":{"tls":true}}}}}}')
+assert_config "$merged_config" '
+  .services.CoAuthoring.redis.host == "override-host" and
+  .services.CoAuthoring.redis.options.socket.tls == true and
+  .services.CoAuthoring.redis.options.password == "redis-pass" and
+  .services.CoAuthoring.redis.port == 6379 and
+  .services.CoAuthoring.sql.type == "postgres"
+'
+
+for invalid_config in '{' '[]' 'null' 'true' '"text"'; do
+  if run_config NODE_CONFIG="$invalid_config" >"$TRACE" 2>&1; then
+    echo "invalid NODE_CONFIG was accepted" >&2
+    exit 1
+  fi
+  grep -Fq 'must be valid JSON objects' "$TRACE"
+done
+
 unauthenticated_config=$(run_config \
   EDITOR_DATA_STORAGE=editorDataRedis \
   EDITOR_STAT_STORAGE=editorDataRedis \
@@ -61,6 +81,40 @@ assert_config "$authenticated_config" '
     sentinelClientOptions: {username: "sentinel-user", password: "sentinel-pass"}
   }
 '
+
+for tls in false true; do
+  standalone_tls_config=$(run_config REDIS_SERVER_TLS="$tls")
+  assert_config "$standalone_tls_config" "
+    (.services.CoAuthoring.redis.options.socket.tls // false) == $tls
+  "
+  cluster_tls_config=$(run_config REDIS_SERVER_TLS="$tls" REDIS_CLUSTER_NODES='cluster-a:7000')
+  scheme=redis
+  [[ "$tls" == true ]] && scheme=rediss
+  assert_config "$cluster_tls_config" "
+    (.services.CoAuthoring.redis.optionsCluster.defaults.socket.tls // false) == $tls and
+    .services.CoAuthoring.redis.optionsCluster.rootNodes == [{url: \"$scheme://cluster-a:7000\"}]
+  "
+  for sentinel_tls in false true; do
+    sentinel_tls_config=$(run_config REDIS_SERVER_TLS="$tls" REDIS_SENTINEL_TLS="$sentinel_tls" \
+      REDIS_SENTINEL_NODES='sentinel-a:26379')
+    assert_config "$sentinel_tls_config" "
+      (.services.CoAuthoring.redis.options.socket.tls // false) == $tls and
+      (.services.CoAuthoring.redis.optionsSentinel.nodeClientOptions.socket.tls // false) == $tls and
+      (.services.CoAuthoring.redis.optionsSentinel.sentinelClientOptions.socket.tls // false) == $sentinel_tls
+    "
+  done
+done
+
+empty_tls_config=$(run_config REDIS_SERVER_TLS= REDIS_SENTINEL_TLS=)
+assert_config "$empty_tls_config" '.services.CoAuthoring.redis.options | has("socket") | not'
+
+for tls_flag in REDIS_SERVER_TLS REDIS_SENTINEL_TLS; do
+  if run_config "$tls_flag=invalid" >"$TRACE" 2>&1; then
+    echo "$tls_flag accepted an invalid boolean" >&2
+    exit 1
+  fi
+  grep -Fq "$tls_flag must be true or false" "$TRACE"
+done
 
 set +e
 env -i \

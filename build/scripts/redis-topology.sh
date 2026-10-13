@@ -42,6 +42,14 @@ parse_redis_nodes() (
 )
 
 redis_topology_init() {
+  case "${REDIS_SERVER_TLS:-false}" in
+    true|false) ;;
+    *) echo "ERROR: REDIS_SERVER_TLS must be true or false." >&2; return 1 ;;
+  esac
+  case "${REDIS_SENTINEL_TLS:-false}" in
+    true|false) ;;
+    *) echo "ERROR: REDIS_SENTINEL_TLS must be true or false." >&2; return 1 ;;
+  esac
   REDIS_SENTINEL_USER="${REDIS_SENTINEL_USER:-${REDIS_SENTINEL_USERNAME:-}}"
   REDIS_SENTINEL_PASS="${REDIS_SENTINEL_PASS:-${REDIS_SENTINEL_PWD:-}}"
   REDIS_SENTINEL_REQUESTED=false
@@ -85,16 +93,20 @@ redis_build_sentinel_options() {
     --arg redisDb "${5:-0}" \
     --arg sentinelUser "${6:-}" \
     --arg sentinelPass "${7:-}" \
+    --argjson redisTLS "${REDIS_SERVER_TLS:-false}" \
+    --argjson sentinelTLS "${REDIS_SENTINEL_TLS:-false}" \
     '{
       name: $name,
       sentinelRootNodes: $nodes,
       nodeClientOptions: (
         {database: ($redisDb | tonumber? // 0)} |
+        if $redisTLS then .socket.tls = true else . end |
         if $redisUser != "" then .username = $redisUser else . end |
         if $redisPass != "" then .password = $redisPass else . end
       ),
       sentinelClientOptions: (
         {} |
+        if $sentinelTLS then .socket.tls = true else . end |
         if $sentinelUser != "" then .username = $sentinelUser else . end |
         if $sentinelPass != "" then .password = $sentinelPass else . end
       )
@@ -106,10 +118,14 @@ redis_build_cluster_options() {
     --argjson nodes "${1:-[]}" \
     --arg redisUser "${2:-}" \
     --arg redisPass "${3:-}" \
+    --argjson redisTLS "${REDIS_SERVER_TLS:-false}" \
     '{
-      rootNodes: ($nodes | map({url: ("redis://" + .host + ":" + (.port | tostring))})),
+      rootNodes: ($nodes | map({url: (
+        (if $redisTLS then "rediss://" else "redis://" end) + .host + ":" + (.port | tostring)
+      )})),
       defaults: (
         {} |
+        if $redisTLS then .socket.tls = true else . end |
         if $redisUser != "" then .username = $redisUser else . end |
         if $redisPass != "" then .password = $redisPass else . end
       )

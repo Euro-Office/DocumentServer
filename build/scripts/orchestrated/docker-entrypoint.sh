@@ -62,7 +62,11 @@ REDIS_OPTIONS=$(jq -cn \
   --arg redisUser "${REDIS_SERVER_USER:-}" \
   --arg redisPass "${REDIS_SERVER_PWD:-}" \
   --arg redisDb "${REDIS_SERVER_DB_NUM:-0}" \
-  '{user: (if $redisUser != "" then $redisUser else null end), password: (if $redisPass != "" then $redisPass else null end), db: $redisDb} | with_entries(select(.value != null))')
+  --argjson redisTLS "${REDIS_SERVER_TLS:-false}" \
+  '{user: (if $redisUser != "" then $redisUser else null end),
+    password: (if $redisPass != "" then $redisPass else null end), db: $redisDb} |
+    with_entries(select(.value != null)) |
+    if $redisTLS then .socket.tls = true else . end')
 
 # --------------------------------------------------------------------
 # Editor-data storage
@@ -120,6 +124,8 @@ fi
 # --------------------------------------------------------------------
 # NODE_CONFIG (exported for Docs services)
 # --------------------------------------------------------------------
+NODE_CONFIG_OVERRIDE="${NODE_CONFIG:-}"
+[ -n "$NODE_CONFIG_OVERRIDE" ] || NODE_CONFIG_OVERRIDE='{}'
 export NODE_CONFIG='{
   "statsd": {
     "useMetrics": '${METRICS_ENABLED:-false}',
@@ -242,6 +248,17 @@ export NODE_CONFIG='{
     "storageFolderName": "files"
   }
 }'
+
+# Explicit NODE_CONFIG values override generated defaults, preserving nested options.
+if ! NODE_CONFIG=$(jq -cen --argjson generated "$NODE_CONFIG" --argjson override "$NODE_CONFIG_OVERRIDE" '
+  if ($generated | type) == "object" and ($override | type) == "object"
+  then $generated * $override
+  else error("configuration must be a JSON object") end
+' 2>/dev/null); then
+  echo "Generated configuration and supplied NODE_CONFIG must be valid JSON objects." >&2
+  exit 1
+fi
+unset NODE_CONFIG_OVERRIDE
 
 if [[ "${ENTRYPOINT_CONFIG_ONLY:-false}" == "true" ]]; then
   printf '%s\n' "$NODE_CONFIG"
