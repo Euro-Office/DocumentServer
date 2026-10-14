@@ -20,6 +20,40 @@ while getopts ":fpd" opt; do
 done
 shift $((OPTIND-1))
 
+# Normalize boolean env vars: accept True/TRUE/yes/on/1 (as written by e.g.
+# Ansible or compose files) and canonicalize to lowercase true/false. The
+# values end up raw inside JSON, where anything else is invalid. Empty values
+# are left untouched so the ${VAR:-default} fallbacks still apply.
+#
+# normalize_bool: an unrecognized value warns and becomes false.
+# require_bool:   an unrecognized value aborts startup. Use it for
+#                 security-relevant flags (JWT), where silently falling back
+#                 to false would disable authentication.
+_normalize_bool() {
+  local mode="$1" var val
+  shift
+  for var in "$@"; do
+    val="${!var:-}"
+    case "${val,,}" in
+      "") ;;
+      true|yes|y|on|1)  printf -v "$var" '%s' true ;;
+      false|no|n|off|0) printf -v "$var" '%s' false ;;
+      *)
+        if [[ "$mode" == "strict" ]]; then
+          echo "ERROR: ${var}='${val}' is not a recognized boolean (use true or false). Refusing to start rather than guess." >&2
+          exit 1
+        fi
+        echo "WARNING: ${var}='${val}' is not a recognized boolean (use true/false); treating it as false" >&2
+        printf -v "$var" '%s' false
+        ;;
+    esac
+  done
+}
+normalize_bool() { _normalize_bool lenient "$@"; }
+require_bool()   { _normalize_bool strict "$@"; }
+
+normalize_bool PLUGINS_MARKET_DISABLED
+
 cleanup_dir() {
   local dir="$1"
   if [[ -d "$dir" ]]; then
