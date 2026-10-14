@@ -10,6 +10,15 @@ SPDX-License-Identifier: AGPL
 
 [Learn more.](https://github.com/Euro-Office/)
 
+## Install
+
+The Document Server is not a standalone application and needs a platform such as Nextcloud that stores the files.
+
+* **Nextcloud Office**: signed builds for production use, with APT and DNF package repositories, available on [nextcloud-releases/Office-DocumentServer](https://github.com/nextcloud-releases/Office-DocumentServer/releases)
+* **Euro-Office**: community builds for testing and contributing, available as deb/rpm on the [releases](https://github.com/Euro-Office/DocumentServer/releases/latest) page and as the `ghcr.io/euro-office/documentserver` container image
+
+See the [installation guide](https://euro-office.github.io/documentation/installation/) in the [official documentation](https://euro-office.github.io/documentation/) for step-by-step instructions.
+
 ## Get involved
 Get involved! You can file issues, propose pull requests and more. We are looking forward to make the digital sovereign office space better than ever before!
 
