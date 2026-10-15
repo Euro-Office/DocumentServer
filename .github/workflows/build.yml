@@ -422,10 +422,10 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      # Lets a manual dispatch (e.g. on a release/v* branch) be tried out
-      # before tagging; tag builds attach the packages to the release instead.
+      # Lets a release/v* PR or a manual dispatch be tried out before tagging;
+      # tag builds attach the packages to the release instead.
       - name: Upload packages as artifact (euro-office test build)
-        if: matrix.brand.name == 'euro-office' && github.event_name == 'workflow_dispatch'
+        if: matrix.brand.name == 'euro-office' && (github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release/'))
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: packages-${{ matrix.arch }}
@@ -434,6 +434,31 @@ jobs:
             build/deploy/packages/*.rpm
           if-no-files-found: error
           retention-days: 7
+
+  # Points release/v* PRs (opened by Euro-Office/release) to the test build.
+  # Edits its previous comment on re-runs instead of adding a new one.
+  pr-comment:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'release/')
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Comment with artifact and image links
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          IMAGE: ${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
+        run: |
+          gh pr comment "$PR" -R "$GITHUB_REPOSITORY" --edit-last --create-if-none --body "$(cat <<EOF
+          Test build for ${SHA}
+
+          - Packages: \`packages-amd64\`, \`packages-arm64\` under Artifacts on ${RUN_URL} (kept 7 days)
+          - Image (amd64, deleted when this PR closes): \`docker pull ${IMAGE}\`
+          EOF
+          )"
 
   # ─────────────────────────────────────────────────────────────
   # MANIFEST
