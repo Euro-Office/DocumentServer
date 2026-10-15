@@ -20,6 +20,8 @@ services:
       EXAMPLE_ENABLED: true
       JWT_SECRET: ${EO_JWT_SECRET:-euro-office-dev-jwt-secret-key-2026}
       THEME: euro-office
+      NGINX_CLIENT_MAX_BODY_SIZE: 500m
+      MAX_FILE_SIZE: 524288000
       SENTRY_DSN: ${EO_SENTRY_DSN:-}
     volumes:
       - ../:/develop:z # mounts deployed files to application

@@ -107,7 +107,7 @@ cd develop
 ./eo.sh ls | logs <name> | down <name>|--all   # manage; `up --force` to recreate
 ```
 
-Run a building instance from its own git worktree so builds don't share `node_modules`; a fresh worktree needs `git submodule update --init --recursive` first. JWT (secret `euro-office-dev-jwt-secret-key-2026`), `EXAMPLE_ENABLED` and `WOPI_ENABLED` are on, so the example app works out of the box.
+Run a building instance from its own git worktree so builds don't share `node_modules`; a fresh worktree needs `git submodule update --init --recursive` first. JWT (secret `euro-office-dev-jwt-secret-key-2026`), `EXAMPLE_ENABLED` and `WOPI_ENABLED` are on, so the example app works out of the box. Upload limits are raised to 500 MB (see `develop/README.md`).
 
 ### Verify in a browser (Playwright MCP)
 

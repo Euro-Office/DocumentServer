@@ -96,6 +96,8 @@ cmd_up() {
     -e USE_UNAUTHORIZED_STORAGE=true \
     -e ALLOW_PRIVATE_IP_ADDRESS=true \
     -e THEME=euro-office \
+    -e NGINX_CLIENT_MAX_BODY_SIZE=500m \
+    -e MAX_FILE_SIZE=524288000 \
     -v "$root:/develop" \
     -v "$SCRIPT_DIR/setup/Makefile:/Makefile" \
     "$EO_IMAGE" >/dev/null; then
