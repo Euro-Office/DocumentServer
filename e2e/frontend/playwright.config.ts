@@ -7,7 +7,8 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   fullyParallel: false,
   retries: 1,
-  reporter: [['list'], ['html', { open: 'never' }]],
+  outputDir: '../test-results',
+  reporter: [['list'], ['html', { open: 'never', outputFolder: '../playwright-report' }]],
   globalSetup: require.resolve('./global-setup'),
   globalTeardown: require.resolve('./global-teardown'),
   use: {

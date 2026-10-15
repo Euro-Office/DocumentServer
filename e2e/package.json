@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "test": "playwright test",
-    "test:headed": "playwright test --headed"
+    "test": "playwright test -c frontend/playwright.config.ts",
+    "test:headed": "playwright test -c frontend/playwright.config.ts --headed"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",
