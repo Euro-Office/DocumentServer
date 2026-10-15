@@ -1,4 +1,5 @@
 .vscode/
+build/.docker-cache
 build/vagrant/.vagrant
 build/deploy
 develop/richdocuments
