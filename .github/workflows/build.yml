@@ -188,7 +188,7 @@ jobs:
       - name: Compute tags and push flags
         id: meta
         run: |
-          REF_NAME=$(echo '${{ github.ref_name }}' | tr '/+' '--')
+          REF_NAME=$(echo "$GITHUB_REF_NAME" | tr '/+' '--')
           echo "ref_name=${REF_NAME}" >> $GITHUB_OUTPUT
           echo "build_commits=DocumentServer=$(git rev-parse HEAD) $(git submodule foreach --quiet 'echo $name=$(git rev-parse HEAD)' | tr '\n' ' ')" >> $GITHUB_OUTPUT
 
@@ -453,7 +453,7 @@ jobs:
     steps:
       - name: Compute safe ref name
         id: ref
-        run: echo "name=$(echo '${{ github.ref_name }}' | tr '/+' '--')" >> $GITHUB_OUTPUT
+        run: echo "name=$(echo "$GITHUB_REF_NAME" | tr '/+' '--')" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
@@ -466,6 +466,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create and push multi-arch manifests
+        env:
+          IS_STABLE: ${{ needs.build.outputs.is_stable }}
         run: |
           REF="${{ steps.ref.outputs.name }}"
           REGISTRY="${{ env.REGISTRY }}"
@@ -507,7 +509,7 @@ jobs:
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             for repo in "${REPOS[@]}"; do
               create_manifest "$repo" "${REF}"
-              if [[ "${{ needs.build.outputs.is_stable }}" == "true" ]]; then
+              if [[ "$IS_STABLE" == "true" ]]; then
                 create_manifest "$repo" "latest" "${REF}"
               fi
             done
