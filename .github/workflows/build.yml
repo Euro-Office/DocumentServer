@@ -272,10 +272,10 @@ jobs:
           # The "0~" prefix sorts a prerelease before the final release
           # (9.3.5-0~rc.1 < 9.3.5-0) in both dpkg and rpm.
           # Fall back to the VERSION file, then env defaults, for non-tag builds.
-          if [[ "$IS_TAG" == "true" && "${{ github.ref_name }}" =~ ^v([^-]+)-(.+)$ ]]; then
+          if [[ "$IS_TAG" == "true" && "$GITHUB_REF_NAME" =~ ^v([^-]+)-(.+)$ ]]; then
             echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
             echo "build_number=0~${BASH_REMATCH[2]}"  >> $GITHUB_OUTPUT
-          elif [[ "$IS_TAG" == "true" && "${{ github.ref_name }}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+          elif [[ "$IS_TAG" == "true" && "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
             echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
             echo "build_number=0"                     >> $GITHUB_OUTPUT
           elif [[ "$IS_TAG" == "true" ]]; then
