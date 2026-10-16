@@ -114,21 +114,13 @@ make vagrant-destroy
 
 ## Tagging a release
 
-The `scripts/tag_release.sh` script creates semver pre-release tags
-(`vX.Y.Z-ID.BUILD`) on the main repo and all submodules. The version is read
-from the `VERSION` file at the repo root.
+The `scripts/tag_release.sh` script tags the main repo and all submodules. The
+version is read from the `VERSION` file at the repo root. `vX.Y.Z` is a stable
+release, `vX.Y.Z-ID` a pre-release. There are no rebuild tags: a broken release
+gets a new patch version.
 
 ```sh
-# Auto-increment: finds the last -tp.N tag and bumps to N+1
-../scripts/tag_release.sh --dry-run
-../scripts/tag_release.sh
-
-# Explicit build number
-../scripts/tag_release.sh -b 5
-
-# Custom pre-release identifier (default: tp)
-../scripts/tag_release.sh -p rc        # → v9.3.1-rc.1
-
-# Create and push tags to remotes
-../scripts/tag_release.sh --push
+../scripts/tag_release.sh --dry-run     # → v9.3.1
+../scripts/tag_release.sh -p rc.1       # → v9.3.1-rc.1
+../scripts/tag_release.sh --push        # create and push tags to remotes
 ```

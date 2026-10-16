@@ -254,13 +254,12 @@ jobs:
           fi
 
           # Stable release tags are the ones scripts/tag_release.sh creates
-          # without -p: vX.Y.Z for build 0 and vX.Y.Z+N for rebuilds (e.g.
-          # v9.3.4, v9.3.4+1). Only these are published into the public
-          # APT/DNF archive; pre-release tags (v9.3.5-rc.1, v9.3.1-tp.3,
+          # without -p: vX.Y.Z (e.g. v9.3.4). Only these are published into
+          # the public APT/DNF archive; pre-release tags (v9.3.5-rc.1, v9.3.1-tp.3,
           # v9.3.1-beta.1, v9.3.4-hotfix.1, ...) all carry a "-" and are not.
           # Read the tag via $GITHUB_REF_NAME rather than a template expression:
           # the tag name is attacker-controllable (zizmor template-injection).
-          if [[ "$IS_TAG" == "true" && "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(\+[0-9]+)?$ ]]; then
+          if [[ "$IS_TAG" == "true" && "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "is_stable=true"  >> "$GITHUB_OUTPUT"
           else
             echo "is_stable=false" >> "$GITHUB_OUTPUT"
@@ -268,30 +267,26 @@ jobs:
 
           # Parse PRODUCT_VERSION / BUILD_NUMBER from the git tag.
           # Supported formats:
-          #   v9.3.5-rc.1      →  product_version=9.3.5  build_number=rc.1
-          #   v9.3.4+1         →  product_version=9.3.4  build_number=1
+          #   v9.3.5-rc.1      →  product_version=9.3.5  build_number=0~rc.1
           #   v9.3.4           →  product_version=9.3.4  build_number=0
-          # Stable tags get a numeric build number, so a rebuild (9.3.4-1)
-          # sorts after the original release (9.3.4-0) in apt/dnf.
+          # The "0~" prefix sorts a prerelease before the final release
+          # (9.3.5-0~rc.1 < 9.3.5-0) in both dpkg and rpm.
           # Fall back to the VERSION file, then env defaults, for non-tag builds.
-          if [[ "$IS_TAG" == "true" && "${{ github.ref_name }}" =~ ^v([^-]+)-(.+)$ ]]; then
+          if [[ "$IS_TAG" == "true" && "$GITHUB_REF_NAME" =~ ^v([^-]+)-(.+)$ ]]; then
             echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
-            echo "build_number=${BASH_REMATCH[2]}"    >> $GITHUB_OUTPUT
-          elif [[ "$IS_TAG" == "true" && "${{ github.ref_name }}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)\+([0-9]+)$ ]]; then
-            echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
-            echo "build_number=${BASH_REMATCH[2]}"    >> $GITHUB_OUTPUT
-          elif [[ "$IS_TAG" == "true" && "${{ github.ref_name }}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "build_number=0~${BASH_REMATCH[2]}"  >> $GITHUB_OUTPUT
+          elif [[ "$IS_TAG" == "true" && "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
             echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
             echo "build_number=0"                     >> $GITHUB_OUTPUT
-          elif [[ "$IS_TAG" == "true" && "${{ github.ref_name }}" =~ ^v(.+)$ ]]; then
-            echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
-            echo "build_number=${{ env.BUILD_NUMBER }}" >> $GITHUB_OUTPUT
+          elif [[ "$IS_TAG" == "true" ]]; then
+            echo "::error::Unsupported tag format: $GITHUB_REF_NAME (expected vX.Y.Z or vX.Y.Z-ID)"
+            exit 1
           else
             VERSION_FILE=$(cat VERSION 2>/dev/null | tr -d '[:space:]')
-            # Split VERSION file the same way as tags: 9.3.5-rc.1 → version=9.3.5 build=rc.1
+            # Split VERSION file the same way as tags: 9.3.5-rc.1 → version=9.3.5 build=0~rc.1
             if [[ "${VERSION_FILE}" =~ ^([^-]+)-(.+)$ ]]; then
               echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
-              echo "build_number=${BASH_REMATCH[2]}"    >> $GITHUB_OUTPUT
+              echo "build_number=0~${BASH_REMATCH[2]}"  >> $GITHUB_OUTPUT
             else
               echo "product_version=${VERSION_FILE:-${{ env.PRODUCT_VERSION }}}" >> $GITHUB_OUTPUT
               echo "build_number=${{ env.BUILD_NUMBER }}"                        >> $GITHUB_OUTPUT
@@ -409,7 +404,7 @@ jobs:
             "$SSH_USER@$SSH_HOST:$TARGET/"
 
       # Handed to the publish-repo job below. Same gate as publish-repo
-      # (stable vX.Y.Z / vX.Y.Z+N tags only), so no other tag produces these
+      # (stable vX.Y.Z tags only), so no other tag produces these
       # artifacts.
       - name: Upload packages as artifact (nextcloud-office)
         if: matrix.brand.name == 'nextcloud-office' && steps.meta.outputs.is_stable == 'true'
@@ -544,8 +539,8 @@ jobs:
   # PUBLISH-REPO
   #
   # Merges the nextcloud-office .deb/.rpm packages into the shared
-  # signed APT/DNF archive. Stable tags only (vX.Y.Z or vX.Y.Z+N, e.g.
-  # v9.3.4, v9.3.4+1); see is_stable in the build job's meta step.
+  # signed APT/DNF archive. Stable tags only (vX.Y.Z, e.g.
+  # v9.3.4); see is_stable in the build job's meta step.
   # ─────────────────────────────────────────────────────────────
   publish-repo:
     needs: build
