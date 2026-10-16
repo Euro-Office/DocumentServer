@@ -188,7 +188,7 @@ jobs:
       - name: Compute tags and push flags
         id: meta
         run: |
-          REF_NAME=$(echo '${{ github.ref_name }}' | tr '/' '-')
+          REF_NAME=$(echo "$GITHUB_REF_NAME" | tr '/+' '--')
           echo "ref_name=${REF_NAME}" >> $GITHUB_OUTPUT
           echo "build_commits=DocumentServer=$(git rev-parse HEAD) $(git submodule foreach --quiet 'echo $name=$(git rev-parse HEAD)' | tr '\n' ' ')" >> $GITHUB_OUTPUT
 
@@ -206,13 +206,14 @@ jobs:
           IS_DEFAULT=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
           IS_TAG=${{ startsWith(github.ref, 'refs/tags/') }}
 
-          # docker target: push on default branch and git tags
+          # docker target: push on default branch and git tags. Tags push
+          # <tag>-<arch>; the manifest job only moves :latest for stable tags.
           if [[ "$IS_DEFAULT" == "true" ]]; then
             echo "images_tag=nightly-${{ matrix.arch }}"  >> $GITHUB_OUTPUT
             echo "images_push=true"                       >> $GITHUB_OUTPUT
           elif [[ "$IS_TAG" == "true" ]]; then
-            echo "images_tag=latest-${{ matrix.arch }}"   >> $GITHUB_OUTPUT
-            echo "images_push=true"                       >> $GITHUB_OUTPUT
+            echo "images_tag=${REF_NAME}-${{ matrix.arch }}" >> $GITHUB_OUTPUT
+            echo "images_push=true"                          >> $GITHUB_OUTPUT
           else
             echo "images_tag=${REF_NAME}-${{ matrix.arch }}" >> $GITHUB_OUTPUT
             echo "images_push=false"                         >> $GITHUB_OUTPUT
@@ -237,15 +238,20 @@ jobs:
           # the amd64 euro-office standalone image under a throwaway pr-<n> tag
           # that the e2e job pulls. Layer dedup keeps the transfer small, and a
           # cleanup workflow deletes the tag when the PR closes. Other
-          # arches/brands stay cacheonly.
-          if [[ "${{ github.event_name }}" == "pull_request" \
+          # arches/brands stay cacheonly. A manual dispatch on a branch (e.g. a
+          # release/v* test build) exports the same image under <branch>.
+          if [[ ( "${{ github.event_name }}" == "pull_request" || "${{ github.event_name }}" == "workflow_dispatch" ) \
                 && "${{ matrix.brand.name }}" == "euro-office" \
                 && "${{ matrix.arch }}" == "amd64" ]]; then
             echo "export_image=true" >> $GITHUB_OUTPUT
           else
             echo "export_image=false" >> $GITHUB_OUTPUT
           fi
-          echo "e2e_image=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "e2e_image=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          else
+            echo "e2e_image=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${REF_NAME}" >> $GITHUB_OUTPUT
+          fi
 
           # Stable release tags are the ones scripts/tag_release.sh creates
           # without -p: vX.Y.Z for build 0 and vX.Y.Z+N for rebuilds (e.g.
@@ -416,12 +422,50 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      # Lets a release/v* PR or a manual dispatch be tried out before tagging;
+      # tag builds attach the packages to the release instead.
+      - name: Upload packages as artifact (euro-office test build)
+        if: matrix.brand.name == 'euro-office' && (github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release/'))
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: packages-${{ matrix.arch }}
+          path: |
+            build/deploy/packages/*.deb
+            build/deploy/packages/*.rpm
+          if-no-files-found: error
+          retention-days: 7
+
+  # Points release/v* PRs (opened by Euro-Office/release) to the test build.
+  # Edits its previous comment on re-runs instead of adding a new one.
+  pr-comment:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'release/')
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Comment with artifact and image links
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          IMAGE: ${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
+        run: |
+          gh pr comment "$PR" -R "$GITHUB_REPOSITORY" --edit-last --create-if-none --body "$(cat <<EOF
+          Test build for ${SHA}
+
+          - Packages: \`packages-amd64\`, \`packages-arm64\` under Artifacts on ${RUN_URL} (kept 7 days)
+          - Image (amd64, deleted when this PR closes): \`docker pull ${IMAGE}\`
+          EOF
+          )"
+
   # ─────────────────────────────────────────────────────────────
   # MANIFEST
   #
   # Merges the arch-specific images into multi-arch manifests for
   # both brands. Runs on default branch (:nightly) and git tags
-  # (:latest + sanitised ref tag).
+  # (sanitised ref tag, plus :latest for stable tags only).
   # ─────────────────────────────────────────────────────────────
   manifest:
     runs-on: ubuntu-latest
@@ -434,7 +478,7 @@ jobs:
     steps:
       - name: Compute safe ref name
         id: ref
-        run: echo "name=$(echo '${{ github.ref_name }}' | tr '/' '-')" >> $GITHUB_OUTPUT
+        run: echo "name=$(echo "$GITHUB_REF_NAME" | tr '/+' '--')" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
@@ -447,6 +491,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create and push multi-arch manifests
+        env:
+          IS_STABLE: ${{ needs.build.outputs.is_stable }}
         run: |
           REF="${{ steps.ref.outputs.name }}"
           REGISTRY="${{ env.REGISTRY }}"
@@ -487,8 +533,10 @@ jobs:
 
           if [[ "${{ github.ref }}" == refs/tags/* ]]; then
             for repo in "${REPOS[@]}"; do
-              create_manifest "$repo" "latest"
-              create_manifest "$repo" "${REF}" "latest"
+              create_manifest "$repo" "${REF}"
+              if [[ "$IS_STABLE" == "true" ]]; then
+                create_manifest "$repo" "latest" "${REF}"
+              fi
             done
           fi
 
@@ -545,7 +593,7 @@ jobs:
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             echo "ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
           elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            echo "ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_OUTPUT
+            echo "ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$(echo "$GITHUB_REF_NAME" | tr '/+' '--')" >> $GITHUB_OUTPUT
           else
             echo "ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly" >> $GITHUB_OUTPUT
           fi
