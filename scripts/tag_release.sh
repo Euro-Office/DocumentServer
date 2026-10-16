@@ -65,6 +65,11 @@ done
 
 # vX.Y.Z is a stable release, vX.Y.Z-PRE_ID a pre-release. A broken release
 # gets a new patch version instead of a rebuild tag.
+if [ -n "$PRE_ID" ] && ! [[ "$PRE_ID" =~ ^[a-z]+\.[0-9]+$ ]]; then
+    echo "ERROR: Pre-release identifier must look like rc.1"
+    exit 1
+fi
+
 if [ -n "$PRE_ID" ]; then
     TAG="v${VERSION}-${PRE_ID}"
 else
