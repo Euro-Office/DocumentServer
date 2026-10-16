@@ -267,12 +267,14 @@ jobs:
 
           # Parse PRODUCT_VERSION / BUILD_NUMBER from the git tag.
           # Supported formats:
-          #   v9.3.5-rc.1      →  product_version=9.3.5  build_number=rc.1
+          #   v9.3.5-rc.1      →  product_version=9.3.5  build_number=0~rc.1
           #   v9.3.4           →  product_version=9.3.4  build_number=0
+          # The "0~" prefix sorts a prerelease before the final release
+          # (9.3.5-0~rc.1 < 9.3.5-0) in both dpkg and rpm.
           # Fall back to the VERSION file, then env defaults, for non-tag builds.
           if [[ "$IS_TAG" == "true" && "${{ github.ref_name }}" =~ ^v([^-]+)-(.+)$ ]]; then
             echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
-            echo "build_number=${BASH_REMATCH[2]}"    >> $GITHUB_OUTPUT
+            echo "build_number=0~${BASH_REMATCH[2]}"  >> $GITHUB_OUTPUT
           elif [[ "$IS_TAG" == "true" && "${{ github.ref_name }}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
             echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
             echo "build_number=0"                     >> $GITHUB_OUTPUT
