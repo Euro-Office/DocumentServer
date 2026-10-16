@@ -615,14 +615,23 @@ jobs:
           awk -v h="## $GITHUB_REF_NAME" '$0 == h { f = 1; next } f && /^## / { exit } f' CHANGELOG.md > notes.md
           cat notes.md
 
-      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
-        with:
-          name: Euro-Office Document Server ${{ github.ref_name }}
-          body_path: notes.md
-          prerelease: ${{ needs.build.outputs.is_stable != 'true' }}
-          make_latest: ${{ needs.build.outputs.is_stable == 'true' && 'true' || 'false' }}
-          files: dist/**/*
-          fail_on_unmatched_files: true
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TITLE: Euro-Office Document Server ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.build.outputs.is_stable != 'true' }}
+          LATEST: ${{ needs.build.outputs.is_stable == 'true' }}
+        run: |
+          set -euo pipefail
+          flags=(--title "$TITLE" --notes-file notes.md --prerelease="$PRERELEASE" --latest="$LATEST")
+          # Re-runs update the existing release and replace its assets.
+          if gh release view "$GITHUB_REF_NAME" -R "$REPO" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" -R "$REPO" "${flags[@]}"
+            gh release upload "$GITHUB_REF_NAME" -R "$REPO" --clobber dist/*
+          else
+            gh release create "$GITHUB_REF_NAME" -R "$REPO" "${flags[@]}" dist/*
+          fi
 
   # ─────────────────────────────────────────────────────────────
   # PUBLISH - nextcloud-office packages to the versioned directory on
@@ -748,17 +757,25 @@ jobs:
             printf 'Built from %s@%s, %s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$RUN_URL"
           } > notes.md
 
-      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
-        with:
-          repository: ${{ env.NEXTCLOUD_RELEASES_REPO }}
-          token: ${{ secrets.NEXTCLOUD_RELEASES_TOKEN }}
-          tag_name: ${{ github.ref_name }}
-          name: Nextcloud Office Document Server ${{ github.ref_name }}
-          body_path: notes.md
-          prerelease: ${{ needs.build.outputs.is_stable != 'true' }}
-          make_latest: ${{ needs.build.outputs.is_stable == 'true' && 'true' || 'false' }}
-          files: dist/**/*
-          fail_on_unmatched_files: true
+      # The tag does not exist in the releases repo; gh creates it on its
+      # default branch, as action-gh-release did.
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ secrets.NEXTCLOUD_RELEASES_TOKEN }}
+          REPO: ${{ env.NEXTCLOUD_RELEASES_REPO }}
+          TITLE: Nextcloud Office Document Server ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.build.outputs.is_stable != 'true' }}
+          LATEST: ${{ needs.build.outputs.is_stable == 'true' }}
+        run: |
+          set -euo pipefail
+          flags=(--title "$TITLE" --notes-file notes.md --prerelease="$PRERELEASE" --latest="$LATEST")
+          # Re-runs update the existing release and replace its assets.
+          if gh release view "$GITHUB_REF_NAME" -R "$REPO" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" -R "$REPO" "${flags[@]}"
+            gh release upload "$GITHUB_REF_NAME" -R "$REPO" --clobber dist/*
+          else
+            gh release create "$GITHUB_REF_NAME" -R "$REPO" "${flags[@]}" dist/*
+          fi
 
   e2e:
     runs-on: self-hosted
@@ -831,7 +848,7 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-report-${{ github.sha }}
           path: e2e/playwright-report/
