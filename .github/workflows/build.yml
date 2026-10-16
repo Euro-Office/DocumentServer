@@ -136,7 +136,8 @@ jobs:
   #   docker   → pushed on default branch (:nightly) and git tags (:latest)
   #   develop  → pushed on default branch only (:latest-dev)
   #   packages → never pushed; exported to local filesystem for release upload
-  #              (euro-office → GitHub Release, nextcloud-office → SSH)
+  #              (euro-office → GitHub Release, nextcloud-office → artifact for
+  #              the publish-nextcloud-* jobs)
   # ─────────────────────────────────────────────────────────────
   build:
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
@@ -236,7 +237,8 @@ jobs:
           fi
 
           # nextcloud-office images must not be pushed to ghcr.io/euro-office;
-          # only its .deb/.rpm packages are shipped (via SSH). Override the
+          # on tags its standalone image goes to ghcr.io/nextcloud-releases
+          # instead (see nc_publish). Override the
           # flags for that brand (last write to $GITHUB_OUTPUT wins).
           if [[ "${{ matrix.brand.name }}" == "nextcloud-office" ]]; then
             echo "images_push=false"  >> $GITHUB_OUTPUT
@@ -493,10 +495,6 @@ jobs:
       packages: write
 
     steps:
-      - name: Compute safe ref name
-        id: ref
-        run: echo "name=$(echo "$GITHUB_REF_NAME" | tr '/+' '--')" >> "$GITHUB_OUTPUT"
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
@@ -511,7 +509,7 @@ jobs:
         env:
           IS_STABLE: ${{ needs.build.outputs.is_stable }}
         run: |
-          REF="${{ steps.ref.outputs.name }}"
+          REF="${{ needs.build.outputs.ref_name }}"
           REGISTRY="${{ env.REGISTRY }}"
 
           create_manifest() {
