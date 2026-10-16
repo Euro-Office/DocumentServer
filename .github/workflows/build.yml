@@ -69,7 +69,7 @@ env:
   NEXTCLOUD_RELEASES_IMAGE: ghcr.io/nextcloud-releases/office-documentserver
 
 jobs:
-  prepare-sources:
+  clone:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout fork repository (with submodules)
@@ -140,12 +140,12 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   build:
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
-    needs: prepare-sources
+    needs: clone
     outputs:
       # Identical in every matrix leg (depends on the ref only), so it does
       # not matter which leg writes it last.
       is_stable: ${{ steps.meta.outputs.is_stable }}
-      release_tag: ${{ steps.meta.outputs.release_tag }}
+      ref_name: ${{ steps.meta.outputs.ref_name }}
       product_version: ${{ steps.meta.outputs.product_version }}
       build_number: ${{ steps.meta.outputs.build_number }}
     permissions:
@@ -215,7 +215,8 @@ jobs:
           IS_TAG=${{ startsWith(github.ref, 'refs/tags/') }}
 
           # docker target: push on default branch and git tags. Tags push
-          # <tag>-<arch>; the manifest job only moves :latest for stable tags.
+          # <tag>-<arch>; publish-euro-office-images only moves :latest for
+          # stable tags.
           if [[ "$IS_DEFAULT" == "true" ]]; then
             echo "images_tag=nightly-${{ matrix.arch }}"  >> $GITHUB_OUTPUT
             echo "images_push=true"                       >> $GITHUB_OUTPUT
@@ -276,9 +277,6 @@ jobs:
           # nextcloud-office release image: on tags the standalone image is
           # exported as an OCI archive and pushed to ghcr.io/nextcloud-releases
           # by a later step, with its own credential (see there).
-          # Docker tags only allow [A-Za-z0-9_.-], so v9.3.4+1 becomes v9.3.4-1.
-          RELEASE_TAG=$(printf '%s' "$GITHUB_REF_NAME" | tr -c 'A-Za-z0-9_.-' '-')
-          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
           if [[ "$IS_TAG" == "true" && "${{ matrix.brand.name }}" == "nextcloud-office" ]]; then
             echo "nc_publish=true"  >> "$GITHUB_OUTPUT"
           else
@@ -396,8 +394,8 @@ jobs:
       # the docker credential store holds one login per host, and ghcr.io is
       # already logged in as GITHUB_TOKEN for the euro-office build cache.
       # continue-on-error: a failed push must not fail the build job, which
-      # would also skip the euro-office manifest. The failure still surfaces
-      # in publish-nextcloud-image, which cannot find the per-arch image.
+      # would also skip publish-euro-office-images. The failure still surfaces
+      # in publish-nextcloud-images, which cannot find the per-arch image.
       - name: Push standalone image to nextcloud-releases (nextcloud-office)
         if: steps.meta.outputs.nc_publish == 'true'
         continue-on-error: true
@@ -405,7 +403,7 @@ jobs:
           GHCR_USER:  ${{ secrets.NEXTCLOUD_RELEASES_USER }}
           GHCR_TOKEN: ${{ secrets.NEXTCLOUD_RELEASES_TOKEN }}
           IMAGE:      ${{ env.NEXTCLOUD_RELEASES_IMAGE }}
-          IMAGE_TAG:  ${{ steps.meta.outputs.release_tag }}-${{ matrix.arch }}
+          IMAGE_TAG:  ${{ steps.meta.outputs.ref_name }}-${{ matrix.arch }}
           ARCHIVE:    ${{ runner.temp }}/nc-standalone.oci.tar
         run: |
           set -euo pipefail
@@ -426,8 +424,9 @@ jobs:
             build/deploy/packages/*.deb
             build/deploy/packages/*.rpm
 
-      # Handed to publish-nextcloud-files and publish-nextcloud-release (every
-      # tag) and publish-repo (stable vX.Y.Z tags only; that job
+      # Handed to publish-nextcloud-download-server and
+      # publish-nextcloud-github-release (every tag) and
+      # publish-nextcloud-apt-dnf (stable vX.Y.Z tags only; that job
       # carries its own gate).
       - name: Upload packages as artifact (nextcloud-office)
         if: matrix.brand.name == 'nextcloud-office' && startsWith(github.ref, 'refs/tags/')
@@ -479,7 +478,7 @@ jobs:
           )"
 
   # ─────────────────────────────────────────────────────────────
-  # MANIFEST
+  # PUBLISH-EURO-OFFICE-IMAGES
   #
   # Merges the arch-specific images into multi-arch manifests for
   # both brands. Runs on default branch (:nightly) and git tags
@@ -559,7 +558,7 @@ jobs:
           fi
 
   # ─────────────────────────────────────────────────────────────
-  # PUBLISH-REPO
+  # PUBLISH-NEXTCLOUD-APT-DNF
   #
   # Merges the nextcloud-office .deb/.rpm packages into the shared
   # signed APT/DNF archive. Stable tags only (vX.Y.Z, e.g.
@@ -587,7 +586,8 @@ jobs:
   # the server (via SSH)
   #
   # Separate job so an SSH failure cannot fail the build job, which every
-  # euro-office publishing step after it (manifest, e2e) depends on.
+  # euro-office publishing step after it (publish-euro-office-images, e2e)
+  # depends on.
   # ─────────────────────────────────────────────────────────────
   publish-nextcloud-download-server:
     runs-on: ubuntu-latest
@@ -654,7 +654,7 @@ jobs:
       - name: Create and push multi-arch manifest
         env:
           IMAGE:     ${{ env.NEXTCLOUD_RELEASES_IMAGE }}
-          TAG:       ${{ needs.build.outputs.release_tag }}
+          TAG:       ${{ needs.build.outputs.ref_name }}
           IS_STABLE: ${{ needs.build.outputs.is_stable }}
         run: |
           set -euo pipefail
@@ -699,17 +699,18 @@ jobs:
 
             Docker image:
             ```
-            docker pull ${{ env.NEXTCLOUD_RELEASES_IMAGE }}:${{ needs.build.outputs.release_tag }}
+            docker pull ${{ env.NEXTCLOUD_RELEASES_IMAGE }}:${{ needs.build.outputs.ref_name }}
             ```
           prerelease: ${{ needs.build.outputs.is_stable != 'true' }}
           make_latest: ${{ needs.build.outputs.is_stable == 'true' && 'true' || 'false' }}
           files: dist/**/*
           fail_on_unmatched_files: true
 
-  test-e2e:
+  e2e:
     runs-on: self-hosted
-    # Depend on build (produces the image) and manifest (multi-arch tags on
-    # main/tags). manifest is skipped on pull_request, so don't require it there.
+    # Depend on build (produces the image) and publish-euro-office-images
+    # (multi-arch tags on main/tags). It is skipped on pull_request, so don't
+    # require it there.
     needs: [build, publish-euro-office-images]
     if: |
       !cancelled() &&
@@ -785,10 +786,10 @@ jobs:
   # pre-existing Postgres data owned by an account that no longer matched, and
   # every fresh-volume boot stayed green.
   #
-  # Skipped on tag pushes: the manifest job has already moved :latest to the
-  # image under test by then, so there would be nothing to upgrade from. PR and
-  # main builds are where :latest is genuinely the previous release.
-  test-upgrade:
+  # Skipped on tag pushes: publish-euro-office-images has already moved
+  # :latest to the image under test by then, so there would be nothing to
+  # upgrade from. PR and main builds are where :latest is genuinely the previous release.
+  upgrade:
     runs-on: self-hosted
     needs: [build, publish-euro-office-images]
     if: |
