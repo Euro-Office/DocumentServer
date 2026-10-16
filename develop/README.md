@@ -199,6 +199,18 @@ To create and open a document, use the example app's **Create new → Document**
 hits `editor?fileExt=docx`). Opening `editor?fileName=new.docx` directly will fail —
 that form expects an already-existing file.
 
+### Upload size limits
+
+The dev setups (`eo.sh` and `docker-compose.yml`) raise the upload limits from 100 MB to
+500 MB so large test documents open. The limits are environment variables of the image:
+
+| Variable | Image default | Dev | Controls |
+|---|---|---|---|
+| `NGINX_CLIENT_MAX_BODY_SIZE` | `100m` | `500m` | nginx request body size (uploads to the document server) |
+| `MAX_FILE_SIZE` | `104857600` | `524288000` | example app upload limit and docservice temp file upload |
+| `FILECONVERTER_MAX_DOWNLOAD_BYTES` | `524288000` | default | largest file the converter downloads from storage |
+| `FILECONVERTER_INPUT_LIMIT_UNCOMPRESSED` | `500MB` | default | uncompressed size limit for OOXML files |
+
 ## Development Builds
 
 Once inside the container (`docker exec -it eo bash`), the following make targets are available:

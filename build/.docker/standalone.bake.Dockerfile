@@ -72,6 +72,11 @@ RUN apt-get update && \
 # builders, exiting 69 after seven seconds with "epmd reports: node 'rabbit'
 # not running at all". On timeout the wait is repeated unsuppressed so
 # rabbitmqctl's own diagnostics reach the build log before the build fails.
+#
+# Postgres is stopped before the layer is committed. A cluster left running
+# here ships as a crashed datadir, and every container without a volume on
+# /var/lib/postgresql then starts with crash recovery, whose fsync of the whole
+# datadir can outlast the 60 s pg_ctl timeout on slow storage (#180).
 ARG TARGETARCH
 COPY --from=packages / /tmp/
 RUN apt-get update && \
@@ -91,6 +96,7 @@ RUN apt-get update && \
     echo "${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW} ds/db-name string eurooffice" | debconf-set-selections && \
     DS_DOCKER_INSTALLATION=true apt-get install -yq /tmp/${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW}_${PRODUCT_VERSION}-${BUILD_NUMBER}_${TARGETARCH}.deb && \
     (runuser -u rabbitmq -- rabbitmqctl shutdown || true) && \
+    service postgresql stop && \
     rm -rf /var/lib/rabbitmq/mnesia /var/lib/apt/lists/* /tmp/*
 # The .deb postinst applies server/schema/postgresql/createdb.sql at build time
 # (postinst.m4: install_db is not gated on DS_DOCKER_INSTALLATION), which is why the
