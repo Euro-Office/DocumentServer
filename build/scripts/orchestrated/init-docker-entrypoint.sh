@@ -54,18 +54,9 @@ build_fonts() {
 
 build_plugins() {
   [[ "$BUILD_PLUGINS" != "true" ]] && return
-  echo -e "\e[0;32m The build of new Plugins is running, please wait... \e[0m"
+  echo -e "\e[0;32m Copying Plugins to the shared buffer, please wait... \e[0m"
   local buffer_dir="/var/lib/$COMPANY_NAME/documentserver/buffer/plugins"
   cleanup_dir "$buffer_dir"
-  chmod 755 "$WORK_DIR/sdkjs-plugins"
-  if [[ -n "$PLUGINS_LIST_DEFAULT" ]]; then
-    find "$WORK_DIR/sdkjs-plugins" -mindepth 1 -maxdepth 1 -name '{*' -exec rm -rf -- {} +
-  fi
-  if [[ "${PLUGINS_MARKET_DISABLED}" == "true" ]]; then
-    chmod 755 -R "$WORK_DIR/sdkjs-plugins/marketplace"
-    rm -rf "$WORK_DIR/sdkjs-plugins/marketplace"
-  fi
-  /usr/local/bin/documentserver-pluginsmanager.sh -r false -k true --update=\"/var/www/$COMPANY_NAME/documentserver/sdkjs-plugins/plugin-list-default.json\"
   mkdir -p "$buffer_dir"
   cp -ra "$WORK_DIR/sdkjs-plugins" "$buffer_dir/"
   echo -e "\e[0;32m Changed files have been added successfully \e[0m"

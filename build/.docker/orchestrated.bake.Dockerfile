@@ -82,16 +82,11 @@ FROM ds-base AS ds-service
     #    fonts/ \
     #    /var/www/$COMPANY_NAME_LOW/documentserver/core-fonts/custom/
     #COPY --chown=ds:ds \
-    #    plugins/ \
-    #    /var/www/$COMPANY_NAME_LOW/documentserver/sdkjs-plugins/
-    #COPY --chown=ds:ds \
     #    dictionaries/ \
     #    /var/www/onlyoffice/documentserver/dictionaries/
     RUN documentserver-generate-allfonts.sh true && \
         #python3 /var/www/onlyoffice/documentserver/server/dictionaries/update.py && \
         documentserver-flush-cache.sh -h $DS_VERSION_HASH -r false
-    #    documentserver-pluginsmanager.sh -r false \
-    #    --update=\"/var/www/$COMPANY_NAME_LOW/documentserver/sdkjs-plugins/plugin-list-default.json\"
 
 # --------------------------------------------------------------------------------
 # This image contains ALL runtime components (DocService, Converter, Adminpanel and
@@ -116,7 +111,6 @@ FROM ds-base AS docs
     COPY --chown=ds:ds build/configs/orchestrated/nginx/nginx.conf /etc/nginx/nginx.conf
     COPY --chown=ds:ds --from=ds-service \
         /usr/bin/documentserver-generate-allfonts.sh \
-        #/usr/bin/documentserver-pluginsmanager.sh \
         /usr/local/bin/
     #COPY --from=ds-service \
     #    /var/www/$COMPANY_NAME_LOW/documentserver/server/dictionaries/update.py \
@@ -127,9 +121,6 @@ FROM ds-base AS docs
     COPY --from=ds-service \
         /var/www/$COMPANY_NAME_LOW/documentserver/server/tools/allthemesgen \
         /var/www/$COMPANY_NAME_LOW/documentserver/server/tools/allthemesgen
-    COPY --from=ds-service \
-        /var/www/$COMPANY_NAME_LOW/documentserver/server/tools/pluginsmanager \
-        /var/www/$COMPANY_NAME_LOW/documentserver/server/tools/pluginsmanager
     COPY --chown=ds:ds --chmod=644 --from=ds-service \
         /etc/$COMPANY_NAME_LOW/documentserver/nginx/ds.conf \
         /etc/nginx/conf.d/
