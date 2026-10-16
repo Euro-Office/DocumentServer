@@ -278,15 +278,15 @@ jobs:
           elif [[ "$IS_TAG" == "true" && "${{ github.ref_name }}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
             echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
             echo "build_number=0"                     >> $GITHUB_OUTPUT
-          elif [[ "$IS_TAG" == "true" && "${{ github.ref_name }}" =~ ^v(.+)$ ]]; then
-            echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
-            echo "build_number=${{ env.BUILD_NUMBER }}" >> $GITHUB_OUTPUT
+          elif [[ "$IS_TAG" == "true" ]]; then
+            echo "::error::Unsupported tag format: $GITHUB_REF_NAME (expected vX.Y.Z or vX.Y.Z-ID)"
+            exit 1
           else
             VERSION_FILE=$(cat VERSION 2>/dev/null | tr -d '[:space:]')
-            # Split VERSION file the same way as tags: 9.3.5-rc.1 → version=9.3.5 build=rc.1
+            # Split VERSION file the same way as tags: 9.3.5-rc.1 → version=9.3.5 build=0~rc.1
             if [[ "${VERSION_FILE}" =~ ^([^-]+)-(.+)$ ]]; then
               echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
-              echo "build_number=${BASH_REMATCH[2]}"    >> $GITHUB_OUTPUT
+              echo "build_number=0~${BASH_REMATCH[2]}"  >> $GITHUB_OUTPUT
             else
               echo "product_version=${VERSION_FILE:-${{ env.PRODUCT_VERSION }}}" >> $GITHUB_OUTPUT
               echo "build_number=${{ env.BUILD_NUMBER }}"                        >> $GITHUB_OUTPUT
