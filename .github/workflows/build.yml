@@ -68,6 +68,8 @@ env:
 jobs:
   clone:
     runs-on: ubuntu-latest
+    outputs:
+      build_commits: ${{ steps.commits.outputs.build_commits }}
     steps:
       - name: Checkout fork repository (with submodules)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -114,10 +116,18 @@ jobs:
           echo "--- Submodule state after alignment ---"
           git submodule status
 
+      - name: Record commits
+        id: commits
+        run: echo "build_commits=DocumentServer=$(git rev-parse HEAD) $(git submodule foreach --quiet 'echo $name=$(git rev-parse HEAD)' | tr '\n' ' ')" >> $GITHUB_OUTPUT
+
+      # Builds never need git; .dockerignore drops it from the context anyway.
+      - name: Drop git metadata
+        run: find . -name .git -prune -exec rm -rf {} +
+
       - name: Cache clones
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: "${{ github.workspace }}"
+          path: .
           key: ${{ runner.os }}-build-${{ github.sha }}
 
   # ─────────────────────────────────────────────────────────────
@@ -172,8 +182,9 @@ jobs:
       - name: Restore cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: "${{ github.workspace }}"
+          path: .
           key: ${{ runner.os }}-build-${{ github.sha }}
+          fail-on-cache-miss: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
@@ -190,7 +201,6 @@ jobs:
         run: |
           REF_NAME=$(echo "$GITHUB_REF_NAME" | tr '/+' '--')
           echo "ref_name=${REF_NAME}" >> $GITHUB_OUTPUT
-          echo "build_commits=DocumentServer=$(git rev-parse HEAD) $(git submodule foreach --quiet 'echo $name=$(git rev-parse HEAD)' | tr '\n' ' ')" >> $GITHUB_OUTPUT
 
           # Cold rebuild when explicitly requested via workflow_dispatch or when
           # the PR title carries a [no-cache] marker. Lets a PR re-run ignore
@@ -373,7 +383,7 @@ jobs:
           TAG: ${{ steps.meta.outputs.images_tag }}
           PRODUCT_VERSION: ${{ steps.meta.outputs.product_version }}
           BUILD_NUMBER: ${{ steps.meta.outputs.build_number }}
-          BUILD_COMMITS: ${{ steps.meta.outputs.build_commits }}
+          BUILD_COMMITS: ${{ needs.clone.outputs.build_commits }}
           BUILD_ROOT: ${{ env.BUILD_ROOT }}
           NUGET_CACHE: local
 
@@ -434,6 +444,19 @@ jobs:
             build/deploy/packages/*.rpm
           if-no-files-found: error
           retention-days: 7
+
+  # The clone cache only feeds this run's build legs. Kept on failure so
+  # failed legs can be re-run.
+  drop-clone-cache:
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      actions: write
+    steps:
+      - run: gh cache delete "$KEY" -R "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KEY: ${{ runner.os }}-build-${{ github.sha }}
 
   # Points release/v* PRs (opened by Euro-Office/release) to the test build.
   # Edits its previous comment on re-runs instead of adding a new one.
