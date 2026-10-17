@@ -249,15 +249,19 @@ export NODE_CONFIG='{
   }
 }'
 
-# Explicit NODE_CONFIG values override generated defaults, preserving nested options.
-if ! NODE_CONFIG=$(jq -cen --argjson generated "$NODE_CONFIG" --argjson override "$NODE_CONFIG_OVERRIDE" '
-  if ($generated | type) == "object" and ($override | type) == "object"
-  then $generated * $override
-  else error("configuration must be a JSON object") end
-' 2>/dev/null); then
-  echo "Generated configuration and supplied NODE_CONFIG must be valid JSON objects." >&2
+# Validate each input separately without exposing configuration in jq diagnostics.
+if ! jq -es 'length == 1 and (.[0] | type) == "object"' <<<"$NODE_CONFIG" >/dev/null 2>&1; then
+  echo "Generated configuration must be a valid JSON object; check environment-derived settings." >&2
   exit 1
 fi
+if ! jq -es 'length == 1 and (.[0] | type) == "object"' <<<"$NODE_CONFIG_OVERRIDE" >/dev/null 2>&1; then
+  echo "Supplied NODE_CONFIG must be a valid JSON object." >&2
+  exit 1
+fi
+
+# Explicit NODE_CONFIG values override generated defaults, preserving nested options.
+NODE_CONFIG=$(jq -cn --argjson generated "$NODE_CONFIG" --argjson override "$NODE_CONFIG_OVERRIDE" \
+  '$generated * $override' 2>/dev/null)
 unset NODE_CONFIG_OVERRIDE
 
 if [[ "${ENTRYPOINT_CONFIG_ONLY:-false}" == "true" ]]; then

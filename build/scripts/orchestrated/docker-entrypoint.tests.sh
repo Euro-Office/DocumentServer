@@ -77,18 +77,53 @@ expect_failure() {
 merged_config=$(run_config merged \
   REDIS_SERVER_HOST=generated-host \
   REDIS_SERVER_PWD=redis-pass \
-  NODE_CONFIG='{"services":{"CoAuthoring":{"redis":{"host":"override-host","options":{"socket":{"tls":true}}}}}}')
+  REDIS_SERVER_TLS=true \
+  NODE_CONFIG='{
+    "services":{"CoAuthoring":{"redis":{
+      "host":"override-host","options":{"socket":{"ca":"test-ca"}}
+    }}},
+    "FileConverter":{"converter":{"inputLimits":[{"type":"docx"}]}}
+  }')
 assert_config "$merged_config" '
   .services.CoAuthoring.redis.host == "override-host" and
   .services.CoAuthoring.redis.options.socket.tls == true and
+  .services.CoAuthoring.redis.options.socket.ca == "test-ca" and
   .services.CoAuthoring.redis.options.password == "redis-pass" and
   .services.CoAuthoring.redis.port == 6379 and
-  .services.CoAuthoring.sql.type == "postgres"
+  .services.CoAuthoring.sql.type == "postgres" and
+  .FileConverter.converter.inputLimits == [{type: "docx"}]
 '
 
+custom_tls_config=$(run_config custom_tls \
+  NODE_CONFIG='{"services":{"CoAuthoring":{"redis":{"options":{"socket":{"tls":true}}}}}}')
+assert_config "$custom_tls_config" '.services.CoAuthoring.redis.options.socket.tls == true'
+
+empty_override_config=$(run_config empty_override NODE_CONFIG=)
+assert_config "$empty_override_config" '.services.CoAuthoring.sql.type == "postgres"'
+
+diagnostic_password='diagnostic-password-do-not-log'
+assert_private_diagnostic() {
+  local name=$1
+  if grep -Fq "$diagnostic_password" "$TMP_DIR/$name/output"; then
+    echo "$name: configuration password leaked in diagnostics" >&2
+    return 1
+  fi
+}
+
+expect_failure invalid_generated 'Generated configuration must be a valid JSON object' \
+  DB_PWD="$diagnostic_password\"" ENTRYPOINT_CONFIG_ONLY=false
+assert_private_diagnostic invalid_generated
+expect_failure invalid_generated_with_override 'Generated configuration must be a valid JSON object' \
+  DB_PWD="$diagnostic_password\"" NODE_CONFIG='{}'
+assert_private_diagnostic invalid_generated_with_override
+
 invalid_index=0
-for invalid_config in '{' '[]' 'null' 'true' '"text"'; do
-  expect_failure "invalid_node_config_$((invalid_index++))" 'must be valid JSON objects' NODE_CONFIG="$invalid_config"
+for invalid_config in \
+    "{\"password\":\"$diagnostic_password\"" '[]' 'null' 'true' 'false' '"text"' '{} {}' ' '; do
+  name="invalid_node_config_$((invalid_index++))"
+  expect_failure "$name" 'Supplied NODE_CONFIG must be a valid JSON object' \
+    DB_PWD="$diagnostic_password" NODE_CONFIG="$invalid_config"
+  assert_private_diagnostic "$name"
 done
 
 unauthenticated_config=$(run_config unauthenticated \
@@ -174,6 +209,6 @@ sentinel_db_config=$(run_config sentinel_database REDIS_SERVER_DB_NUM=4 REDIS_SE
 assert_config "$sentinel_db_config" '.services.CoAuthoring.redis.optionsSentinel.nodeClientOptions.database == 4'
 
 standalone_db_config=$(run_config standalone_database REDIS_SERVER_DB_NUM=4)
-assert_config "$standalone_db_config" '.services.CoAuthoring.redis.options.database == 4'
+assert_config "$standalone_db_config" '.services.CoAuthoring.redis.options.db == "4"'
 
 echo "orchestrated entrypoint Redis and editor-data configuration: PASS"
