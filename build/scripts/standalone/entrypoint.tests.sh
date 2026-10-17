@@ -4,7 +4,8 @@
 #   bash build/scripts/standalone/entrypoint.tests.sh --services [existing-image]
 #
 # The default suite runs without root and requires Bash, jq, GNU timeout, and
-# the initialized server submodule. It checks generated config, DATA_DIR secret
+# standard GNU utilities. No initialized submodules are needed. It checks
+# generated config, DATA_DIR secret
 # isolation, and Redis topology connection decisions using a recording nc stub.
 #
 # --services also requires Docker and checks the bundled Redis startup decision
@@ -20,22 +21,28 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-ROOT_DIR=$(cd "$SCRIPT_DIR/../../.." && pwd)
 ENTRYPOINT="$SCRIPT_DIR/entrypoint.sh"
-DEFAULT_CONFIG="$ROOT_DIR/server/Common/config/default.json"
+DEFAULT_CONFIG="$SCRIPT_DIR/fixtures/local.json"
 TMP_DIR=$(mktemp -d)
 CONTAINER_NAME=""
 cleanup() {
   local status=$?
   if (( status != 0 )); then
     echo "Standalone entrypoint tests failed (exit $status). Captured diagnostics:" >&2
+    local diagnostic_dir="$TMP_DIR"
+    if [[ -f "$TMP_DIR/current-case" ]]; then
+      local case_name
+      case_name=$(cat "$TMP_DIR/current-case")
+      echo "Case: $case_name" >&2
+      diagnostic_dir="$TMP_DIR/$case_name"
+    fi
     while IFS= read -r file; do
       echo "--- ${file#"$TMP_DIR/"} ---" >&2
       cat "$file" >&2
-    done < <(find "$TMP_DIR" -type f \( -name output -o -name calls \) | sort)
+    done < <(find "$diagnostic_dir" -type f \( -name output -o -name calls \) | sort)
   fi
   if [[ -n "$CONTAINER_NAME" ]]; then
-    docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+    timeout -k 2s 10s docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
   fi
   rm -rf "$TMP_DIR"
 }
@@ -47,15 +54,16 @@ case "${1:-}" in
   --services)
     image=${2:-ghcr.io/euro-office/documentserver:latest-dev}
     CONTAINER_NAME="eo-entrypoint-tests-$(id -u)-$$"
+    printf '%s\n' container_services >"$TMP_DIR/current-case"
+    mkdir -p "$TMP_DIR/container_services"
     # Only the scripts and input fixture are mounted, both read-only. All writes
     # and service interception happen in the disposable container's filesystem.
     timeout -k 5s 120s docker run --rm --pull never --network none \
       --name "$CONTAINER_NAME" --user 0 --entrypoint bash \
       --mount "type=bind,src=$SCRIPT_DIR/..,dst=/tests/build/scripts,readonly" \
-      --mount "type=bind,src=$DEFAULT_CONFIG,dst=/tests/server/Common/config/default.json,readonly" \
       "$image" /tests/build/scripts/standalone/entrypoint.service-start-harness.sh \
-      >"$TMP_DIR/output" 2>&1
-    cat "$TMP_DIR/output"
+      >"$TMP_DIR/container_services/output" 2>&1
+    cat "$TMP_DIR/container_services/output"
     exit 0
     ;;
   --container-services)
@@ -90,11 +98,13 @@ assert_secrets() {
 run_entrypoint() {
   local name=$1
   shift
+  printf '%s\n' "$name" >"$TMP_DIR/current-case"
   local case_dir="$TMP_DIR/$name"
   mkdir -p "$case_dir/conf" "$case_dir/data"
   cp "$DEFAULT_CONFIG" "$case_dir/conf/local.json"
   : >"$case_dir/calls"
 
+  local status=0
   timeout -k 2s 10s env -i \
     PATH="$TMP_DIR/bin:$PATH" \
     ENTRYPOINT_CALLS="$case_dir/calls" \
@@ -109,9 +119,15 @@ run_entrypoint() {
     PLUGINS_ENABLED=false \
     AMQP_URI=amqp://unused \
     "$@" \
-    sh "$ENTRYPOINT" >"$case_dir/output" 2>&1 || return $?
+    sh "$ENTRYPOINT" >"$case_dir/output" 2>&1 || status=$?
+  if (( status != 0 )); then
+    echo "$name: entrypoint exited $status" >&2
+    return "$status"
+  fi
 
-  assert_secrets "$case_dir" || return $?
+  assert_secrets "$case_dir" || { echo "$name: secret isolation assertion failed" >&2; return 1; }
+  assert_config "$case_dir/conf/local.json" \
+    '.services.CoAuthoring.server.port == 8123 and .FileConverter.converter.maxprocesscount == 2' || return $?
 
   printf '%s' "$case_dir/conf/local.json"
 }
@@ -119,7 +135,11 @@ run_entrypoint() {
 assert_config() {
   local config=$1
   local expression=$2
-  jq -e "$expression" "$config" >/dev/null
+  if ! jq -e "$expression" "$config" >/dev/null; then
+    echo "${config#"$TMP_DIR/"}: failed assertion: $expression" >&2
+    cat "$config" >&2
+    return 1
+  fi
 }
 
 assert_call_count() {
@@ -269,6 +289,7 @@ expect_failure() {
   local name=$1
   local expected=$2
   shift 2
+  printf '%s\n' "$name" >"$TMP_DIR/current-case"
   local case_dir="$TMP_DIR/$name"
   mkdir -p "$case_dir/conf" "$case_dir/data"
   cp "$DEFAULT_CONFIG" "$case_dir/conf/local.json"
@@ -276,6 +297,10 @@ expect_failure() {
   local status=0
   timeout -k 2s 10s env -i \
     PATH="$TMP_DIR/bin:$PATH" \
+    ENTRYPOINT_CALLS="$case_dir/calls" \
+    EO_ROOT="$case_dir/root" \
+    EO_LOG="$case_dir/log" \
+    EO_LIB="$case_dir/lib" \
     EO_CONF="$case_dir/conf" \
     DATA_DIR="$case_dir/data" \
     ENTRYPOINT_CONFIG_ONLY=true \
@@ -287,16 +312,18 @@ expect_failure() {
     echo "$name: expected a validation failure, got exit $status" >&2
     return 1
   fi
-  grep -Fq "$expected" "$case_dir/output"
+  if ! grep -Fq "$expected" "$case_dir/output"; then
+    echo "$name: missing diagnostic: $expected" >&2
+    return 1
+  fi
 }
 
-expect_failure malformed_separator 'empty node entries' \
-  REDIS_SENTINEL_NODES='sentinel-a:26379,,sentinel-b:26380'
-expect_failure malformed_host 'each node must use host:port' \
-  REDIS_SENTINEL_NODES='sentinel/a:26379'
 expect_failure incomplete_sentinel 'REDIS_SENTINEL_NODES is not set' \
   REDIS_SENTINEL_GROUP_NAME=mymaster
 expect_failure invalid_redis_tls 'REDIS_SERVER_TLS must be true or false' REDIS_SERVER_TLS=invalid
 expect_failure invalid_sentinel_tls 'REDIS_SENTINEL_TLS must be true or false' REDIS_SENTINEL_TLS=invalid
+
+redis_test_config() { run_entrypoint "$@"; }
+. "$SCRIPT_DIR/../redis-topology.test-cases.sh"
 
 echo 'standalone entrypoint Redis configuration: PASS'
