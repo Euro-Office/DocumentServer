@@ -1,4 +1,4 @@
-name: Orchestrated Entrypoint Tests
+name: Entrypoint Regression Tests
 
 on:
   push:
@@ -12,9 +12,46 @@ permissions:
 jobs:
   redis-config:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 2
+        with:
+          persist-credentials: false
+
+      - name: Install entrypoint test tools
+        timeout-minutes: 3
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes jq coreutils
+          bash --version
+          docker version
+
+      - name: Check entrypoint shell syntax
+        timeout-minutes: 1
+        run: |
+          for script in build/scripts/orchestrated/docker-entrypoint{,.tests}.sh \
+              build/scripts/standalone/entrypoint{.tests,.service-start-harness}.sh \
+              build/scripts/redis-topology.test-cases.sh; do
+            bash -n "$script"
+          done
+          for script in build/scripts/standalone/entrypoint.sh build/scripts/redis-topology.sh; do
+            sh -n "$script"
+          done
 
       - name: Test orchestrated Redis configuration
+        timeout-minutes: 2
         run: bash build/scripts/orchestrated/docker-entrypoint.tests.sh
+
+      - name: Test standalone Redis configuration and connection decisions
+        if: ${{ !cancelled() }}
+        timeout-minutes: 2
+        run: bash build/scripts/standalone/entrypoint.tests.sh
+
+      - name: Test standalone bundled Redis startup in a disposable container
+        if: ${{ !cancelled() }}
+        timeout-minutes: 7
+        run: |
+          timeout -k 5s 300s docker pull ghcr.io/euro-office/documentserver:latest-dev
+          bash build/scripts/standalone/entrypoint.tests.sh --services
