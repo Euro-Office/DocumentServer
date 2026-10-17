@@ -40,7 +40,6 @@ services:
       POSTGRES_PASSWORD: eurooffice
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ../server/schema/postgresql/createdb.sql:/docker-entrypoint-initdb.d/createdb.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U eurooffice -d eurooffice"]
       interval: 2s
@@ -54,7 +53,7 @@ services:
       RABBITMQ_DEFAULT_USER: eo
       RABBITMQ_DEFAULT_PASS: rabbit-test-pass
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      test: ["CMD", "gosu", "rabbitmq", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 2s
       timeout: 5s
       retries: 30

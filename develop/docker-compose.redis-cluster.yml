@@ -46,7 +46,6 @@ services:
       TEST_REDIS_CLUSTER_NODES: rediss://redis-cluster-1:7000,rediss://redis-cluster-2:7001,rediss://redis-cluster-3:7002,rediss://redis-cluster-4:7003,rediss://redis-cluster-5:7004,rediss://redis-cluster-6:7005
       TEST_REDIS_NODE_PASSWORD: redis-test-pass
       TEST_REDIS_TOPOLOGY_REQUIRED: "true"
-      TEST_REDIS_CLUSTER_PRIMARY_CONTAINER: eo-test-redis-cluster-1-compose
       TEST_REDIS_CLUSTER_FAILOVER_REPLICA_PORT: 7003
       NODE_CONFIG: >-
         {"services":{"CoAuthoring":{"server":{"editorDataStorage":"editorDataRedis","editorStatStorage":"editorDataRedis"}}}}

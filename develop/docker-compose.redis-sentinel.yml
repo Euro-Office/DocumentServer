@@ -56,6 +56,8 @@ services:
       - redis-test-pass
       - --masterauth
       - redis-test-pass
+      - --replica-announce-ip
+      - redis-primary
     volumes:
       - ./.redis-tls:/tls:ro
     healthcheck:
@@ -93,6 +95,8 @@ services:
       - redis-test-pass
       - --masterauth
       - redis-test-pass
+      - --replica-announce-ip
+      - redis-replica
       - --replicaof
       - redis-primary
       - "6379"
