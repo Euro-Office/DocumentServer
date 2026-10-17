@@ -221,8 +221,27 @@ discovery endpoints also require TLS. These flags accept `true` or `false`;
 unset or empty values behave as `false` and do not inject TLS options or disable
 TLS supplied through custom configuration. Use the TLS ports configured on
 your Redis and Sentinel servers; the flags do not change port numbers.
-Certificate verification remains enabled. Custom CA certificates and client
-certificates/keys can still be supplied through mounted configuration.
+Certificate verification remains enabled. For a custom CA, the straightforward
+option is `NODE_EXTRA_CA_CERTS` pointing to a readable CA file mounted inside the
+DocumentServer container. Set it before starting the Node.js services; recreate
+the container after changing the environment or CA mount.
+
+For configuration-based CA or client certificate/key options, use these paths
+under `services.CoAuthoring.redis` (certificate values are PEM contents):
+
+| Connection | TLS options location |
+| --- | --- |
+| Standalone | `options.socket` |
+| Sentinel data nodes | `optionsSentinel.nodeClientOptions.socket` |
+| Sentinel discovery endpoints | `optionsSentinel.sentinelClientOptions.socket` |
+| Cluster | `optionsCluster.defaults.socket` |
+
+With the current server PR #46 implementation, putting a CA only in
+`options.socket.ca` is insufficient for every topology. Sentinel shallow-merges
+base and node-client options: a generated topology-specific `socket` can replace
+the entire base `options.socket`, including its CA. Sentinel discovery has its
+own options, and Cluster uses its own defaults. Include the CA and other needed
+TLS settings in each applicable socket, and keep certificate verification enabled.
 
 All three Compose topology stacks use TLS-only Redis/Valkey listeners on their
 usual ports (6379, 7000–7005, and 26379 for Sentinel). Replication, Sentinel
@@ -295,46 +314,44 @@ regular environment:
 docker pull ghcr.io/euro-office/documentserver:latest-dev
 ```
 
-The image includes DocumentServer, the example app, and the test tooling. The
-Compose overlays provide the external dependency containers and configure
-DocumentServer to use the selected Redis topology. The default compose setup
-uses this published image as-is: it does not build from or mount the current
-checkout. The default commands therefore validate the topology against the
-published image, not local server changes. The published image cannot use the
-Redis-backed editor-data store until server PR #46 has been merged and a new
-`latest-dev` image has been published.
+Use an existing image containing the Redis backend from server PR #46, the
+updated standalone entrypoint/helper, and PostgreSQL schema bootstrap support.
+Until a published image includes those changes, select a suitable existing local
+development image with `EO_IMAGE=local/documentserver:my-dev make -C develop redis-up TYPE=SENTINEL`
+(replace the example tag with your existing image).
 
-To validate this Redis integration before server PR #46 is merged, temporarily
-check out the server PR in the `server` submodule, then build a local image
-from this checkout. The following uses GitHub's pull-request ref and does not
-change the DocumentServer submodule pointer:
+The overlays provide external dependencies and configure DocumentServer. By
+default they neither build from nor mount the source checkout. PostgreSQL no
+longer bind-mounts the checkout's schema: the standalone entrypoint initializes
+an empty external database from the selected image's packaged
+`/var/www/euro-office/documentserver/server/schema/postgresql/createdb.sql`.
+The image must contain that file and the bootstrap logic; checking out newer
+server sources alone does not update the packaged schema.
+
+If server PR #46 is needed for local validation, first inspect `git -C server status`
+and preserve existing work before choosing a checkout. The following uses GitHub's
+pull-request ref:
 
 ```sh
 git -C server fetch https://github.com/Euro-Office/server.git pull/46/head:server-pr-46
 git -C server checkout --detach server-pr-46
 ```
 
-Build the local image and pass it through `EO_IMAGE` when starting the stack:
+This changes the submodule commit visible in the superproject's working tree.
+The recorded superproject gitlink changes only if staged and committed;
+`git commit -a` can include it. Keep validation-only submodule changes out of
+this PR, and inspect the staged diff before committing.
 
-```sh
-cd build
-REGISTRY=local TAG=<my-custom-tag> \
-  docker buildx bake standalone \
-  --set standalone.tags=local/documentserver:<my-custom-tag> \
-  --load
-cd ..
-
-EO_IMAGE=local/documentserver:<my-custom-tag> make -C develop redis-up TYPE=SENTINEL
-```
-
-After server PR #46 is merged and the automated submodule bump has landed,
-the temporary checkout is no longer needed; the published `latest-dev` image
-can be used with the default commands above.
+For routine source testing in the regular development stack, run
+`docker compose exec -T eo make server/docservice server/converter` from `develop/`
+using an existing development image. Building within a topology stack also requires
+local mounts for the checkout at `/develop` and `develop/setup/Makefile` at `/Makefile`,
+and the same Compose files used at startup. Server build targets do not install
+entrypoint scripts; test those separately with the entrypoint suites.
 
 ### Start and stop a topology
 
-Run these commands from the repository root, or use `make -C develop` from
-any directory:
+Run these commands from the repository root:
 
 ```sh
 make -C develop redis-up TYPE=STANDALONE
@@ -355,50 +372,107 @@ To remove the test PostgreSQL volume as well:
 make -C develop redis-down TYPE=CLUSTER PURGE=1
 ```
 
-### Test Sentinel failover
+### Test repeated Sentinel failover
 
-Start the Sentinel stack using the documented Make target:
-
-```sh
-make -C develop redis-up TYPE=SENTINEL
-```
-
-The Sentinel stack uses Docker Compose service names for Redis discovery. Do
-not use `docker stop redis-primary` as the failover trigger: stopping the
-container removes `redis-primary` from Docker DNS, so Sentinel may spend its
-time trying to resolve the hostname instead of completing failover. The
-following failover and inspection commands use Compose directly because they
-are operations on the already-running test stack, rather than stack
-start/stop operations.
-
-Use one of these deterministic triggers instead:
+Start the stack with `make -C develop redis-up TYPE=SENTINEL` (select a suitable
+`EO_IMAGE` as described above). Run the following in Bash with GNU `timeout`
+available, from the repository root. These helpers bound each command to ten seconds;
+keep any local Compose override used at startup in `sc` as well:
 
 ```sh
-# Simulate an unresponsive primary while keeping its Docker DNS record.
-docker compose -f develop/docker-compose.redis-base.yml \
-  -f develop/docker-compose.redis-sentinel.yml pause redis-primary
+sc() {
+  timeout 10s docker compose -f develop/docker-compose.redis-base.yml \
+    -f develop/docker-compose.redis-sentinel.yml "$@"
+}
+scli() {
+  local host=$1; shift
+  sc exec -T "$host" "${REDIS_CLI_COMMAND:-redis-cli}" --raw --tls --cacert /tls/ca.crt \
+    -h "$host" -p 26379 -a sentinel-test-pass "$@"
+}
+rcli() {
+  local host=$1; shift
+  sc exec -T "$host" "${REDIS_CLI_COMMAND:-redis-cli}" --raw --tls --cacert /tls/ca.crt \
+    -h "$host" -p 6379 -a redis-test-pass "$@"
+}
 
-# Or request a Sentinel-managed failover explicitly.
-docker compose -f develop/docker-compose.redis-base.yml \
-  -f develop/docker-compose.redis-sentinel.yml \
-  exec redis-sentinel-1 "${REDIS_CLI_COMMAND:-redis-cli}" --tls --cacert /tls/ca.crt \
-  -h redis-sentinel-1 -p 26379 -a sentinel-test-pass \
-  SENTINEL FAILOVER mymaster
+# All three must return the same service hostname and port 6379.
+for sentinel in redis-sentinel-1 redis-sentinel-2 redis-sentinel-3; do
+  scli "$sentinel" SENTINEL get-master-addr-by-name mymaster
+  scli "$sentinel" SENTINEL replicas mymaster
+done
+
+# Re-run after every promotion; never assume redis-primary is still master.
+MASTER=$(scli redis-sentinel-1 SENTINEL get-master-addr-by-name mymaster | tr -d '\r' | sed -n '1p')
+case "$MASTER" in
+  redis-primary) REPLICA=redis-replica ;;
+  redis-replica) REPLICA=redis-primary ;;
+  *) echo "FAIL: unexpected elected master: $MASTER"; exit 1 ;;
+esac
+rcli "$MASTER" INFO replication
+rcli "$REPLICA" INFO replication
+
+# Establish the test key once; SET and WAIT must use the same connection.
+rcli "$MASTER" <<'REDIS'
+SET eo:sentinel-failover-check preserved
+WAIT 1 5000
+REDIS
+rcli "$REPLICA" GET eo:sentinel-failover-check
 ```
 
-After failover, query Sentinel for the elected primary before monitoring it:
+Before triggering failover, require one `role:master` with
+`connected_slaves:1` and an online replica, and one `role:slave` with
+`master_link_status:up`, `master_sync_in_progress:0`, and `master_host` matching
+`MASTER`. Each Sentinel's replica entry must use the other service hostname
+in its `ip` field, with no `s_down`, `o_down`, or `disconnected` flag. Both the
+elected master and replica must retain hostname identities rather than container
+IPs. `SET` must return `OK`, `WAIT` must return `1`, and the replica must read
+`preserved`. Stop if these baseline checks fail.
+
+Docker DNS must retain both node names during failover. Do not stop the master
+container: removing its DNS record can leave Sentinel resolving the hostname
+instead of completing promotion. Use **one** of these triggers:
 
 ```sh
-docker compose -f develop/docker-compose.redis-base.yml \
-  -f develop/docker-compose.redis-sentinel.yml \
-  exec redis-sentinel-1 "${REDIS_CLI_COMMAND:-redis-cli}" --tls --cacert /tls/ca.crt \
-  -h redis-sentinel-1 -p 26379 -a sentinel-test-pass \
-  SENTINEL get-master-addr-by-name mymaster
+OLD_MASTER=$MASTER
+sc pause "$OLD_MASTER"             # Keep its Docker DNS record.
+# Alternatively, leave both nodes running and request promotion:
+# scli redis-sentinel-1 SENTINEL FAILOVER mymaster
 ```
 
-The result may be `redis-primary` or `redis-replica`; use the elected host in
-the `MONITOR` command below. `docker pause` can be reversed with
-`docker compose ... unpause redis-primary` after the failover test.
+For each promotion, poll the election queries above every two seconds for at
+most 180 seconds. Require all three Sentinels to agree on the **other** hostname
+and port 6379. If paused, run `sc unpause "$OLD_MASTER"` as soon as promotion is
+confirmed; also unpause it if the test fails. Recompute `MASTER` and `REPLICA`
+using the commands above, then poll their replication state and Sentinel replica
+entries every two seconds for at most another 180 seconds. Require the same
+healthy roles, links, and hostname identities as the baseline before proceeding.
+These are test deadlines, not guaranteed recovery times. A command timeout,
+Redis error, disagreement or unhealthy state remaining at the deadline fails the test.
+
+After recovery, check data preservation and a new replicated write:
+
+```sh
+rcli "$MASTER" GET eo:sentinel-failover-check    # Must still be preserved; do not reset it.
+rcli "$MASTER" <<REDIS                         # Must return OK, then 1.
+SET eo:sentinel-post-failover $MASTER
+WAIT 1 5000
+REDIS
+rcli "$REPLICA" GET eo:sentinel-post-failover   # Must match MASTER.
+sc exec -T eo curl -fsS http://localhost/healthcheck  # Must return true.
+sc exec -T eo tail -n 100 /var/log/euro-office/documentserver/docservice/out.log
+```
+
+Allow at most 180 seconds for DocumentServer recovery, polling every two seconds.
+Require a successful document open/edit and editor-data traffic on the newly
+elected master using `MONITOR` below. Healthcheck alone does not establish that
+the Redis backend is active. Inspect logs from the failover onward: TLS failures,
+`READONLY` errors, or connection failures that persist after topology recovery
+fail the test; transient reconnect messages alone do not establish failure.
+
+Repeat the trigger and all checks at least once more, targeting the **current**
+elected master each time. Wait for replication recovery and a replicated write
+before the next trigger; both services must be observed being promoted over
+successive rounds. Preserve the original test key across every round.
 
 ### Run with Valkey
 
