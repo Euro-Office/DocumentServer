@@ -8,7 +8,7 @@ EO_ROOT="${EO_ROOT:-/var/www/euro-office/documentserver}"
 EO_LOG="${EO_LOG:-/var/log/euro-office/documentserver}"
 EO_CONF="${EO_CONF:-/etc/euro-office/documentserver}"
 EO_LIB="${EO_LIB:-/var/lib/euro-office/documentserver}"
-DATA_DIR="/var/www/euro-office/Data"
+DATA_DIR="${DATA_DIR:-/var/www/euro-office/Data}"
 PRIVATE_DIR="${DATA_DIR}/.private"
 CONFIG_FILE="${EO_CONF}/local.json"
 LOG4JS_CONFIG="${EO_CONF}/log4js/production.json"
@@ -56,8 +56,9 @@ if [ "$REDIS_SENTINEL_REQUESTED" = true ] || [ -n "${REDIS_CLUSTER_NODES:-}" ]; 
   REDIS_TOPOLOGY_CONFIGURED=true
 fi
 if [ -n "${NODE_CONFIG:-}" ] && printf '%s' "$NODE_CONFIG" | jq -e '
-  (.services.CoAuthoring.redis.optionsSentinel? != null) or
-  (.services.CoAuthoring.redis.optionsCluster? != null)
+  ((.services.CoAuthoring.redis.optionsSentinel // {}) | keys | length > 0) or
+  (.services.CoAuthoring.redis.optionsCluster.rootNodes? |
+    if type == "array" then length > 0 else false end)
 ' >/dev/null 2>&1; then
   REDIS_TOPOLOGY_CONFIGURED=true
 fi
