@@ -90,7 +90,7 @@ redis_build_sentinel_options() {
     --argjson nodes "${2:-[]}" \
     --arg redisUser "${3:-}" \
     --arg redisPass "${4:-}" \
-    --arg redisDb "${5:-0}" \
+    --arg redisDb "${5:-}" \
     --arg sentinelUser "${6:-}" \
     --arg sentinelPass "${7:-}" \
     --argjson redisTLS "${REDIS_SERVER_TLS:-false}" \
@@ -99,7 +99,8 @@ redis_build_sentinel_options() {
       name: $name,
       sentinelRootNodes: $nodes,
       nodeClientOptions: (
-        {database: ($redisDb | tonumber? // 0)} |
+        {} |
+        if $redisDb != "" then .database = ($redisDb | tonumber? // 0) else . end |
         if $redisTLS then .socket.tls = true else . end |
         if $redisUser != "" then .username = $redisUser else . end |
         if $redisPass != "" then .password = $redisPass else . end

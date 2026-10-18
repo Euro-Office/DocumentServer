@@ -243,10 +243,10 @@ REDIS_SENTINEL_OPTIONS_JSON='{}'
 if [ "$REDIS_SENTINEL_REQUESTED" = true ]; then
   REDIS_SENTINEL_OPTIONS_JSON=$(redis_build_sentinel_options \
     "$REDIS_SENTINEL_GROUP_NAME" "$REDIS_SENTINEL_NODES_JSON" \
-    "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PASS:-}" "${REDIS_SERVER_DB:-0}" \
+    "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PASS:-}" "${REDIS_SERVER_DB:-}" \
     "$REDIS_SENTINEL_USER" "$REDIS_SENTINEL_PASS")
   jq_set '.services.CoAuthoring.redis.optionsSentinel = (
-    {name: "mymaster", nodeClientOptions: {database: 0}} *
+    {name: "mymaster", nodeClientOptions: {}} *
     (.services.CoAuthoring.redis.optionsSentinel // {}) *
     ($redisSentinelOptions |
       if $redisSentinelGroupName == "" then del(.name) else . end |
