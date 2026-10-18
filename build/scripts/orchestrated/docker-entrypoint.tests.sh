@@ -137,7 +137,7 @@ assert_config "$unauthenticated_config" '
       {host: "sentinel-a", port: 26379},
       {host: "sentinel-b", port: 26380}
     ],
-    nodeClientOptions: {database: 0},
+    nodeClientOptions: {},
     sentinelClientOptions: {}
   } and
   .services.CoAuthoring.redis.optionsCluster == {} and
@@ -161,7 +161,7 @@ assert_config "$authenticated_config" '
   .services.CoAuthoring.redis.optionsSentinel == {
     name: "mymaster",
     sentinelRootNodes: [{host: "sentinel-a", port: 26379}],
-    nodeClientOptions: {database: 0, username: "redis-user", password: "redis-pass"},
+    nodeClientOptions: {username: "redis-user", password: "redis-pass"},
     sentinelClientOptions: {username: "sentinel-user", password: "sentinel-pass"}
   }
 '
@@ -207,6 +207,12 @@ redis_test_config() { run_config "$@"; }
 
 sentinel_db_config=$(run_config sentinel_database REDIS_SERVER_DB_NUM=4 REDIS_SENTINEL_NODES='sentinel-a:26379')
 assert_config "$sentinel_db_config" '.services.CoAuthoring.redis.optionsSentinel.nodeClientOptions.database == 4'
+
+sentinel_base_db_config=$(run_config sentinel_base_database \
+  REDIS_SENTINEL_NODES='sentinel-a:26379' \
+  NODE_CONFIG='{"services":{"CoAuthoring":{"redis":{"options":{"db":4}}}}}')
+assert_config "$sentinel_base_db_config" \
+  '(.services.CoAuthoring.redis.optionsSentinel.nodeClientOptions.database // .services.CoAuthoring.redis.options.db) == 4'
 
 standalone_db_config=$(run_config standalone_database REDIS_SERVER_DB_NUM=4)
 assert_config "$standalone_db_config" '.services.CoAuthoring.redis.options.db == "4"'

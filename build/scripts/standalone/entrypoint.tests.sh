@@ -207,10 +207,13 @@ cluster_options='{
 }'
 sentinel_fixture="$TMP_DIR/sentinel.json"
 cluster_fixture="$TMP_DIR/cluster.json"
+sentinel_base_database_fixture="$TMP_DIR/sentinel-base-database.json"
 jq --argjson options "$sentinel_options" '.services.CoAuthoring.redis.optionsSentinel = $options' \
   "$DEFAULT_CONFIG" >"$sentinel_fixture"
 jq --argjson options "$cluster_options" '.services.CoAuthoring.redis.optionsCluster = $options' \
   "$DEFAULT_CONFIG" >"$cluster_fixture"
+jq '.services.CoAuthoring.redis.options.database = 4' \
+  "$DEFAULT_CONFIG" >"$sentinel_base_database_fixture"
 
 for kind in sentinel cluster; do
   fixture_var="${kind}_fixture"
@@ -245,6 +248,13 @@ assert_config "$sentinel_nodes_config" "
   .services.CoAuthoring.redis.optionsSentinel == ($sentinel_options |
     .sentinelRootNodes = [{host: \"new-sentinel\", port: 26379}])
 "
+
+# Sentinel should inherit the configured base database when the environment
+# does not provide an explicit REDIS_SERVER_DB override.
+sentinel_base_database_config=$(ENTRYPOINT_TEST_CONFIG="$sentinel_base_database_fixture" \
+  run_entrypoint sentinel_base_database REDIS_SENTINEL_NODES=sentinel-a:26379)
+assert_config "$sentinel_base_database_config" \
+  '(.services.CoAuthoring.redis.optionsSentinel.nodeClientOptions.database // .services.CoAuthoring.redis.options.database) == 4'
 
 sentinel_overrides_config=$(ENTRYPOINT_TEST_CONFIG="$sentinel_fixture" run_entrypoint sentinel_overrides \
   REDIS_SENTINEL_NODES=new-sentinel:26379 REDIS_SENTINEL_GROUP_NAME=new-master \
