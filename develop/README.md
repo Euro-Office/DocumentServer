@@ -243,6 +243,39 @@ the entire base `options.socket`, including its CA. Sentinel discovery has its
 own options, and Cluster uses its own defaults. Include the CA and other needed
 TLS settings in each applicable socket, and keep certificate verification enabled.
 
+For example, with TLS enabled on both Sentinel and its Redis nodes, configure
+the CA in both Sentinel socket options:
+
+```json
+{
+  "services": {
+    "CoAuthoring": {
+      "redis": {
+        "optionsSentinel": {
+          "nodeClientOptions": {
+            "socket": {
+              "tls": true,
+              "ca": "-----BEGIN CERTIFICATE-----\n<Redis CA PEM contents>\n-----END CERTIFICATE-----\n"
+            }
+          },
+          "sentinelClientOptions": {
+            "socket": {
+              "tls": true,
+              "ca": "-----BEGIN CERTIFICATE-----\n<Sentinel CA PEM contents>\n-----END CERTIFICATE-----\n"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Replace the PEM placeholders with the actual CA certificate contents. If Redis
+nodes and Sentinel use the same CA, use the same PEM in both `ca` fields. For
+standalone Redis or Cluster, place the same `tls` and `ca` fields at the socket
+path listed above.
+
 All three Compose topology stacks use TLS-only Redis/Valkey listeners on their
 usual ports (6379, 7000–7005, and 26379 for Sentinel). Replication, Sentinel
 connections, and the Cluster bus also use TLS. Password authentication remains
