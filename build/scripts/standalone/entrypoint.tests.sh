@@ -101,7 +101,7 @@ run_entrypoint() {
   printf '%s\n' "$name" >"$TMP_DIR/current-case"
   local case_dir="$TMP_DIR/$name"
   mkdir -p "$case_dir/conf" "$case_dir/data"
-  cp "$DEFAULT_CONFIG" "$case_dir/conf/local.json"
+  cp "${ENTRYPOINT_TEST_CONFIG:-$DEFAULT_CONFIG}" "$case_dir/conf/local.json"
   : >"$case_dir/calls"
 
   local status=0
@@ -185,6 +185,41 @@ check_topology() {
 node_config_sentinel='{"services":{"CoAuthoring":{"redis":{"optionsSentinel":{"name":"mymaster","sentinelRootNodes":[{"host":"sentinel-a","port":26379}]}}}}}'
 node_config_cluster='{"services":{"CoAuthoring":{"redis":{"optionsCluster":{"rootNodes":[{"url":"redis://cluster-a:7000"}]}}}}}'
 
+sentinel_options='{
+  "name": "saved-master",
+  "sentinelRootNodes": [{"host": "saved-sentinel", "port": 26380}],
+  "nodeClientOptions": {
+    "username": "saved-user", "password": "saved-password", "database": 4,
+    "socket": {"tls": true, "ca": "node-ca", "cert": "node-cert", "key": "node-key"}
+  },
+  "sentinelClientOptions": {
+    "username": "saved-sentinel-user", "password": "saved-sentinel-password",
+    "socket": {"tls": true, "ca": "sentinel-ca", "cert": "sentinel-cert", "key": "sentinel-key"}
+  }
+}'
+cluster_options='{
+  "rootNodes": [{"url": "rediss://saved-cluster:7000"}],
+  "defaults": {
+    "username": "saved-user", "password": "saved-password",
+    "socket": {"tls": true, "ca": "cluster-ca", "cert": "cluster-cert", "key": "cluster-key"}
+  },
+  "maxCommandRedirections": 20
+}'
+sentinel_fixture="$TMP_DIR/sentinel.json"
+cluster_fixture="$TMP_DIR/cluster.json"
+jq --argjson options "$sentinel_options" '.services.CoAuthoring.redis.optionsSentinel = $options' \
+  "$DEFAULT_CONFIG" >"$sentinel_fixture"
+jq --argjson options "$cluster_options" '.services.CoAuthoring.redis.optionsCluster = $options' \
+  "$DEFAULT_CONFIG" >"$cluster_fixture"
+
+for kind in sentinel cluster; do
+  fixture_var="${kind}_fixture"
+  options_var="${kind}_options"
+  config=$(ENTRYPOINT_TEST_CONFIG="${!fixture_var}" run_entrypoint "preserve_$kind")
+  assert_config "$config" ".services.CoAuthoring.redis.options${kind^} == ${!options_var}"
+  ENTRYPOINT_TEST_CONFIG="${!fixture_var}" check_topology "local_config_$kind" "$kind"
+done
+
 check_topology no_topology standalone
 check_topology empty_sentinel standalone \
   NODE_CONFIG='{"services":{"CoAuthoring":{"redis":{"optionsSentinel":{}}}}}'
@@ -200,9 +235,59 @@ check_topology env_sentinel sentinel REDIS_SENTINEL_GROUP_NAME=mymaster REDIS_SE
 check_topology env_cluster cluster REDIS_CLUSTER_NODES=cluster-a:7000
 
 if [[ $SERVICE_START == true ]]; then
-  echo 'standalone entrypoint Redis service startup: PASS (18 cases)'
+  echo 'standalone entrypoint Redis service startup: PASS (22 cases)'
   exit 0
 fi
+
+sentinel_nodes_config=$(ENTRYPOINT_TEST_CONFIG="$sentinel_fixture" run_entrypoint sentinel_nodes_override \
+  REDIS_SENTINEL_NODES=new-sentinel:26379)
+assert_config "$sentinel_nodes_config" "
+  .services.CoAuthoring.redis.optionsSentinel == ($sentinel_options |
+    .sentinelRootNodes = [{host: \"new-sentinel\", port: 26379}])
+"
+
+sentinel_overrides_config=$(ENTRYPOINT_TEST_CONFIG="$sentinel_fixture" run_entrypoint sentinel_overrides \
+  REDIS_SENTINEL_NODES=new-sentinel:26379 REDIS_SENTINEL_GROUP_NAME=new-master \
+  REDIS_SERVER_USER=new-user REDIS_SERVER_PASS=new-password REDIS_SERVER_DB=0 \
+  REDIS_SENTINEL_USER=new-sentinel-user REDIS_SENTINEL_PASS=new-sentinel-password \
+  REDIS_SERVER_TLS=true REDIS_SENTINEL_TLS=true)
+assert_config "$sentinel_overrides_config" "
+  .services.CoAuthoring.redis.optionsSentinel == ($sentinel_options |
+    .name = \"new-master\" |
+    .sentinelRootNodes = [{host: \"new-sentinel\", port: 26379}] |
+    .nodeClientOptions.username = \"new-user\" |
+    .nodeClientOptions.password = \"new-password\" |
+    .nodeClientOptions.database = 0 |
+    .sentinelClientOptions.username = \"new-sentinel-user\" |
+    .sentinelClientOptions.password = \"new-sentinel-password\")
+"
+
+cluster_nodes_config=$(ENTRYPOINT_TEST_CONFIG="$cluster_fixture" run_entrypoint cluster_nodes_override \
+  REDIS_CLUSTER_NODES='new-cluster:7001,new-cluster-b:7002')
+assert_config "$cluster_nodes_config" "
+  .services.CoAuthoring.redis.optionsCluster == ($cluster_options |
+    .rootNodes = [{url: \"rediss://new-cluster:7001\"}, {url: \"rediss://new-cluster-b:7002\"}])
+"
+
+# Enabling TLS must add the flag without dropping the existing socket options.
+cluster_ca_fixture="$TMP_DIR/cluster-ca.json"
+jq 'del(.services.CoAuthoring.redis.optionsCluster.defaults.socket.tls)' \
+  "$cluster_fixture" >"$cluster_ca_fixture"
+cluster_overrides_config=$(ENTRYPOINT_TEST_CONFIG="$cluster_ca_fixture" run_entrypoint cluster_overrides \
+  REDIS_CLUSTER_NODES=new-cluster:7001 REDIS_SERVER_TLS=true \
+  REDIS_SERVER_USER=new-user REDIS_SERVER_PASS=new-password)
+assert_config "$cluster_overrides_config" "
+  .services.CoAuthoring.redis.optionsCluster == ($cluster_options |
+    .rootNodes = [{url: \"rediss://new-cluster:7001\"}] |
+    .defaults.username = \"new-user\" | .defaults.password = \"new-password\")
+"
+
+for kind in sentinel cluster; do
+  previous_config_var="${kind}_overrides_config"
+  restarted_config=$(ENTRYPOINT_TEST_CONFIG="${!previous_config_var}" run_entrypoint "restart_$kind")
+  previous_options=$(jq '.services.CoAuthoring.redis | {optionsSentinel, optionsCluster}' "${!previous_config_var}")
+  assert_config "$restarted_config" ".services.CoAuthoring.redis | {optionsSentinel, optionsCluster} == $previous_options"
+done
 
 standalone_config=$(run_entrypoint standalone REDIS_SERVER_USER=redis-user REDIS_SERVER_PASS=redis-pass REDIS_SERVER_DB=2)
 assert_config "$standalone_config" '
