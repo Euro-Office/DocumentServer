@@ -133,12 +133,75 @@ jobs:
           path: .
           key: ${{ runner.os }}-build-${{ github.sha }}
 
+  # Pull requests build only what e2e and upgrade test: the amd64
+  # euro-office standalone image. release/* PRs and PRs labelled
+  # full-build get every arch, brand and target, like main and tags.
+  # The label is read from the API, so adding it takes effect on the
+  # next push or "Re-run all jobs".
+  plan:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      targets: ${{ steps.plan.outputs.targets }}
+    steps:
+      - name: Choose build scope
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.head_ref }}
+          BRANDS: |
+            [
+              {
+                "name": "euro-office",
+                "image_name": "documentserver",
+                "cluster_docs": "cluster-docs",
+                "cluster_example": "cluster-example",
+                "cluster_utils": "cluster-utils",
+                "extra_bake_files": "",
+                "extra_targets": "",
+                "cache_prefix": ""
+              },
+              {
+                "name": "nextcloud-office",
+                "image_name": "nextcloud-office-documentserver",
+                "cluster_docs": "nextcloud-office-cluster-docs",
+                "cluster_example": "nextcloud-office-cluster-example",
+                "cluster_utils": "nextcloud-office-cluster-utils",
+                "extra_bake_files": "./brands/nextcloud-office-brand/brand-server.hcl",
+                "extra_targets": "brand-icons,",
+                "cache_prefix": "nextcloud-office-"
+              }
+            ]
+        run: |
+          set -euo pipefail
+          full=true
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" && "$HEAD_REF" != release/* ]]; then
+            labels=$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')
+            grep -qx full-build <<<"$labels" || full=false
+          fi
+
+          if [[ "$full" == "true" ]]; then
+            arch='["amd64","arm64"]'
+            brands="$BRANDS"
+            targets=packages,standalone,develop,cluster-utils,cluster-example,cluster-docs
+          else
+            echo "::notice::e2e-only build (amd64, euro-office, standalone). Add the full-build label and re-run for the full matrix."
+            arch='["amd64"]'
+            brands=$(jq '[.[] | select(.name == "euro-office")]' <<<"$BRANDS")
+            targets=standalone
+          fi
+          echo "matrix=$(jq -nc --argjson arch "$arch" --argjson brand "$brands" '{arch: $arch, brand: $brand}')" >> "$GITHUB_OUTPUT"
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+
   # ─────────────────────────────────────────────────────────────
   # BUILD
   #
-  # Single job that builds the full target graph in one bake
-  # invocation per arch × brand. Because develop depends on
-  # docker which depends on packages, bake resolves the shared
+  # Single job that builds the target graph in one bake invocation
+  # per arch × brand (scope chosen by plan). Because develop depends
+  # on docker which depends on packages, bake resolves the shared
   # graph and never rebuilds a layer twice.
   #
   # Pushing per target:
@@ -150,7 +213,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   build:
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
-    needs: clone
+    needs: [clone, plan]
     outputs:
       # Identical in every matrix leg (depends on the ref only), so it does
       # not matter which leg writes it last.
@@ -163,27 +226,7 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
-      matrix:
-        arch:
-          - amd64
-          - arm64
-        brand:
-          - name: euro-office
-            image_name: documentserver
-            cluster_docs: cluster-docs
-            cluster_example: cluster-example
-            cluster_utils: cluster-utils
-            extra_bake_files: ""
-            extra_targets: ""
-            cache_prefix: ""
-          - name: nextcloud-office
-            image_name: nextcloud-office-documentserver
-            cluster_docs: nextcloud-office-cluster-docs
-            cluster_example: nextcloud-office-cluster-example
-            cluster_utils: nextcloud-office-cluster-utils
-            extra_bake_files: "./brands/nextcloud-office-brand/brand-server.hcl"
-            extra_targets: "brand-icons,"
-            cache_prefix: "nextcloud-office-"
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
 
     steps:
       - name: Restore cache
@@ -207,6 +250,8 @@ jobs:
         id: meta
         env:
           NO_CACHE_INPUT: ${{ github.event.inputs.no_cache }}
+          ARCH: ${{ matrix.arch }}
+          BRAND: ${{ matrix.brand.name }}
         run: |
           REF_NAME=$(echo "$GITHUB_REF_NAME" | tr '/+' '--')
           echo "ref_name=${REF_NAME}" >> $GITHUB_OUTPUT
@@ -237,13 +282,13 @@ jobs:
           # <tag>-<arch>; publish-euro-office-images only moves :latest for
           # stable tags.
           if [[ "$IS_DEFAULT" == "true" ]]; then
-            echo "images_tag=nightly-${{ matrix.arch }}"  >> $GITHUB_OUTPUT
+            echo "images_tag=nightly-${ARCH}"  >> $GITHUB_OUTPUT
             echo "images_push=true"                       >> $GITHUB_OUTPUT
           elif [[ "$IS_TAG" == "true" ]]; then
-            echo "images_tag=${REF_NAME}-${{ matrix.arch }}" >> $GITHUB_OUTPUT
+            echo "images_tag=${REF_NAME}-${ARCH}" >> $GITHUB_OUTPUT
             echo "images_push=true"                          >> $GITHUB_OUTPUT
           else
-            echo "images_tag=${REF_NAME}-${{ matrix.arch }}" >> $GITHUB_OUTPUT
+            echo "images_tag=${REF_NAME}-${ARCH}" >> $GITHUB_OUTPUT
             echo "images_push=false"                         >> $GITHUB_OUTPUT
           fi
 
@@ -258,7 +303,7 @@ jobs:
           # on tags its standalone image goes to ghcr.io/nextcloud-releases
           # instead (see nc_publish). Override the
           # flags for that brand (last write to $GITHUB_OUTPUT wins).
-          if [[ "${{ matrix.brand.name }}" == "nextcloud-office" ]]; then
+          if [[ "$BRAND" == "nextcloud-office" ]]; then
             echo "images_push=false"  >> $GITHUB_OUTPUT
             echo "develop_push=false" >> $GITHUB_OUTPUT
           fi
@@ -270,8 +315,8 @@ jobs:
           # arches/brands stay cacheonly. A manual dispatch on a branch (e.g. a
           # release/v* test build) exports the same image under <branch>.
           if [[ ( "${{ github.event_name }}" == "pull_request" || "${{ github.event_name }}" == "workflow_dispatch" ) \
-                && "${{ matrix.brand.name }}" == "euro-office" \
-                && "${{ matrix.arch }}" == "amd64" ]]; then
+                && "$BRAND" == "euro-office" \
+                && "$ARCH" == "amd64" ]]; then
             echo "export_image=true" >> $GITHUB_OUTPUT
           else
             echo "export_image=false" >> $GITHUB_OUTPUT
@@ -297,7 +342,7 @@ jobs:
           # nextcloud-office release image: on tags the standalone image is
           # exported as an OCI archive and pushed to ghcr.io/nextcloud-releases
           # by a later step, with its own credential (see there).
-          if [[ "$IS_TAG" == "true" && "${{ matrix.brand.name }}" == "nextcloud-office" ]]; then
+          if [[ "$IS_TAG" == "true" && "$BRAND" == "nextcloud-office" ]]; then
             echo "nc_publish=true"  >> "$GITHUB_OUTPUT"
           else
             echo "nc_publish=false" >> "$GITHUB_OUTPUT"
@@ -342,7 +387,7 @@ jobs:
             ${{ matrix.brand.extra_bake_files }}
           # extra_targets is either "" (euro-office) or "brand-icons," so the
           # comma-joined target list resolves correctly for both.
-          targets: ${{ matrix.brand.extra_targets }}packages,standalone,develop,cluster-utils,cluster-example,cluster-docs
+          targets: ${{ matrix.brand.extra_targets }}${{ needs.plan.outputs.targets }}
           # push=false here; per-target pushing is controlled via tags below.
           # Targets with empty tags= are not pushed regardless of this flag.
           push: false
@@ -999,3 +1044,21 @@ jobs:
         run: |
           docker rm -f "$CONTAINER-old" "$CONTAINER-new" >/dev/null 2>&1 || true
           docker volume rm -f "$VOLUME_DB" "$VOLUME_DATA" "$VOLUME_LIB" >/dev/null 2>&1 || true
+
+  # The one build check for branch protection: the build matrix differs
+  # between PRs and full builds, so its per-leg checks cannot be required.
+  ci-result:
+    runs-on: ubuntu-latest
+    needs: [build, e2e, upgrade]
+    if: ${{ !cancelled() }}
+    permissions: {}
+    steps:
+      - name: Check build, e2e and upgrade results
+        env:
+          BUILD: ${{ needs.build.result }}
+          E2E: ${{ needs.e2e.result }}
+          UPGRADE: ${{ needs.upgrade.result }}
+        run: |
+          echo "build=$BUILD e2e=$E2E upgrade=$UPGRADE"
+          # e2e and upgrade skip themselves on some refs (fork PRs, tags).
+          [[ "$BUILD" == "success" && "$E2E" =~ ^(success|skipped)$ && "$UPGRADE" =~ ^(success|skipped)$ ]]
