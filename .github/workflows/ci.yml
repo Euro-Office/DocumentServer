@@ -83,6 +83,10 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
         run: |
           set -euo pipefail
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            echo "::error::Tags are built and published by release.yml; re-run its run instead."
+            exit 1
+          fi
           full=true
           if [[ "$GITHUB_EVENT_NAME" == "pull_request" && "$HEAD_REF" != release/* ]]; then
             labels=$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')
@@ -324,16 +328,15 @@ jobs:
   # between PRs and full builds, so its per-leg checks cannot be required.
   ci-result:
     runs-on: ubuntu-latest
-    needs: [build, e2e, upgrade]
+    needs: [build, publish-nightly-images, e2e, upgrade]
     if: ${{ !cancelled() }}
     permissions: {}
     steps:
-      - name: Check build, e2e and upgrade results
+      - name: Check job results
         env:
           BUILD: ${{ needs.build.result }}
-          E2E: ${{ needs.e2e.result }}
-          UPGRADE: ${{ needs.upgrade.result }}
+          RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          echo "build=$BUILD e2e=$E2E upgrade=$UPGRADE"
-          # e2e and upgrade skip themselves on fork PRs and manual branch runs.
-          [[ "$BUILD" == "success" && "$E2E" =~ ^(success|skipped)$ && "$UPGRADE" =~ ^(success|skipped)$ ]]
+          echo "build=$BUILD all=$RESULTS"
+          # The other jobs skip themselves depending on event and ref.
+          [[ "$BUILD" == "success" && ! " $RESULTS " =~ " "(failure|cancelled)" " ]]
