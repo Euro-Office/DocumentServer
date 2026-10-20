@@ -1,0 +1,327 @@
+name: Release
+
+# Builds a pushed tag and publishes it: Docker images, the GitHub releases of
+# both brands and the nextcloud-office packages. Tags are never moved; a
+# content change gets a new version.
+
+permissions: {}
+
+on:
+  push:
+    tags:
+      - '**'
+
+# Never cancel a release half way through publishing.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io/euro-office
+  IMAGE_NAME: documentserver
+  CLUSTER_IMG_DOCS: cluster-docs
+  CLUSTER_IMG_EXAMPLE: cluster-example
+  CLUSTER_IMG_UTILS: cluster-utils
+  # Branded image names (nextcloud-office)
+  NEXTCLOUD_IMAGE_NAME: nextcloud-office-documentserver
+  NEXTCLOUD_CLUSTER_IMG_DOCS: nextcloud-office-cluster-docs
+  NEXTCLOUD_CLUSTER_IMG_EXAMPLE: nextcloud-office-cluster-example
+  NEXTCLOUD_CLUSTER_IMG_UTILS: nextcloud-office-cluster-utils
+  # Public release targets for nextcloud-office
+  NEXTCLOUD_RELEASES_REPO: nextcloud-releases/Office-DocumentServer
+  NEXTCLOUD_RELEASES_IMAGE: ghcr.io/nextcloud-releases/office-documentserver
+
+jobs:
+  build:
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/build.yml
+    with:
+      full: true
+    secrets:
+      EURO_OFFICE_MIRROR_TOKEN: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN }}
+      NEXTCLOUD_USER: ${{ secrets.NEXTCLOUD_USER }}
+      NEXTCLOUD_PASS: ${{ secrets.NEXTCLOUD_PASS }}
+      NEXTCLOUD_RELEASES_USER: ${{ secrets.NEXTCLOUD_RELEASES_USER }}
+      NEXTCLOUD_RELEASES_TOKEN: ${{ secrets.NEXTCLOUD_RELEASES_TOKEN }}
+
+  # ─────────────────────────────────────────────────────────────
+  # PUBLISH-EURO-OFFICE-IMAGES
+  #
+  # Merges the arch-specific images into multi-arch manifests:
+  # the sanitised tag, plus :latest for stable tags only.
+  # ─────────────────────────────────────────────────────────────
+  publish-euro-office-images:
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push multi-arch manifests
+        env:
+          IS_STABLE: ${{ needs.build.outputs.is_stable }}
+          REF: ${{ needs.build.outputs.ref_name }}
+        run: |
+          REGISTRY="${{ env.REGISTRY }}"
+
+          create_manifest() {
+            local repo="$1"
+            local target_tag="$2"
+            local source_tag="${3:-$target_tag}"
+            docker buildx imagetools create \
+              -t "${repo}:${target_tag}" \
+              "${repo}:${source_tag}-amd64" \
+              "${repo}:${source_tag}-arm64"
+          }
+
+          REPOS=(
+            "${REGISTRY}/${{ env.IMAGE_NAME }}"
+            "${REGISTRY}/${{ env.CLUSTER_IMG_DOCS }}"
+            "${REGISTRY}/${{ env.CLUSTER_IMG_EXAMPLE }}"
+            "${REGISTRY}/${{ env.CLUSTER_IMG_UTILS }}"
+            #"${REGISTRY}/${{ env.NEXTCLOUD_IMAGE_NAME }}"
+            #"${REGISTRY}/${{ env.NEXTCLOUD_CLUSTER_IMG_DOCS }}"
+            #"${REGISTRY}/${{ env.NEXTCLOUD_CLUSTER_IMG_EXAMPLE }}"
+            #"${REGISTRY}/${{ env.NEXTCLOUD_CLUSTER_IMG_UTILS }}"
+          )
+
+          for repo in "${REPOS[@]}"; do
+            create_manifest "$repo" "${REF}"
+            if [[ "$IS_STABLE" == "true" ]]; then
+              create_manifest "$repo" "latest" "${REF}"
+            fi
+          done
+
+  # ─────────────────────────────────────────────────────────────
+  # PUBLISH-NEXTCLOUD-APT-DNF
+  #
+  # Merges the nextcloud-office .deb/.rpm packages into the shared
+  # signed APT/DNF archive. Stable tags only (vX.Y.Z, e.g.
+  # v9.3.4); see is_stable in the build job's meta step.
+  # ─────────────────────────────────────────────────────────────
+  publish-nextcloud-apt-dnf:
+    needs: [build, publish-nextcloud-download-server]
+    if: needs.build.outputs.is_stable == 'true'
+    permissions:
+      actions: read
+    uses: ./.github/workflows/publish-repo.yml
+    with:
+      product: documentserver
+      artifact_pattern: 'nc-packages-*'
+    secrets:
+      NEXTCLOUD_SSH_KEY: ${{ secrets.NEXTCLOUD_SSH_KEY }}
+      NEXTCLOUD_SSH_HOST: ${{ secrets.NEXTCLOUD_SSH_HOST }}
+      NEXTCLOUD_SSH_USER: ${{ secrets.NEXTCLOUD_SSH_USER }}
+      NEXTCLOUD_SSH_PORT: ${{ secrets.NEXTCLOUD_SSH_PORT }}
+      NEXTCLOUD_SSH_REMOTE_PATH: ${{ secrets.NEXTCLOUD_SSH_REMOTE_PATH }}
+      NEXTCLOUD_GPG_PRIVATE_KEY: ${{ secrets.NEXTCLOUD_GPG_PRIVATE_KEY }}
+
+  # ─────────────────────────────────────────────────────────────
+  # PUBLISH - euro-office packages to the GitHub Release of this repository
+  #
+  # One job for both arches, so the release is created once with the
+  # changelog as body and the prerelease/latest flags from the tag.
+  # ─────────────────────────────────────────────────────────────
+  publish-euro-office-release:
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: 'packages-*'
+          path: dist
+          merge-multiple: true
+
+      - name: Write release notes
+        run: |
+          # The CHANGELOG.md section of this tag, written by Euro-Office/release.
+          awk -v h="## $GITHUB_REF_NAME" '$0 == h { f = 1; next } f && /^## / { exit } f' CHANGELOG.md > notes.md
+          cat notes.md
+
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TITLE: Euro-Office Document Server ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.build.outputs.is_stable != 'true' }}
+          LATEST: ${{ needs.build.outputs.is_stable == 'true' }}
+        run: |
+          set -euo pipefail
+          flags=(--title "$TITLE" --notes-file notes.md --prerelease="$PRERELEASE" --latest="$LATEST")
+          # Re-runs update the existing release and replace its assets.
+          if gh release view "$GITHUB_REF_NAME" -R "$REPO" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" -R "$REPO" "${flags[@]}"
+            gh release upload "$GITHUB_REF_NAME" -R "$REPO" --clobber dist/*
+          else
+            gh release create "$GITHUB_REF_NAME" -R "$REPO" "${flags[@]}" dist/*
+          fi
+
+  # ─────────────────────────────────────────────────────────────
+  # PUBLISH - nextcloud-office packages to the versioned directory on
+  # the server (via SSH)
+  #
+  # Separate job so an SSH failure cannot fail the build job, which every
+  # euro-office publishing step after it (publish-euro-office-images, e2e)
+  # depends on.
+  # ─────────────────────────────────────────────────────────────
+  publish-nextcloud-download-server:
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      actions: read
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: 'nc-packages-*'
+          path: dist
+          merge-multiple: true
+
+      - name: Upload packages via SSH
+        env:
+          SSH_KEY:         ${{ secrets.NEXTCLOUD_SSH_KEY }}
+          SSH_HOST:        ${{ secrets.NEXTCLOUD_SSH_HOST }}
+          SSH_USER:        ${{ secrets.NEXTCLOUD_SSH_USER }}
+          SSH_PORT:        ${{ secrets.NEXTCLOUD_SSH_PORT || 22 }}
+          REMOTE_BASE:     ${{ secrets.NEXTCLOUD_SSH_REMOTE_PATH }}
+          PRODUCT_VERSION: ${{ needs.build.outputs.product_version }}
+          BUILD_NUMBER:    ${{ needs.build.outputs.build_number }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+          TARGET="$REMOTE_BASE/docserver/$PRODUCT_VERSION/$BUILD_NUMBER"
+          ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "mkdir -p '$TARGET'"
+          scp -i ~/.ssh/id_deploy -P "$SSH_PORT" \
+            dist/*.deb dist/*.rpm \
+            "$SSH_USER@$SSH_HOST:$TARGET/"
+
+  # ─────────────────────────────────────────────────────────────
+  # PUBLISH - nextcloud-office image to ghcr.io/nextcloud-releases
+  #
+  # Merges the per-arch images the build legs pushed into one multi-arch
+  # tag (<tag>), and moves :latest on stable tags only.
+  #
+  # GITHUB_TOKEN cannot write to another org, and GHCR accepts no GitHub
+  # App tokens, hence the classic PAT NEXTCLOUD_RELEASES_TOKEN
+  # (scopes: public_repo, write:packages) of the nextcloud-releases bot
+  # account, whose login is NEXTCLOUD_RELEASES_USER.
+  # ─────────────────────────────────────────────────────────────
+  publish-nextcloud-images:
+    runs-on: ubuntu-latest
+    needs: [build]
+    permissions: {}
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to ghcr.io (nextcloud-releases)
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ secrets.NEXTCLOUD_RELEASES_USER }}
+          password: ${{ secrets.NEXTCLOUD_RELEASES_TOKEN }}
+
+      - name: Create and push multi-arch manifest
+        env:
+          IMAGE:     ${{ env.NEXTCLOUD_RELEASES_IMAGE }}
+          TAG:       ${{ needs.build.outputs.ref_name }}
+          IS_STABLE: ${{ needs.build.outputs.is_stable }}
+        run: |
+          set -euo pipefail
+          tags=(-t "$IMAGE:$TAG")
+          if [[ "$IS_STABLE" == "true" ]]; then
+            tags+=(-t "$IMAGE:latest")
+          fi
+          docker buildx imagetools create "${tags[@]}" \
+            "$IMAGE:$TAG-amd64" \
+            "$IMAGE:$TAG-arm64"
+
+  # ─────────────────────────────────────────────────────────────
+  # PUBLISH - nextcloud-office to nextcloud-releases/Office-DocumentServer
+  #
+  # Uses the same NEXTCLOUD_RELEASES_TOKEN as the image job. Runs after
+  # the image job so the release never points at an image that isn't there.
+  # ─────────────────────────────────────────────────────────────
+  publish-nextcloud-github-release:
+    runs-on: ubuntu-latest
+    needs: [build, publish-nextcloud-images]
+    permissions:
+      actions: read
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: 'nc-packages-*'
+          path: dist
+          merge-multiple: true
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
+          path: src
+          persist-credentials: false
+
+      - name: Write release notes
+        env:
+          IMAGE: ${{ env.NEXTCLOUD_RELEASES_IMAGE }}:${{ needs.build.outputs.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # shellcheck disable=SC2016 # literal Markdown code fence
+          {
+            # The CHANGELOG.md section of this tag, written by Euro-Office/release.
+            awk -v h="## $GITHUB_REF_NAME" '$0 == h { f = 1; next } f && /^## / { exit } f' src/CHANGELOG.md
+            printf '### Docker image\n\n```\ndocker pull %s\n```\n\n' "$IMAGE"
+            printf 'Built from %s@%s, %s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$RUN_URL"
+          } > notes.md
+
+      # The tag does not exist in the releases repo; gh creates it on its
+      # default branch, as action-gh-release did.
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ secrets.NEXTCLOUD_RELEASES_TOKEN }}
+          REPO: ${{ env.NEXTCLOUD_RELEASES_REPO }}
+          TITLE: Nextcloud Office Document Server ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.build.outputs.is_stable != 'true' }}
+          LATEST: ${{ needs.build.outputs.is_stable == 'true' }}
+        run: |
+          set -euo pipefail
+          flags=(--title "$TITLE" --notes-file notes.md --prerelease="$PRERELEASE" --latest="$LATEST")
+          # Re-runs update the existing release and replace its assets.
+          if gh release view "$GITHUB_REF_NAME" -R "$REPO" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" -R "$REPO" "${flags[@]}"
+            gh release upload "$GITHUB_REF_NAME" -R "$REPO" --clobber dist/*
+          else
+            gh release create "$GITHUB_REF_NAME" -R "$REPO" "${flags[@]}" dist/*
+          fi
+
+  e2e:
+    needs: publish-euro-office-images
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/e2e.yml

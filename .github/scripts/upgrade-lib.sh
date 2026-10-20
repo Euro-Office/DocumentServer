@@ -1,5 +1,5 @@
 #!/bin/sh
-# Helpers for the upgrade-path job in build.yml. Sourced, not executed: the two
+# Helpers for the upgrade-path job in ci.yml. Sourced, not executed: the two
 # steps that boot a container run in separate shells and both need `boot`.
 #
 # Expects VOLUME_DB, VOLUME_DATA, VOLUME_LIB and BOOT_TIMEOUT from the job env.
