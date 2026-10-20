@@ -1,0 +1,12 @@
+{
+  "services": {
+    "CoAuthoring": {
+      "server": {"port": 8123},
+      "redis": {"options": {}, "optionsSentinel": {}, "optionsCluster": {}},
+      "sql": {},
+      "token": {},
+      "secret": {}
+    }
+  },
+  "FileConverter": {"converter": {"maxprocesscount": 2}}
+}
