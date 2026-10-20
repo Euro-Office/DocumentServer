@@ -9,7 +9,7 @@ on:
     tags:
       - '**'
   # PRs are expected from same-repo branches only. A fork PR gets a read-only
-  # GITHUB_TOKEN and no secrets, so the clone job's EURO_OFFICE_MIRROR_TOKEN
+  # GITHUB_TOKEN and no secrets, so the build job's EURO_OFFICE_MIRROR_TOKEN
   # (required to fetch private submodules + the brand repo) is empty and the
   # build hard-fails before reaching the GHCR push. External contributions are
   # not supported by this mirror; pull_request_target is deliberately avoided
@@ -70,69 +70,6 @@ env:
   NEXTCLOUD_RELEASES_IMAGE: ghcr.io/nextcloud-releases/office-documentserver
 
 jobs:
-  clone:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout fork repository (with submodules)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          path: .
-          submodules: recursive
-          token: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN }}
-          # The whole workspace is cached for the build jobs; keep the
-          # token out of .git/config.
-          persist-credentials: false
-
-      - name: Checkout nextcloud-office-brand repo
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: Euro-Office/nextcloud-office-brand
-          path: build/brands/nextcloud-office-brand
-          token: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN }}
-          persist-credentials: false
-
-      - name: Align submodules to requested branches
-        shell: bash
-        env:
-          CORE_BRANCH:    ${{ github.event.inputs.core_branch || '' }}
-          SDKJS_BRANCH:   ${{ github.event.inputs.sdkjs_branch || '' }}
-          WEBAPPS_BRANCH: ${{ github.event.inputs.web_apps_branch || '' }}
-          SERVER_BRANCH:  ${{ github.event.inputs.server_branch || '' }}
-        run: |
-          set -euo pipefail
-
-          checkout_submodule() {
-            local path=$1
-            local branch=$2
-            echo "🔧 Updating $path → $branch"
-            pushd "$path" > /dev/null
-            git fetch origin "${branch}:${branch}"
-            git checkout "$branch"
-            popd > /dev/null
-          }
-
-          [ -n "$CORE_BRANCH" ]    && checkout_submodule core      "$CORE_BRANCH"
-          [ -n "$SDKJS_BRANCH" ]   && checkout_submodule sdkjs     "$SDKJS_BRANCH"
-          [ -n "$WEBAPPS_BRANCH" ] && checkout_submodule web-apps  "$WEBAPPS_BRANCH"
-          [ -n "$SERVER_BRANCH" ]  && checkout_submodule server    "$SERVER_BRANCH"
-
-          checkout_submodule dictionaries       "main"
-          checkout_submodule document-templates "main"
-
-          echo "--- Submodule state after alignment ---"
-          git submodule status
-
-      # Keyed by commit and written by the run that checked it out; tag runs
-      # can only restore caches of the tag itself or the default branch.
-      - name: Cache clones
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0 # zizmor: ignore[cache-poisoning]
-        with:
-          # Relative, so hosted and self-hosted runners (different workspace paths) share the cache.
-          path: .
-          key: ${{ runner.os }}-build-${{ github.sha }}
-
   # Pull requests build only what e2e and upgrade test: the amd64
   # euro-office standalone image. release/* PRs and PRs labelled
   # full-build get every arch, brand and target, like main and tags.
@@ -213,7 +150,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   build:
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
-    needs: [clone, plan]
+    needs: plan
     outputs:
       # Identical in every matrix leg (depends on the ref only), so it does
       # not matter which leg writes it last.
@@ -229,12 +166,54 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
 
     steps:
-      - name: Restore cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Checkout fork repository (with submodules)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # Relative, so hosted and self-hosted runners (different workspace paths) share the cache.
           path: .
-          key: ${{ runner.os }}-build-${{ github.sha }}
+          submodules: recursive
+          token: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN }}
+          # Keep the mirror token out of .git/config; later steps do not
+          # need it.
+          persist-credentials: false
+
+      - name: Checkout nextcloud-office-brand repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Euro-Office/nextcloud-office-brand
+          path: build/brands/nextcloud-office-brand
+          token: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN }}
+          persist-credentials: false
+
+      - name: Align submodules to requested branches
+        shell: bash
+        env:
+          CORE_BRANCH:    ${{ github.event.inputs.core_branch || '' }}
+          SDKJS_BRANCH:   ${{ github.event.inputs.sdkjs_branch || '' }}
+          WEBAPPS_BRANCH: ${{ github.event.inputs.web_apps_branch || '' }}
+          SERVER_BRANCH:  ${{ github.event.inputs.server_branch || '' }}
+        run: |
+          set -euo pipefail
+
+          checkout_submodule() {
+            local path=$1
+            local branch=$2
+            echo "🔧 Updating $path → $branch"
+            pushd "$path" > /dev/null
+            git fetch origin "${branch}:${branch}"
+            git checkout "$branch"
+            popd > /dev/null
+          }
+
+          [ -n "$CORE_BRANCH" ]    && checkout_submodule core      "$CORE_BRANCH"
+          [ -n "$SDKJS_BRANCH" ]   && checkout_submodule sdkjs     "$SDKJS_BRANCH"
+          [ -n "$WEBAPPS_BRANCH" ] && checkout_submodule web-apps  "$WEBAPPS_BRANCH"
+          [ -n "$SERVER_BRANCH" ]  && checkout_submodule server    "$SERVER_BRANCH"
+
+          checkout_submodule dictionaries       "main"
+          checkout_submodule document-templates "main"
+
+          echo "--- Submodule state after alignment ---"
+          git submodule status
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
