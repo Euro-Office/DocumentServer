@@ -77,9 +77,13 @@ RUN apt-get update && \
 # here ships as a crashed datadir, and every container without a volume on
 # /var/lib/postgresql then starts with crash recovery, whose fsync of the whole
 # datadir can outlast the 60 s pg_ctl timeout on slow storage (#180).
+#
+# The packages are bind-mounted rather than copied in. The packages context
+# holds both the .deb and the .rpm (~1.2 GB together), and a COPY commits them
+# to a layer of their own that a later `rm` cannot shrink (#76).
 ARG TARGETARCH
-COPY --from=packages / /tmp/
-RUN apt-get update && \
+RUN --mount=type=bind,from=packages,target=/mnt/packages \
+    apt-get update && \
     (pg_createcluster 16 main || true) && \
     service postgresql start && \
     runuser -u rabbitmq -- rabbitmq-server -detached && \
@@ -94,7 +98,7 @@ RUN apt-get update && \
     echo "${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW} ds/db-user string eurooffice" | debconf-set-selections && \
     echo "${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW} ds/db-pwd password eurooffice" | debconf-set-selections && \
     echo "${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW} ds/db-name string eurooffice" | debconf-set-selections && \
-    DS_DOCKER_INSTALLATION=true apt-get install -yq /tmp/${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW}_${PRODUCT_VERSION}-${BUILD_NUMBER}_${TARGETARCH}.deb && \
+    DS_DOCKER_INSTALLATION=true apt-get install -yq /mnt/packages/${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW}_${PRODUCT_VERSION}-${BUILD_NUMBER}_${TARGETARCH}.deb && \
     (runuser -u rabbitmq -- rabbitmqctl shutdown || true) && \
     service postgresql stop && \
     rm -rf /var/lib/rabbitmq/mnesia /var/lib/apt/lists/* /tmp/*
