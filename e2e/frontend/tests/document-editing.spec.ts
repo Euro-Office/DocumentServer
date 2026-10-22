@@ -20,8 +20,12 @@ test.describe('Document editor - typing and formatting', () => {
     // The Ctrl+b/Ctrl+i keystrokes actually applied bold/italic — not just that
     // "some edit" registered. Without this, the test stays green even with
     // formatting entirely removed.
-    const isBold = await editorApi(editorPage, (api) => api.get_TextProps().get_TextPr().get_Bold());
-    const isItalic = await editorApi(editorPage, (api) => api.get_TextProps().get_TextPr().get_Italic());
+    const isBold = await editorApi(editorPage, (api) =>
+      api.get_TextProps().get_TextPr().get_Bold(),
+    );
+    const isItalic = await editorApi(editorPage, (api) =>
+      api.get_TextProps().get_TextPr().get_Italic(),
+    );
     expect(isBold).toBe(true);
     expect(isItalic).toBe(true);
   });

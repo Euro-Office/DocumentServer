@@ -34,6 +34,7 @@ export async function openNewEditor(page: Page, selector: string, urlExt: RegExp
  * inside the editor iframe. The function is serialized, so it must be
  * self-contained (no closures over test scope).
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function editorApi<T>(editorPage: Page, fn: (api: any) => T): Promise<T> {
   const handle = await editorPage.locator(EDITOR_IFRAME).elementHandle();
   if (!handle) throw new Error('editor iframe not found');
@@ -44,7 +45,6 @@ export async function editorApi<T>(editorPage: Page, fn: (api: any) => T): Promi
     const w = window as unknown as { Asc?: { editor?: unknown } };
     const api = w.Asc?.editor;
     if (!api) throw new Error('window.Asc.editor not available');
-    // eslint-disable-next-line no-new-func
     return new Function('api', `return (${body})(api);`)(api);
   }, fn.toString());
 }

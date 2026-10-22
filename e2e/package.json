@@ -4,11 +4,21 @@
   "private": true,
   "scripts": {
     "test": "playwright test -c frontend/playwright.config.ts",
-    "test:headed": "playwright test -c frontend/playwright.config.ts --headed"
+    "test:headed": "playwright test -c frontend/playwright.config.ts --headed",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.49.0",
     "@types/node": "^22.0.0",
-    "typescript": "^6.0.0"
+    "eslint": "^10.13.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-playwright": "^2.12.1",
+    "prettier": "^3.9.10",
+    "typescript": "^6.0.0",
+    "typescript-eslint": "^8.72.0"
   }
 }
