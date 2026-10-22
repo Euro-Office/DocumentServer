@@ -2,8 +2,6 @@
 # SPDX-FileCopyrightText: 2026 Euro-Office contributors
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Covers: .github/scripts/dev-images.sh
-#
 # Tests which cache tags dev-images.sh cleanup selects for a branch.
 # Run: .github/scripts/tests/dev-images.test.sh
 set -euo pipefail

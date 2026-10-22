@@ -2,8 +2,6 @@
 # SPDX-FileCopyrightText: 2026 Euro-Office contributors
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Covers: .github/scripts/bake-overrides.sh .github/scripts/cache-lib.sh build/docker-bake.hcl
-#
 # Tests bake-overrides.sh: every cached target of build/docker-bake.hcl gets
 # cache overrides, and nothing else does, without any target list in the
 # scripts. Needs docker buildx (no daemon access) and jq.

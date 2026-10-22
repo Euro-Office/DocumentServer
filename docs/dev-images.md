@@ -92,8 +92,8 @@ is uploaded as the `cache-report-<arch>` artifact (`cache-report.json`, kept
 
 The first build of a new branch reuses the build cache of `main` instead of
 starting cold; see [CI build cache](ci-cache.md). The **Scripts test** workflow
-runs the tests of the CI scripts in `.github/scripts/tests` that cover a changed
-file, on pull requests to `main` and on pushes to `dev/**`. Run one locally with
+runs all tests of the CI scripts in `.github/scripts/tests` on pull requests to
+`main` and on pushes to `dev/**` that touch the scripts. Run one locally with
 `.github/scripts/tests/<name>.test.sh`.
 
 ## 4. Clean up

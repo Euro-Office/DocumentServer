@@ -1,7 +1,6 @@
 name: Scripts test
 
-# Runs the tests of the CI scripts in .github/scripts/tests whose covered files
-# changed (see the "# Covers:" line of each test and tests/run-changed.sh).
+# Runs every test of the CI scripts in .github/scripts/tests.
 on:
   pull_request:
     branches: [main]
@@ -31,21 +30,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The base commit is needed to list the changed files.
-          fetch-depth: 0
           persist-credentials: false
 
-      - name: Run the tests of changed scripts
-        env:
-          EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.sha }}
+      - name: Run the script tests
         run: |
           set -euo pipefail
-          # No usable base (manual run, first push of a branch, force push): run everything.
-          if [[ "$EVENT" != workflow_dispatch && "$BASE" =~ ^[0-9a-f]{40}$ && ! "$BASE" =~ ^0+$ ]] \
-              && changed="$(git diff --name-only "$BASE" "$HEAD_SHA")"; then
-            .github/scripts/tests/run-changed.sh <<<"$changed"
-          else
-            .github/scripts/tests/run-changed.sh all
-          fi
+          for test in .github/scripts/tests/*.test.sh; do
+            echo "::group::$test"
+            "$test"
+            echo "::endgroup::"
+          done
