@@ -1,79 +1,128 @@
-name: Build and Push Docker Image
+name: Build
+
+# Builds the Docker images and packages per arch × brand. Called by ci.yml
+# (pull requests, main, manual runs) and release.yml (tags). Which targets
+# are pushed, and under which tags, follows the caller's event and ref.
 
 permissions: {}
 
 on:
-  push:
-    branches:
-      - main
-    tags:
-      - '**'
-  # PRs are expected from same-repo branches only. A fork PR gets a read-only
-  # GITHUB_TOKEN and no secrets, so the clone job's EURO_OFFICE_MIRROR_TOKEN
-  # (required to fetch private submodules + the brand repo) is empty and the
-  # build hard-fails before reaching the GHCR push. External contributions are
-  # not supported by this mirror; pull_request_target is deliberately avoided
-  # to keep secrets away from untrusted code.
-  pull_request:
-  workflow_dispatch:
+  workflow_call:
     inputs:
-      core_branch:
-        description: 'Branch core'
-        required: false
-        default: ''
-        type: string
-      sdkjs_branch:
-        description: 'Branch for sdkjs'
-        required: false
-        default: ''
-        type: string
-      web_apps_branch:
-        description: 'Branch for web-apps'
-        required: false
-        default: ''
-        type: string
-      server_branch:
-        description: 'Branch for server'
-        required: false
-        default: ''
-        type: string
-      no_cache:
-        description: 'Rebuild every layer cold (ignore registry build cache)'
-        required: false
-        default: false
+      full:
+        description: 'Build every arch, brand and target; otherwise only the amd64 euro-office standalone image'
+        required: true
         type: boolean
-
-# Serialise runs per ref so a re-pushed PR cancels its in-flight run instead of
-# racing the previous one on the single self-hosted e2e runner (shared host
-# port + container name). Cross-PR collisions are still possible if two PRs run
-# at once; the e2e job assumes a single runner.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+    outputs:
+      is_stable:
+        value: ${{ jobs.build.outputs.is_stable }}
+      ref_name:
+        value: ${{ jobs.build.outputs.ref_name }}
+      product_version:
+        value: ${{ jobs.build.outputs.product_version }}
+      build_number:
+        value: ${{ jobs.build.outputs.build_number }}
+    secrets:
+      EURO_OFFICE_MIRROR_TOKEN:
+        required: true
+      NEXTCLOUD_USER:
+        required: false
+      NEXTCLOUD_PASS:
+        required: false
+      NEXTCLOUD_RELEASES_USER:
+        required: false
+      NEXTCLOUD_RELEASES_TOKEN:
+        required: false
 
 env:
   REGISTRY: ghcr.io/euro-office
-  IMAGE_NAME: documentserver
-  CLUSTER_IMG_DOCS: cluster-docs
-  CLUSTER_IMG_EXAMPLE: cluster-example
-  CLUSTER_IMG_UTILS: cluster-utils
   CACHE_IMAGE_NAME: documentserver-build-cache
   BUILD_NUMBER: dev.1
   BUILD_ROOT: /package
-  # Branded image names (nextcloud-office)
-  NEXTCLOUD_IMAGE_NAME: nextcloud-office-documentserver
-  NEXTCLOUD_CLUSTER_IMG_DOCS: nextcloud-office-cluster-docs
-  NEXTCLOUD_CLUSTER_IMG_EXAMPLE: nextcloud-office-cluster-example
-  NEXTCLOUD_CLUSTER_IMG_UTILS: nextcloud-office-cluster-utils
-  # Public release targets for nextcloud-office (git tags only)
-  NEXTCLOUD_RELEASES_REPO: nextcloud-releases/Office-DocumentServer
   NEXTCLOUD_RELEASES_IMAGE: ghcr.io/nextcloud-releases/office-documentserver
 
 jobs:
-  clone:
+  scope:
     runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      matrix: ${{ steps.scope.outputs.matrix }}
+      targets: ${{ steps.scope.outputs.targets }}
+    steps:
+      - name: Choose matrix and targets
+        id: scope
+        env:
+          FULL: ${{ inputs.full }}
+          BRANDS: |
+            [
+              {
+                "name": "euro-office",
+                "image_name": "documentserver",
+                "cluster_docs": "cluster-docs",
+                "cluster_example": "cluster-example",
+                "cluster_utils": "cluster-utils",
+                "extra_bake_files": "",
+                "extra_targets": "",
+                "cache_prefix": ""
+              },
+              {
+                "name": "nextcloud-office",
+                "image_name": "nextcloud-office-documentserver",
+                "cluster_docs": "nextcloud-office-cluster-docs",
+                "cluster_example": "nextcloud-office-cluster-example",
+                "cluster_utils": "nextcloud-office-cluster-utils",
+                "extra_bake_files": "./brands/nextcloud-office-brand/brand-server.hcl",
+                "extra_targets": "brand-icons,",
+                "cache_prefix": "nextcloud-office-"
+              }
+            ]
+        run: |
+          set -euo pipefail
+          if [[ "$FULL" == "true" ]]; then
+            arch='["amd64","arm64"]'
+            brands="$BRANDS"
+            targets=packages,standalone,develop,cluster-utils,cluster-example,cluster-docs
+          else
+            echo "::notice::e2e-only build (amd64, euro-office, standalone). Add the full-build label and re-run for the full matrix."
+            arch='["amd64"]'
+            brands=$(jq '[.[] | select(.name == "euro-office")]' <<<"$BRANDS")
+            targets=standalone
+          fi
+          echo "matrix=$(jq -nc --argjson arch "$arch" --argjson brand "$brands" '{arch: $arch, brand: $brand}')" >> "$GITHUB_OUTPUT"
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+
+  # ─────────────────────────────────────────────────────────────
+  # BUILD
+  #
+  # Single job that builds the target graph in one bake invocation
+  # per arch × brand (scope chosen by the caller). Because develop depends
+  # on docker which depends on packages, bake resolves the shared
+  # graph and never rebuilds a layer twice.
+  #
+  # Pushing per target:
+  #   docker   → pushed on default branch (:nightly) and git tags (:latest)
+  #   develop  → pushed on default branch only (:latest-dev)
+  #   packages → never pushed; exported to local filesystem for release upload
+  #              (euro-office → GitHub Release, nextcloud-office → artifact for
+  #              the publish-nextcloud-* jobs)
+  # ─────────────────────────────────────────────────────────────
+  build:
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    needs: scope
+    outputs:
+      # Identical in every matrix leg (depends on the ref only), so it does
+      # not matter which leg writes it last.
+      is_stable: ${{ steps.meta.outputs.is_stable }}
+      ref_name: ${{ steps.meta.outputs.ref_name }}
+      product_version: ${{ steps.meta.outputs.product_version }}
+      build_number: ${{ steps.meta.outputs.build_number }}
     permissions:
       contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.scope.outputs.matrix) }}
+
     steps:
       - name: Checkout fork repository (with submodules)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -81,8 +130,8 @@ jobs:
           path: .
           submodules: recursive
           token: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN }}
-          # The whole workspace is cached for the build jobs; keep the
-          # token out of .git/config.
+          # Keep the mirror token out of .git/config; later steps do not
+          # need it.
           persist-credentials: false
 
       - name: Checkout nextcloud-office-brand repo
@@ -124,75 +173,6 @@ jobs:
           echo "--- Submodule state after alignment ---"
           git submodule status
 
-      # Keyed by commit and written by the run that checked it out; tag runs
-      # can only restore caches of the tag itself or the default branch.
-      - name: Cache clones
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0 # zizmor: ignore[cache-poisoning]
-        with:
-          # Relative, so hosted and self-hosted runners (different workspace paths) share the cache.
-          path: .
-          key: ${{ runner.os }}-build-${{ github.sha }}
-
-  # ─────────────────────────────────────────────────────────────
-  # BUILD
-  #
-  # Single job that builds the full target graph in one bake
-  # invocation per arch × brand. Because develop depends on
-  # docker which depends on packages, bake resolves the shared
-  # graph and never rebuilds a layer twice.
-  #
-  # Pushing per target:
-  #   docker   → pushed on default branch (:nightly) and git tags (:latest)
-  #   develop  → pushed on default branch only (:latest-dev)
-  #   packages → never pushed; exported to local filesystem for release upload
-  #              (euro-office → GitHub Release, nextcloud-office → artifact for
-  #              the publish-nextcloud-* jobs)
-  # ─────────────────────────────────────────────────────────────
-  build:
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
-    needs: clone
-    outputs:
-      # Identical in every matrix leg (depends on the ref only), so it does
-      # not matter which leg writes it last.
-      is_stable: ${{ steps.meta.outputs.is_stable }}
-      ref_name: ${{ steps.meta.outputs.ref_name }}
-      product_version: ${{ steps.meta.outputs.product_version }}
-      build_number: ${{ steps.meta.outputs.build_number }}
-    permissions:
-      contents: write
-      packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        arch:
-          - amd64
-          - arm64
-        brand:
-          - name: euro-office
-            image_name: documentserver
-            cluster_docs: cluster-docs
-            cluster_example: cluster-example
-            cluster_utils: cluster-utils
-            extra_bake_files: ""
-            extra_targets: ""
-            cache_prefix: ""
-          - name: nextcloud-office
-            image_name: nextcloud-office-documentserver
-            cluster_docs: nextcloud-office-cluster-docs
-            cluster_example: nextcloud-office-cluster-example
-            cluster_utils: nextcloud-office-cluster-utils
-            extra_bake_files: "./brands/nextcloud-office-brand/brand-server.hcl"
-            extra_targets: "brand-icons,"
-            cache_prefix: "nextcloud-office-"
-
-    steps:
-      - name: Restore cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          # Relative, so hosted and self-hosted runners (different workspace paths) share the cache.
-          path: .
-          key: ${{ runner.os }}-build-${{ github.sha }}
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -207,6 +187,8 @@ jobs:
         id: meta
         env:
           NO_CACHE_INPUT: ${{ github.event.inputs.no_cache }}
+          ARCH: ${{ matrix.arch }}
+          BRAND: ${{ matrix.brand.name }}
         run: |
           REF_NAME=$(echo "$GITHUB_REF_NAME" | tr '/+' '--')
           echo "ref_name=${REF_NAME}" >> $GITHUB_OUTPUT
@@ -237,13 +219,13 @@ jobs:
           # <tag>-<arch>; publish-euro-office-images only moves :latest for
           # stable tags.
           if [[ "$IS_DEFAULT" == "true" ]]; then
-            echo "images_tag=nightly-${{ matrix.arch }}"  >> $GITHUB_OUTPUT
+            echo "images_tag=nightly-${ARCH}"  >> $GITHUB_OUTPUT
             echo "images_push=true"                       >> $GITHUB_OUTPUT
           elif [[ "$IS_TAG" == "true" ]]; then
-            echo "images_tag=${REF_NAME}-${{ matrix.arch }}" >> $GITHUB_OUTPUT
+            echo "images_tag=${REF_NAME}-${ARCH}" >> $GITHUB_OUTPUT
             echo "images_push=true"                          >> $GITHUB_OUTPUT
           else
-            echo "images_tag=${REF_NAME}-${{ matrix.arch }}" >> $GITHUB_OUTPUT
+            echo "images_tag=${REF_NAME}-${ARCH}" >> $GITHUB_OUTPUT
             echo "images_push=false"                         >> $GITHUB_OUTPUT
           fi
 
@@ -258,7 +240,7 @@ jobs:
           # on tags its standalone image goes to ghcr.io/nextcloud-releases
           # instead (see nc_publish). Override the
           # flags for that brand (last write to $GITHUB_OUTPUT wins).
-          if [[ "${{ matrix.brand.name }}" == "nextcloud-office" ]]; then
+          if [[ "$BRAND" == "nextcloud-office" ]]; then
             echo "images_push=false"  >> $GITHUB_OUTPUT
             echo "develop_push=false" >> $GITHUB_OUTPUT
           fi
@@ -270,8 +252,8 @@ jobs:
           # arches/brands stay cacheonly. A manual dispatch on a branch (e.g. a
           # release/v* test build) exports the same image under <branch>.
           if [[ ( "${{ github.event_name }}" == "pull_request" || "${{ github.event_name }}" == "workflow_dispatch" ) \
-                && "${{ matrix.brand.name }}" == "euro-office" \
-                && "${{ matrix.arch }}" == "amd64" ]]; then
+                && "$BRAND" == "euro-office" \
+                && "$ARCH" == "amd64" ]]; then
             echo "export_image=true" >> $GITHUB_OUTPUT
           else
             echo "export_image=false" >> $GITHUB_OUTPUT
@@ -297,7 +279,7 @@ jobs:
           # nextcloud-office release image: on tags the standalone image is
           # exported as an OCI archive and pushed to ghcr.io/nextcloud-releases
           # by a later step, with its own credential (see there).
-          if [[ "$IS_TAG" == "true" && "${{ matrix.brand.name }}" == "nextcloud-office" ]]; then
+          if [[ "$IS_TAG" == "true" && "$BRAND" == "nextcloud-office" ]]; then
             echo "nc_publish=true"  >> "$GITHUB_OUTPUT"
           else
             echo "nc_publish=false" >> "$GITHUB_OUTPUT"
@@ -342,7 +324,7 @@ jobs:
             ${{ matrix.brand.extra_bake_files }}
           # extra_targets is either "" (euro-office) or "brand-icons," so the
           # comma-joined target list resolves correctly for both.
-          targets: ${{ matrix.brand.extra_targets }}packages,standalone,develop,cluster-utils,cluster-example,cluster-docs
+          targets: ${{ matrix.brand.extra_targets }}${{ needs.scope.outputs.targets }}
           # push=false here; per-target pushing is controlled via tags below.
           # Targets with empty tags= are not pushed regardless of this flag.
           push: false
@@ -479,523 +461,3 @@ jobs:
             build/deploy/packages/*.rpm
           if-no-files-found: error
           retention-days: 7
-
-  # Points release/v* PRs (opened by Euro-Office/release) to the test build.
-  # Edits its previous comment on re-runs instead of adding a new one.
-  pr-comment:
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'release/')
-    permissions:
-      pull-requests: write
-    steps:
-      - name: Comment with artifact and image links
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR: ${{ github.event.pull_request.number }}
-          SHA: ${{ github.event.pull_request.head.sha }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          IMAGE: ${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
-        run: |
-          gh pr comment "$PR" -R "$GITHUB_REPOSITORY" --edit-last --create-if-none --body "$(cat <<EOF
-          Test build for ${SHA}
-
-          - Packages: \`packages-amd64\`, \`packages-arm64\` under Artifacts on ${RUN_URL} (kept 7 days)
-          - Image (amd64, deleted when this PR closes): \`docker pull ${IMAGE}\`
-          EOF
-          )"
-
-  # ─────────────────────────────────────────────────────────────
-  # PUBLISH-EURO-OFFICE-IMAGES
-  #
-  # Merges the arch-specific images into multi-arch manifests for
-  # both brands. Runs on default branch (:nightly) and git tags
-  # (sanitised ref tag, plus :latest for stable tags only).
-  # ─────────────────────────────────────────────────────────────
-  publish-euro-office-images:
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/')
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create and push multi-arch manifests
-        env:
-          IS_STABLE: ${{ needs.build.outputs.is_stable }}
-          REF: ${{ needs.build.outputs.ref_name }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: |
-          REGISTRY="${{ env.REGISTRY }}"
-
-          create_manifest() {
-            local repo="$1"
-            local target_tag="$2"
-            local source_tag="${3:-$target_tag}"
-            docker buildx imagetools create \
-              -t "${repo}:${target_tag}" \
-              "${repo}:${source_tag}-amd64" \
-              "${repo}:${source_tag}-arm64"
-          }
-
-          # Repos that follow the standard tagging scheme
-          # (nightly on default branch, latest + ref on git tags).
-          # documentserver and nextcloud-office-documentserver also get
-          # :latest-dev on the default branch via the develop target;
-          # the cluster images do not.
-          REPOS=(
-            "${REGISTRY}/${{ env.IMAGE_NAME }}"
-            "${REGISTRY}/${{ env.CLUSTER_IMG_DOCS }}"
-            "${REGISTRY}/${{ env.CLUSTER_IMG_EXAMPLE }}"
-            "${REGISTRY}/${{ env.CLUSTER_IMG_UTILS }}"
-            #"${REGISTRY}/${{ env.NEXTCLOUD_IMAGE_NAME }}"
-            #"${REGISTRY}/${{ env.NEXTCLOUD_CLUSTER_IMG_DOCS }}"
-            #"${REGISTRY}/${{ env.NEXTCLOUD_CLUSTER_IMG_EXAMPLE }}"
-            #"${REGISTRY}/${{ env.NEXTCLOUD_CLUSTER_IMG_UTILS }}"
-          )
-
-          if [[ "$GITHUB_REF_NAME" == "$DEFAULT_BRANCH" ]]; then
-            for repo in "${REPOS[@]}"; do
-              create_manifest "$repo" "nightly"
-            done
-            create_manifest "${REGISTRY}/${{ env.IMAGE_NAME }}" "latest-dev"
-            #create_manifest "${REGISTRY}/${{ env.NEXTCLOUD_IMAGE_NAME }}" "latest-dev"
-          fi
-
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            for repo in "${REPOS[@]}"; do
-              create_manifest "$repo" "${REF}"
-              if [[ "$IS_STABLE" == "true" ]]; then
-                create_manifest "$repo" "latest" "${REF}"
-              fi
-            done
-          fi
-
-  # ─────────────────────────────────────────────────────────────
-  # PUBLISH-NEXTCLOUD-APT-DNF
-  #
-  # Merges the nextcloud-office .deb/.rpm packages into the shared
-  # signed APT/DNF archive. Stable tags only (vX.Y.Z, e.g.
-  # v9.3.4); see is_stable in the build job's meta step.
-  # ─────────────────────────────────────────────────────────────
-  publish-nextcloud-apt-dnf:
-    needs: [build, publish-nextcloud-download-server]
-    if: needs.build.outputs.is_stable == 'true'
-    permissions:
-      actions: read
-    uses: ./.github/workflows/publish-repo.yml
-    with:
-      product: documentserver
-      artifact_pattern: 'nc-packages-*'
-    secrets:
-      NEXTCLOUD_SSH_KEY: ${{ secrets.NEXTCLOUD_SSH_KEY }}
-      NEXTCLOUD_SSH_HOST: ${{ secrets.NEXTCLOUD_SSH_HOST }}
-      NEXTCLOUD_SSH_USER: ${{ secrets.NEXTCLOUD_SSH_USER }}
-      NEXTCLOUD_SSH_PORT: ${{ secrets.NEXTCLOUD_SSH_PORT }}
-      NEXTCLOUD_SSH_REMOTE_PATH: ${{ secrets.NEXTCLOUD_SSH_REMOTE_PATH }}
-      NEXTCLOUD_GPG_PRIVATE_KEY: ${{ secrets.NEXTCLOUD_GPG_PRIVATE_KEY }}
-
-  # ─────────────────────────────────────────────────────────────
-  # PUBLISH - euro-office packages to the GitHub Release of this repository
-  #
-  # One job for both arches, so the release is created once with the
-  # changelog as body and the prerelease/latest flags from the tag.
-  # ─────────────────────────────────────────────────────────────
-  publish-euro-office-release:
-    runs-on: ubuntu-latest
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/')
-    permissions:
-      actions: read
-      contents: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          sparse-checkout: CHANGELOG.md
-          sparse-checkout-cone-mode: false
-          persist-credentials: false
-
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          pattern: 'packages-*'
-          path: dist
-          merge-multiple: true
-
-      - name: Write release notes
-        run: |
-          # The CHANGELOG.md section of this tag, written by Euro-Office/release.
-          awk -v h="## $GITHUB_REF_NAME" '$0 == h { f = 1; next } f && /^## / { exit } f' CHANGELOG.md > notes.md
-          cat notes.md
-
-      - name: Create or update the release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-          TITLE: Euro-Office Document Server ${{ github.ref_name }}
-          PRERELEASE: ${{ needs.build.outputs.is_stable != 'true' }}
-          LATEST: ${{ needs.build.outputs.is_stable == 'true' }}
-        run: |
-          set -euo pipefail
-          flags=(--title "$TITLE" --notes-file notes.md --prerelease="$PRERELEASE" --latest="$LATEST")
-          # Re-runs update the existing release and replace its assets.
-          if gh release view "$GITHUB_REF_NAME" -R "$REPO" >/dev/null 2>&1; then
-            gh release edit "$GITHUB_REF_NAME" -R "$REPO" "${flags[@]}"
-            gh release upload "$GITHUB_REF_NAME" -R "$REPO" --clobber dist/*
-          else
-            gh release create "$GITHUB_REF_NAME" -R "$REPO" "${flags[@]}" dist/*
-          fi
-
-  # ─────────────────────────────────────────────────────────────
-  # PUBLISH - nextcloud-office packages to the versioned directory on
-  # the server (via SSH)
-  #
-  # Separate job so an SSH failure cannot fail the build job, which every
-  # euro-office publishing step after it (publish-euro-office-images, e2e)
-  # depends on.
-  # ─────────────────────────────────────────────────────────────
-  publish-nextcloud-download-server:
-    runs-on: ubuntu-latest
-    needs: build
-    if: startsWith(github.ref, 'refs/tags/')
-    permissions:
-      actions: read
-    steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          pattern: 'nc-packages-*'
-          path: dist
-          merge-multiple: true
-
-      - name: Upload packages via SSH
-        env:
-          SSH_KEY:         ${{ secrets.NEXTCLOUD_SSH_KEY }}
-          SSH_HOST:        ${{ secrets.NEXTCLOUD_SSH_HOST }}
-          SSH_USER:        ${{ secrets.NEXTCLOUD_SSH_USER }}
-          SSH_PORT:        ${{ secrets.NEXTCLOUD_SSH_PORT || 22 }}
-          REMOTE_BASE:     ${{ secrets.NEXTCLOUD_SSH_REMOTE_PATH }}
-          PRODUCT_VERSION: ${{ needs.build.outputs.product_version }}
-          BUILD_NUMBER:    ${{ needs.build.outputs.build_number }}
-        run: |
-          set -euo pipefail
-          mkdir -p ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
-          chmod 600 ~/.ssh/id_deploy
-          ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
-
-          TARGET="$REMOTE_BASE/docserver/$PRODUCT_VERSION/$BUILD_NUMBER"
-          ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "mkdir -p '$TARGET'"
-          scp -i ~/.ssh/id_deploy -P "$SSH_PORT" \
-            dist/*.deb dist/*.rpm \
-            "$SSH_USER@$SSH_HOST:$TARGET/"
-
-  # ─────────────────────────────────────────────────────────────
-  # PUBLISH - nextcloud-office image to ghcr.io/nextcloud-releases
-  #
-  # Merges the per-arch images the build legs pushed into one multi-arch
-  # tag (<tag>), and moves :latest on stable tags only.
-  #
-  # GITHUB_TOKEN cannot write to another org, and GHCR accepts no GitHub
-  # App tokens, hence the classic PAT NEXTCLOUD_RELEASES_TOKEN
-  # (scopes: public_repo, write:packages) of the nextcloud-releases bot
-  # account, whose login is NEXTCLOUD_RELEASES_USER.
-  # ─────────────────────────────────────────────────────────────
-  publish-nextcloud-images:
-    runs-on: ubuntu-latest
-    needs: [build]
-    if: startsWith(github.ref, 'refs/tags/')
-    permissions: {}
-    steps:
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-
-      - name: Log in to ghcr.io (nextcloud-releases)
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ secrets.NEXTCLOUD_RELEASES_USER }}
-          password: ${{ secrets.NEXTCLOUD_RELEASES_TOKEN }}
-
-      - name: Create and push multi-arch manifest
-        env:
-          IMAGE:     ${{ env.NEXTCLOUD_RELEASES_IMAGE }}
-          TAG:       ${{ needs.build.outputs.ref_name }}
-          IS_STABLE: ${{ needs.build.outputs.is_stable }}
-        run: |
-          set -euo pipefail
-          tags=(-t "$IMAGE:$TAG")
-          if [[ "$IS_STABLE" == "true" ]]; then
-            tags+=(-t "$IMAGE:latest")
-          fi
-          docker buildx imagetools create "${tags[@]}" \
-            "$IMAGE:$TAG-amd64" \
-            "$IMAGE:$TAG-arm64"
-
-  # ─────────────────────────────────────────────────────────────
-  # PUBLISH - nextcloud-office to nextcloud-releases/Office-DocumentServer
-  #
-  # Uses the same NEXTCLOUD_RELEASES_TOKEN as the image job. Runs after
-  # the image job so the release never points at an image that isn't there.
-  # ─────────────────────────────────────────────────────────────
-  publish-nextcloud-github-release:
-    runs-on: ubuntu-latest
-    needs: [build, publish-nextcloud-images]
-    if: startsWith(github.ref, 'refs/tags/')
-    permissions:
-      actions: read
-    steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          pattern: 'nc-packages-*'
-          path: dist
-          merge-multiple: true
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          sparse-checkout: CHANGELOG.md
-          sparse-checkout-cone-mode: false
-          path: src
-          persist-credentials: false
-
-      - name: Write release notes
-        env:
-          IMAGE: ${{ env.NEXTCLOUD_RELEASES_IMAGE }}:${{ needs.build.outputs.ref_name }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          # shellcheck disable=SC2016 # literal Markdown code fence
-          {
-            # The CHANGELOG.md section of this tag, written by Euro-Office/release.
-            awk -v h="## $GITHUB_REF_NAME" '$0 == h { f = 1; next } f && /^## / { exit } f' src/CHANGELOG.md
-            printf '### Docker image\n\n```\ndocker pull %s\n```\n\n' "$IMAGE"
-            printf 'Built from %s@%s, %s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$RUN_URL"
-          } > notes.md
-
-      # The tag does not exist in the releases repo; gh creates it on its
-      # default branch, as action-gh-release did.
-      - name: Create or update the release
-        env:
-          GH_TOKEN: ${{ secrets.NEXTCLOUD_RELEASES_TOKEN }}
-          REPO: ${{ env.NEXTCLOUD_RELEASES_REPO }}
-          TITLE: Nextcloud Office Document Server ${{ github.ref_name }}
-          PRERELEASE: ${{ needs.build.outputs.is_stable != 'true' }}
-          LATEST: ${{ needs.build.outputs.is_stable == 'true' }}
-        run: |
-          set -euo pipefail
-          flags=(--title "$TITLE" --notes-file notes.md --prerelease="$PRERELEASE" --latest="$LATEST")
-          # Re-runs update the existing release and replace its assets.
-          if gh release view "$GITHUB_REF_NAME" -R "$REPO" >/dev/null 2>&1; then
-            gh release edit "$GITHUB_REF_NAME" -R "$REPO" "${flags[@]}"
-            gh release upload "$GITHUB_REF_NAME" -R "$REPO" --clobber dist/*
-          else
-            gh release create "$GITHUB_REF_NAME" -R "$REPO" "${flags[@]}" dist/*
-          fi
-
-  e2e:
-    runs-on: self-hosted
-    # Depend on build (produces the image) and publish-euro-office-images
-    # (multi-arch tags on main/tags). It is skipped on pull_request, so don't
-    # require it there.
-    needs: [build, publish-euro-office-images]
-    if: |
-      !cancelled() &&
-      needs.build.result == 'success' &&
-      (github.event_name != 'pull_request' ||
-       github.event.pull_request.head.repo.full_name == github.repository) &&
-      (github.event_name == 'pull_request' ||
-       ((github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/'))
-        && needs.publish-euro-office-images.result == 'success'))
-    permissions:
-      contents: read
-      packages: read
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Determine image
-        id: image
-        run: |
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            echo "ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
-          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            echo "ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$(echo "$GITHUB_REF_NAME" | tr '/+' '--')" >> $GITHUB_OUTPUT
-          else
-            echo "ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull built image
-        env:
-          IMAGE: ${{ steps.image.outputs.ref }}
-        run: docker pull "$IMAGE"
-
-      # Only runs the e2e tests, publishes nothing that a poisoned npm cache could reach.
-      - name: Set up Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0 # zizmor: ignore[cache-poisoning]
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: e2e/package-lock.json
-
-      - name: Install dependencies
-        working-directory: e2e
-        run: npm ci
-
-      - name: Install Playwright browsers
-        working-directory: e2e
-        run: npx playwright install chromium --with-deps
-
-      - name: Run E2E tests
-        working-directory: e2e
-        env:
-          E2E_IMAGE: ${{ steps.image.outputs.ref }}
-        run: npm test
-
-      - name: Upload Playwright report
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: playwright-report-${{ github.sha }}
-          path: e2e/playwright-report/
-          retention-days: 14
-
-  # Upgrade path: boot the last released image against persistent volumes, then
-  # boot the image built here on those same volumes. The e2e job only ever sees
-  # empty volumes, which is why #314 shipped — a shifted `postgres` UID left
-  # pre-existing Postgres data owned by an account that no longer matched, and
-  # every fresh-volume boot stayed green.
-  #
-  # Skipped on tag pushes: publish-euro-office-images has already moved
-  # :latest to the image under test by then, so there would be nothing to
-  # upgrade from. PR and main builds are where :latest is genuinely the previous release.
-  upgrade:
-    runs-on: self-hosted
-    needs: [build, publish-euro-office-images]
-    if: |
-      !cancelled() &&
-      needs.build.result == 'success' &&
-      !startsWith(github.ref, 'refs/tags/') &&
-      (github.event_name != 'pull_request' ||
-       github.event.pull_request.head.repo.full_name == github.repository) &&
-      (github.event_name == 'pull_request' || needs.publish-euro-office-images.result == 'success')
-    permissions:
-      contents: read
-      packages: read
-
-    env:
-      FROM_IMAGE: ghcr.io/euro-office/documentserver:latest
-      CONTAINER: eo-upgrade-${{ github.run_id }}
-      VOLUME_DB: eo-upgrade-db-${{ github.run_id }}
-      VOLUME_DATA: eo-upgrade-data-${{ github.run_id }}
-      VOLUME_LIB: eo-upgrade-lib-${{ github.run_id }}
-      BOOT_TIMEOUT: 300
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Determine image
-        id: image
-        run: |
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            echo "ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
-          else
-            echo "ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@c99871dec2022cc055c062a10cc1a1310835ceb4 # v4.3.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull images
-        id: pull
-        env:
-          IMAGE_REF: ${{ steps.image.outputs.ref }}
-        run: |
-          docker pull "$IMAGE_REF"
-          # No published release to upgrade from (new brand, pruned tag): report
-          # it and skip rather than failing a build this cannot say anything about.
-          if docker pull "$FROM_IMAGE"; then
-            echo "have_from=true" >> $GITHUB_OUTPUT
-          else
-            echo "have_from=false" >> $GITHUB_OUTPUT
-            echo "::notice::$FROM_IMAGE not available - skipping the upgrade check"
-          fi
-
-      - name: Boot previous release and seed the database
-        if: steps.pull.outputs.have_from == 'true'
-        run: |
-          set -euo pipefail
-          . .github/scripts/upgrade-lib.sh
-
-          docker volume create "$VOLUME_DB" >/dev/null
-          docker volume create "$VOLUME_DATA" >/dev/null
-          docker volume create "$VOLUME_LIB" >/dev/null
-          boot "$FROM_IMAGE" "$CONTAINER-old"
-
-          # A row of our own, so the check after the upgrade proves the same
-          # datadir came back rather than a silently reinitialised empty one.
-          docker exec "$CONTAINER-old" sudo -u postgres psql -q -d eurooffice \
-            -c 'CREATE TABLE upgrade_probe (id integer)' \
-            -c 'INSERT INTO upgrade_probe VALUES (314)'
-          docker rm -f "$CONTAINER-old" >/dev/null
-
-      - name: Boot the built image on the same volumes
-        if: steps.pull.outputs.have_from == 'true'
-        env:
-          IMAGE_REF: ${{ steps.image.outputs.ref }}
-        run: |
-          set -euo pipefail
-          . .github/scripts/upgrade-lib.sh
-
-          # Hand the ds-owned volumes to a foreign owner, the way a bind mount
-          # created on the host arrives (#335), so the boot has to repair them.
-          docker run --rm --entrypoint chown \
-            -v "${VOLUME_DATA}:/data" -v "${VOLUME_LIB}:/lib-ds" \
-            "$IMAGE_REF" 65534:65534 /data /lib-ds
-
-          boot "$IMAGE_REF" "$CONTAINER-new"
-
-          probe=$(docker exec "$CONTAINER-new" sudo -u postgres psql -tAq -d eurooffice \
-                    -c 'SELECT id FROM upgrade_probe' | tr -d '[:space:]')
-          if [ "$probe" != "314" ]; then
-            echo "::error::Postgres data from the previous release did not survive the upgrade (probe='$probe')"
-            exit 1
-          fi
-          for dir in /var/www/euro-office/Data /var/lib/euro-office/documentserver; do
-            owner=$(docker exec "$CONTAINER-new" stat -c '%U' "$dir")
-            if [ "$owner" != "ds" ]; then
-              echo "::error::$dir is owned by '$owner' after boot, expected ds"
-              exit 1
-            fi
-          done
-          echo "Upgrade check passed: pre-existing Postgres volume in use after the upgrade, ds volumes repaired."
-
-      - name: Clean up
-        if: always()
-        run: |
-          docker rm -f "$CONTAINER-old" "$CONTAINER-new" >/dev/null 2>&1 || true
-          docker volume rm -f "$VOLUME_DB" "$VOLUME_DATA" "$VOLUME_LIB" >/dev/null 2>&1 || true

@@ -1,0 +1,80 @@
+name: E2E
+
+# Runs the Playwright tests against the image of the calling run: pr-<n> for
+# pull requests, the tag image for tags, :nightly otherwise.
+
+permissions: {}
+
+on:
+  workflow_call:
+
+env:
+  REGISTRY: ghcr.io/euro-office
+  IMAGE_NAME: documentserver
+  CACHE_IMAGE_NAME: documentserver-build-cache
+
+jobs:
+  e2e:
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Determine image
+        id: image
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$(echo "$GITHUB_REF_NAME" | tr '/+' '--')" >> $GITHUB_OUTPUT
+          else
+            echo "ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull built image
+        env:
+          IMAGE: ${{ steps.image.outputs.ref }}
+        run: docker pull "$IMAGE"
+
+      # Only runs the e2e tests, publishes nothing that a poisoned npm cache could reach.
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0 # zizmor: ignore[cache-poisoning]
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: e2e/package-lock.json
+
+      - name: Install dependencies
+        working-directory: e2e
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: e2e
+        run: npx playwright install chromium --with-deps
+
+      - name: Run E2E tests
+        working-directory: e2e
+        env:
+          E2E_IMAGE: ${{ steps.image.outputs.ref }}
+        run: npm test
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-report-${{ github.sha }}
+          path: e2e/playwright-report/
+          retention-days: 14
