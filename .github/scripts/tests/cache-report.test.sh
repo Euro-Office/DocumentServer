@@ -2,14 +2,14 @@
 # SPDX-FileCopyrightText: 2026 Euro-Office contributors
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Covers: .github/scripts/cache-report.sh
+# Covers: .github/actions/cache-report/cache-report.sh
 #
 # Tests the render step of cache-report.sh against a canned build record.
 # Run: .github/scripts/tests/cache-report.test.sh
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-script="$here/../cache-report.sh"
+script="$here/../../actions/cache-report/cache-report.sh"
 dir="$(mktemp -d)"
 trap 'rm -rf "$dir"' EXIT
 mkdir -p "$dir/logs"

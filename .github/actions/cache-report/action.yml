@@ -29,7 +29,7 @@ runs:
         BUILDER: ${{ inputs.builder }}
         TITLE: ${{ inputs.title }}
         REPORT_DIR: ${{ runner.temp }}/cache-report
-        SCRIPT: ${{ github.action_path }}/../../scripts/cache-report.sh
+        SCRIPT: ${{ github.action_path }}/cache-report.sh
       run: bash "$SCRIPT" run "$BUILDER" "$REPORT_DIR"
 
     - name: Upload cache-report.json
