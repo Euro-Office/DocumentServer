@@ -14,7 +14,10 @@ test.describe('Presentation editor - building a deck', () => {
     // The Ctrl+M shortcut only fires when the slide-thumbnail panel is focused
     // and toolbar button ids are renamed in this build, so drive slide creation
     // through the automation API (AddSlide) instead.
-    await editorApi(editorPage, (api) => { api.AddSlide(); api.AddSlide(); });
+    await editorApi(editorPage, (api) => {
+      api.AddSlide();
+      api.AddSlide();
+    });
 
     await expect.poll(() => slideCount(editorPage)).toBe(3);
 

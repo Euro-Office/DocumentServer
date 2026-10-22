@@ -7,8 +7,8 @@ import { test, expect } from '@playwright/test';
 // Visio excluded: create-new has no blank vsdx template (fileExt=vsdx 500s). The build-time
 // verify-deploy.mjs check still gates the visio mobile bundle.
 const MOBILE_EDITOR_TYPES = [
-  { label: 'Document',     fileExt: 'docx', canvasSelector: '#id_viewer' },
-  { label: 'Spreadsheet',  fileExt: 'xlsx', canvasSelector: '#ws-canvas' },
+  { label: 'Document', fileExt: 'docx', canvasSelector: '#id_viewer' },
+  { label: 'Spreadsheet', fileExt: 'xlsx', canvasSelector: '#ws-canvas' },
   { label: 'Presentation', fileExt: 'pptx', canvasSelector: '#id_viewer' },
 ] as const;
 

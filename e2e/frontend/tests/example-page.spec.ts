@@ -3,8 +3,8 @@ import { test, expect } from '@playwright/test';
 const EXAMPLE_PATH = '/example/';
 
 const EDITOR_TYPES = [
-  { label: 'Document',     selector: 'a.try-editor.word',  fileExt: 'docx' },
-  { label: 'Spreadsheet',  selector: 'a.try-editor.cell',  fileExt: 'xlsx' },
+  { label: 'Document', selector: 'a.try-editor.word', fileExt: 'docx' },
+  { label: 'Spreadsheet', selector: 'a.try-editor.cell', fileExt: 'xlsx' },
   { label: 'Presentation', selector: 'a.try-editor.slide', fileExt: 'pptx' },
 ] as const;
 
@@ -35,7 +35,10 @@ test.describe('Example page - Create new', () => {
       //    Assert that iframe is present and its src points to the document editor app.
       const editorIframe = editorPage.locator('iframe[name="frameEditor"]');
       await expect(editorIframe).toBeAttached({ timeout: 15_000 });
-      await expect(editorIframe).toHaveAttribute('src', /documenteditor|spreadsheeteditor|presentationeditor/);
+      await expect(editorIframe).toHaveAttribute(
+        'src',
+        /documenteditor|spreadsheeteditor|presentationeditor/,
+      );
 
       // 3. Wait for the file to finish loading inside the editor iframe.
       //    The loading mask (#loading-mask) is removed from the DOM once ready.
@@ -58,7 +61,9 @@ test.describe('Example page - Create new', () => {
       await frame.locator('a[data-tab="home"]').click();
       await frame.locator('#editor_sdk').click();
       await editorPage.keyboard.type('Hello');
-      await expect(frame.locator('#slot-btn-undo button').first()).not.toHaveClass(/disabled/, { timeout: 5_000 });
+      await expect(frame.locator('#slot-btn-undo button').first()).not.toHaveClass(/disabled/, {
+        timeout: 5_000,
+      });
     });
   }
 });

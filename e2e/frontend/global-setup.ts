@@ -21,9 +21,11 @@ async function pollUntil(
     } catch {
       // Not ready yet — swallow connection errors and retry
     }
-    await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }
-  throw new Error(`[global-setup] Timed out after ${timeoutMs / 1000}s waiting for ${label} at ${url}`);
+  throw new Error(
+    `[global-setup] Timed out after ${timeoutMs / 1000}s waiting for ${label} at ${url}`,
+  );
 }
 
 export default async function globalSetup(): Promise<void> {
@@ -39,7 +41,17 @@ export default async function globalSetup(): Promise<void> {
   console.log(`[global-setup] Starting container ${CONTAINER_NAME} from ${IMAGE}...`);
   const result = spawnSync(
     'docker',
-    ['run', '-d', '--name', CONTAINER_NAME, '-p', `${HOST_PORT}:80`, '-e', 'EXAMPLE_ENABLED=true', IMAGE],
+    [
+      'run',
+      '-d',
+      '--name',
+      CONTAINER_NAME,
+      '-p',
+      `${HOST_PORT}:80`,
+      '-e',
+      'EXAMPLE_ENABLED=true',
+      IMAGE,
+    ],
     { stdio: 'pipe', encoding: 'utf8' },
   );
 
@@ -60,13 +72,13 @@ export default async function globalSetup(): Promise<void> {
   await pollUntil(
     'healthcheck',
     `${process.env.E2E_BASE_URL}/healthcheck`,
-    async res => (await res.text()).trim() === 'true',
+    async (res) => (await res.text()).trim() === 'true',
     TIMEOUT_MS,
   );
   await pollUntil(
     'example app',
     `${process.env.E2E_BASE_URL}/example/`,
-    async res => res.ok,
+    async (res) => res.ok,
     TIMEOUT_MS,
   );
 }
