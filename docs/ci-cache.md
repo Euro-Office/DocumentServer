@@ -68,12 +68,11 @@ it ignores every `cache-from` and rewrites the cache.
 
 ## Fallback from main in dev builds
 
-The first push of a new dev branch has no cache of its own. After the registry login,
-`.github/scripts/check-fallback-cache.sh` checks that `main-core-buildcache-<arch>`
-exists, and `bake-overrides.sh` then adds `main-<target>-buildcache-<arch>` as a
-second, read-only `cache-from` for every target. If the cache is missing the step
-only warns, the build runs without it and the job summary says so. The cache report
-shows each import as found or not found.
+The first push of a new dev branch has no cache of its own.
+`bake-overrides.sh` therefore adds `main-<target>-buildcache-<arch>` as a second,
+read-only `cache-from` for every target. If that cache does not exist, buildx only
+warns and the build runs without it. The cache report shows each import as found or
+not found.
 
 How much that saves depends on how close the branch is to the last `main` build.
 BuildKit only reuses a layer if everything that went into it is identical, and the

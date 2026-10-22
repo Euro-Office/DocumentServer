@@ -135,20 +135,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Read-only fallback: the stable cache of main (same names as build.yml), so
-      # the first build of a new branch does not start cold. A missing cache is
-      # only a warning.
-      - name: Check fallback cache (main)
-        id: fallback
-        env:
-          FALLBACK_REF: ${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:main-{target}-buildcache-${{ matrix.arch }}
-        run: .github/scripts/check-fallback-cache.sh
-
+      # FALLBACK_REF: the stable cache of main (same names as build.yml), a
+      # read-only cache-from so the first build of a new branch does not start
+      # cold. buildx only warns if it is missing; the cache report shows the import.
       - name: Compute bake overrides
         id: bake
         env:
           CACHE_REF: ${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-{target}-${{ matrix.arch }}
-          FALLBACK_REF: ${{ steps.fallback.outputs.ref }}
+          FALLBACK_REF: ${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:main-{target}-buildcache-${{ matrix.arch }}
           PUBLISHED: standalone cluster-docs cluster-example cluster-utils
           SKIP: develop
         run: .github/scripts/bake-overrides.sh
