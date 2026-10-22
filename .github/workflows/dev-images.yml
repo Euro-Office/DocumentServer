@@ -28,7 +28,7 @@ jobs:
   build:
     name: Build (${{ matrix.arch }})
     if: ${{ !github.event.deleted }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     permissions:
       contents: read    # checkout
       packages: write   # push images and build cache to ghcr.io
