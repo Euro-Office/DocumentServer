@@ -125,6 +125,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Docker Buildx
+        id: buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GitHub Container Registry
@@ -173,6 +174,16 @@ jobs:
           BUILD_COMMITS: ${{ steps.meta.outputs.build_commits }}
           BUILD_ROOT: ${{ env.BUILD_ROOT }}
           NUGET_CACHE: local
+
+      # Cache hit rates, slowest steps and cache import/export times, from the
+      # buildx build records (the bake summary only shows an overall figure).
+      - name: Cache report
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/cache-report
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          title: ${{ matrix.arch }}
+          artifact-name: cache-report-${{ matrix.arch }}
 
       - name: Verify single-manifest images and record digests
         env:
