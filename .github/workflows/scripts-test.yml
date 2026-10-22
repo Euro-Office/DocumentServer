@@ -6,7 +6,7 @@ on:
     branches: [main]
     paths: &paths
       - .github/scripts/**
-      - .github/actions/cache-report/**
+      - .github/actions/**
       - build/docker-bake.hcl
       - .github/workflows/scripts-test.yml
   push:
@@ -31,6 +31,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Shellcheck
+        # shellcheck is preinstalled on the runner image; any finding fails the step
+        run: |
+          set -euo pipefail
+          find .github/scripts .github/actions -name '*.sh' -print0 | xargs -0 shellcheck
 
       - name: Run the script tests
         run: |
