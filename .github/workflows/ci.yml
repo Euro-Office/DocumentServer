@@ -99,7 +99,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-    uses: ./.github/workflows/build.yml
+    uses: $/.github/workflows/build.yml
     with:
       full: ${{ needs.plan.outputs.full == 'true' }}
     secrets:
@@ -200,7 +200,7 @@ jobs:
     permissions:
       contents: read
       packages: read
-    uses: ./.github/workflows/e2e.yml
+    uses: $/.github/workflows/e2e.yml
 
   # Upgrade path: boot the last released image against persistent volumes, then
   # boot the image built here on those same volumes. The e2e job only ever sees

@@ -36,7 +36,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-    uses: ./.github/workflows/build.yml
+    uses: $/.github/workflows/build.yml
     with:
       full: true
     secrets:
@@ -117,7 +117,7 @@ jobs:
     if: needs.build.outputs.is_stable == 'true'
     permissions:
       actions: read
-    uses: ./.github/workflows/publish-repo.yml
+    uses: $/.github/workflows/publish-repo.yml
     with:
       product: documentserver
       artifact_pattern: 'nc-packages-*'
@@ -324,4 +324,4 @@ jobs:
     permissions:
       contents: read
       packages: read
-    uses: ./.github/workflows/e2e.yml
+    uses: $/.github/workflows/e2e.yml
