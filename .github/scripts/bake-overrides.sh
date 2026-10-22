@@ -10,12 +10,15 @@
 #   CACHE_REF   cache ref template; "{target}" is replaced by the target name
 #   PUBLISHED   space-separated targets whose tags/output the caller sets itself
 #   SKIP        space-separated targets the caller does not build
+#   FALLBACK_REF  optional, like CACHE_REF: an extra read-only cache-from per
+#               target (never a cache-to), e.g. the stable cache of main
 #   BAKE_FILE   bake file the targets are read from (default build/docker-bake.hcl)
 set -euo pipefail
 
 : "${CACHE_REF:?}" "${GITHUB_OUTPUT:?}"
 PUBLISHED="${PUBLISHED:-}"
 SKIP="${SKIP:-}"
+FALLBACK_REF="${FALLBACK_REF:-}"
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=cache-lib.sh
@@ -33,6 +36,7 @@ delim="EOF_$(openssl rand -hex 8)"
     in_list "$t" "$SKIP" && continue
     ref="${CACHE_REF//\{target\}/$t}"
     echo "${t}.cache-from=type=registry,ref=${ref}"
+    [[ -z "$FALLBACK_REF" ]] || echo "${t}.cache-from=type=registry,ref=${FALLBACK_REF//\{target\}/$t}"
     echo "${t}.cache-to=type=registry,ref=${ref},mode=max"
     in_list "$t" "$PUBLISHED" || echo "${t}.tags="
   done

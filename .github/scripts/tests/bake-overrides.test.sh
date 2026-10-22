@@ -51,6 +51,20 @@ grep -qx 'standalone.tags=' <<<"$lines" && ok "published target got empty tags"
 grep -qx 'core.tags=' <<<"$lines" || ok "unpublished target has no empty tags"
 grep -qx '\*.context=..' <<<"$lines" || ok "context override missing"
 
+# A fallback adds one read-only cache-from per target and never a cache-to.
+fb="$(run_overrides FALLBACK_REF='reg/pkg:main-abc-{target}-buildcache-amd64' SKIP=develop)"
+for t in "${expected[@]}"; do
+  [[ "$t" == develop ]] && continue
+  [[ "$(grep -c "^${t}\\.cache-from=" <<<"$fb")" == 2 ]] || ok "$t: expected two cache-from with a fallback"
+  grep -qxF "${t}.cache-from=type=registry,ref=reg/pkg:main-abc-${t}-buildcache-amd64" <<<"$fb" \
+    || ok "$t: fallback cache-from missing"
+done
+[[ "$(grep -c '\.cache-to=' <<<"$fb")" == "$(grep -c '\.cache-to=' <<<"$lines")" ]] \
+  || ok "fallback changed the cache-to lines"
+grep '\.cache-to=' <<<"$fb" | grep -q 'main-abc' && ok "fallback ref used for cache-to"
+[[ "$(grep -c '\.cache-from=' <<<"$lines")" == "$(grep -c '\.cache-to=' <<<"$lines")" ]] \
+  || ok "without a fallback there is one cache-from per cache-to"
+
 # A new target in a bake file is picked up without touching the scripts.
 sed 's/^target "standalone" {/target "brand-new" {\n  dockerfile-inline = "FROM scratch"\n}\n\ntarget "standalone" {/' \
   "$root/build/docker-bake.hcl" >"$tmp/extra.hcl"
