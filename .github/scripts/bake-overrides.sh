@@ -10,14 +10,18 @@
 #   CACHE_REF   cache ref template; "{target}" is replaced by the target name
 #   PUBLISHED   space-separated targets whose tags/output the caller sets itself
 #   SKIP        space-separated targets the caller does not build
+#   BAKE_FILE   bake file the targets are read from (default build/docker-bake.hcl)
 set -euo pipefail
 
 : "${CACHE_REF:?}" "${GITHUB_OUTPUT:?}"
 PUBLISHED="${PUBLISHED:-}"
 SKIP="${SKIP:-}"
 
-TARGETS=(core core-wasm sdkjs web-apps server example bundle packages
-  cluster-docs cluster-example cluster-utils standalone develop)
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=cache-lib.sh
+source "$here/cache-lib.sh"
+mapfile -t TARGETS < <(cache_targets "${BAKE_FILE:-$here/../../build/docker-bake.hcl}")
+[[ ${#TARGETS[@]} -gt 0 ]] || { echo "::error::No bake targets found." >&2; exit 1; }
 
 in_list() { [[ " $2 " == *" $1 "* ]]; }
 
