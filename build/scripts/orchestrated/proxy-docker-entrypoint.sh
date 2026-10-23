@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -e
 
+# Fail closed on an insecure default secure-link secret. This value signs the
+# internal cache/file URLs and MUST be identical to the one the Docs replicas
+# use (see docker-entrypoint.sh), so it cannot be generated per-pod — it has to
+# be supplied explicitly (e.g. via a Kubernetes Secret). Refuse to start with
+# the known upstream placeholder rather than serve forgeable signed URLs.
+if [ -z "${SECURE_LINK_SECRET:-}" ]; then
+  echo "ERROR: SECURE_LINK_SECRET is not set. Provide a strong shared value matching the Docs replicas (e.g. via a Kubernetes Secret). Refusing to start with an insecure default." >&2
+  exit 1
+fi
+
 if ! [ -d /tmp/proxy_nginx ]; then
   mkdir /tmp/proxy_nginx
 fi
@@ -19,7 +29,7 @@ fi
 
 envsubst < /tmp/proxy_nginx/includes/http-upstream.conf > /tmp/http-upstream.conf
 envsubst < /etc/nginx/includes/ds-common.conf | tee /tmp/proxy_nginx/includes/ds-common.conf > /dev/null
-sed "s,\(set \+\$secure_link_secret\).*,\1 "${SECURE_LINK_SECRET:-verysecretstring}";," -i /tmp/proxy_nginx/conf.d/ds.conf
+sed "s,\(set \+\$secure_link_secret\).*,\1 "${SECURE_LINK_SECRET}";," -i /tmp/proxy_nginx/conf.d/ds.conf
 sed "s/\(client_max_body_size\).*/\1 $NGINX_CLIENT_MAX_BODY_SIZE;/" -i /tmp/proxy_nginx/includes/ds-common.conf
 
 if [[ ! -f "/proc/net/if_inet6" ]]; then
@@ -53,7 +63,11 @@ if [[ -n "$INFO_ALLOWED_IP" ]]; then
 fi
 
 if [[ -n "$INFO_ALLOWED_USER" ]]; then
-  htpasswd -c -b /tmp/auth "${INFO_ALLOWED_USER}" "${INFO_ALLOWED_PASSWORD:-password}"
+  if [[ -z "${INFO_ALLOWED_PASSWORD:-}" ]]; then
+    echo "ERROR: INFO_ALLOWED_USER is set but INFO_ALLOWED_PASSWORD is empty. Refusing to expose /info behind a default password." >&2
+    exit 1
+  fi
+  htpasswd -c -b /tmp/auth "${INFO_ALLOWED_USER}" "${INFO_ALLOWED_PASSWORD}"
   sed -i '/(info)/a\  auth_basic \"Authentication Required\"\;' /tmp/proxy_nginx/includes/ds-docservice.conf
   sed -i '/auth_basic/a\  auth_basic_user_file \/tmp\/auth\;' /tmp/proxy_nginx/includes/ds-docservice.conf
 fi
