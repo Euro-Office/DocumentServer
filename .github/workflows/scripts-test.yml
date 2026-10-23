@@ -1,0 +1,48 @@
+name: Scripts test
+
+# Runs every test of the CI scripts in .github/scripts/tests.
+on:
+  pull_request:
+    branches: [main]
+    paths: &paths
+      - .github/scripts/**
+      - .github/actions/**
+      - build/docker-bake.hcl
+      - .github/workflows/scripts-test.yml
+  push:
+    branches: ['dev/**']
+    paths: *paths
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: scripts-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Script tests
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read  # checkout
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Shellcheck
+        # shellcheck is preinstalled on the runner image; any finding fails the step
+        run: |
+          set -euo pipefail
+          find .github/scripts .github/actions -name '*.sh' -print0 | xargs -0 shellcheck
+
+      - name: Run the script tests
+        run: |
+          set -euo pipefail
+          for test in .github/scripts/tests/*.test.sh; do
+            echo "::group::$test"
+            "$test"
+            echo "::endgroup::"
+          done

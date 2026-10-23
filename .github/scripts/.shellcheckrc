@@ -1,0 +1,3 @@
+# Follow the "# shellcheck source=" directives (cache-lib.sh, dev-images.sh).
+external-sources=true
+source-path=SCRIPTDIR
