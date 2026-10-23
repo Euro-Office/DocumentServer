@@ -54,9 +54,24 @@ if [[ -n "$REDIS_SENTINEL_NODES" ]]; then
   IFS=","
   NODES=$(echo "${REDIS_SENTINEL_NODES_ARRAY[*]}")
   IFS="$OLD_IFS"
-  REDIS_SENTINEL='[ '$NODES' ],'
+  REDIS_SENTINEL='"sentinels": [ '$NODES' ],'
 else
-  REDIS_SENTINEL='[ { "host": "'${REDIS_SERVER_HOST:-localhost}'", "port": '${REDIS_SERVER_PORT:-6379}' } ],'
+  # No sentinel configured: emit no `sentinels` key at all. Listing the plain
+  # Redis server as its own sentinel puts ioredis into sentinel mode, where it
+  # never connects - and a fail-closed consumer then refuses every request.
+  REDIS_SENTINEL=''
+fi
+
+# Only name a user when one was configured. ioredis sends the two-argument
+# AUTH whenever a username is present - a password is not required for that -
+# and two-argument AUTH is Redis 6.0 and later. Emitting a default username
+# unconditionally therefore made 6.0 the floor for every deployment; on Redis
+# 5 with a password set it fails, warns, and leaves the client
+# unauthenticated for every subsequent command.
+if [[ -n "$REDIS_SERVER_USER" ]]; then
+  REDIS_USERNAME_JSON='"username": "'${REDIS_SERVER_USER}'",'
+else
+  REDIS_USERNAME_JSON=''
 fi
 
 if [[ -n "$REDIS_CLUSTER_NODES" ]]; then
@@ -69,9 +84,58 @@ if [[ -n "$REDIS_CLUSTER_NODES" ]]; then
   IFS=","
   NODES=$(echo "${REDIS_CLUSTER_NODES_ARRAY[*]}")
   IFS="$OLD_IFS"
-  REDIS_CLUSTER='"rootNodes": [ '$NODES' ], "defaults": { "username": "'${REDIS_SERVER_USER:-default}'", "password": "'$REDIS_SERVER_PWD'" }'
+  REDIS_CLUSTER='"rootNodes": [ '$NODES' ], "defaults": { '${REDIS_USERNAME_JSON}'"password": "'$REDIS_SERVER_PWD'" }'
 else
   REDIS_CLUSTER=''
+fi
+
+# Which editorData backend to use. Emitted only when an operator asks, so the
+# packaged default stands otherwise. EDITOR_STAT_STORAGE pins the EditorStat
+# half separately; left empty it follows editorDataStorage.
+# These two are interpolated into NODE_CONFIG and then reach
+# require('./' + value) in docservice, so reject anything that is not a
+# plain module basename rather than passing a path or a quote through.
+for var in EDITOR_DATA_STORAGE EDITOR_STAT_STORAGE; do
+  value="${!var}"
+  if [[ -n "$value" && ! "$value" =~ ^[A-Za-z][A-Za-z0-9]*$ ]]; then
+    echo "$var must be a module name such as editorDataRedis (got: $value)" >&2
+    exit 2
+  fi
+done
+
+EDITOR_STORAGE_KEYS=()
+if [[ -n "$EDITOR_DATA_STORAGE" ]]; then
+  EDITOR_STORAGE_KEYS+=('"editorDataStorage": "'${EDITOR_DATA_STORAGE}'"')
+fi
+if [[ -n "$EDITOR_STAT_STORAGE" ]]; then
+  EDITOR_STORAGE_KEYS+=('"editorStatStorage": "'${EDITOR_STAT_STORAGE}'"')
+fi
+if [[ ${#EDITOR_STORAGE_KEYS[@]} -gt 0 ]]; then
+  OLD_IFS="$IFS"
+  IFS=","
+  EDITOR_STORAGE_JSON='"server": { '"${EDITOR_STORAGE_KEYS[*]}"' },'
+  IFS="$OLD_IFS"
+else
+  EDITOR_STORAGE_JSON=''
+fi
+
+# State the topology rather than leaving consumers to infer it from the shape
+# of the options. REDIS_MODE overrides if a deployment needs to be explicit.
+if [[ -n "$REDIS_MODE" ]]; then
+  case "$REDIS_MODE" in
+    auto | standalone | sentinel | cluster) ;;
+    *)
+      echo "REDIS_MODE must be one of auto, standalone, sentinel, cluster (got: $REDIS_MODE)" >&2
+      exit 2
+      ;;
+  esac
+  REDIS_MODE_VALUE="$REDIS_MODE"
+elif [[ -n "$REDIS_CLUSTER_NODES" ]]; then
+  REDIS_MODE_VALUE="cluster"
+elif [[ -n "$REDIS_SENTINEL_NODES" ]]; then
+  REDIS_MODE_VALUE="sentinel"
+else
+  REDIS_MODE_VALUE="standalone"
 fi
 
 # --------------------------------------------------------------------
@@ -121,6 +185,7 @@ export NODE_CONFIG='{
       },
       "redis": {
         "name": "'${REDIS_CONNECTOR_NAME:-redis}'",
+        "mode": "'${REDIS_MODE_VALUE}'",
         "host": "'${REDIS_SERVER_HOST:-${REDIST_SERVER_HOST:-localhost}}'",
         "port": '${REDIS_SERVER_PORT:-${REDIST_SERVER_PORT:-6379}}',
         "options": {
@@ -130,14 +195,15 @@ export NODE_CONFIG='{
         },
         "optionsCluster": { '${REDIS_CLUSTER}' },
         "iooptions": {
-          "sentinels": '${REDIS_SENTINEL}'
+          '${REDIS_SENTINEL}'
           "name": "'${REDIS_SENTINEL_GROUP_NAME:-mymaster}'",
           "sentinelPassword": "'${REDIS_SENTINEL_PWD}'",
-          "username": "'${REDIS_SERVER_USER:-default}'",
+          '${REDIS_USERNAME_JSON}'
           "password": "'${REDIS_SERVER_PWD}'",
           "db": "'${REDIS_SERVER_DB_NUM:-0}'"
         }
       },
+      '${EDITOR_STORAGE_JSON}'
       "token": {
         "enable": {
           "browser": '${JWT_ENABLED:=true}',
