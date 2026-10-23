@@ -8,7 +8,7 @@ EO_ROOT="${EO_ROOT:-/var/www/euro-office/documentserver}"
 EO_LOG="${EO_LOG:-/var/log/euro-office/documentserver}"
 EO_CONF="${EO_CONF:-/etc/euro-office/documentserver}"
 EO_LIB="${EO_LIB:-/var/lib/euro-office/documentserver}"
-DATA_DIR="/var/www/euro-office/Data"
+DATA_DIR="${DATA_DIR:-/var/www/euro-office/Data}"
 PRIVATE_DIR="${DATA_DIR}/.private"
 CONFIG_FILE="${EO_CONF}/local.json"
 LOG4JS_CONFIG="${EO_CONF}/log4js/production.json"
@@ -41,6 +41,29 @@ AMQP_START_TIMEOUT="${AMQP_START_TIMEOUT:-60}"
 
 REDIS_SERVER_HOST="${REDIS_SERVER_HOST:-localhost}"
 REDIS_SERVER_PORT="${REDIS_SERVER_PORT:-6379}"
+
+REDIS_TOPOLOGY_HELPER="${REDIS_TOPOLOGY_HELPER:-$(dirname "$0")/../redis-topology.sh}"
+[ -r "$REDIS_TOPOLOGY_HELPER" ] || REDIS_TOPOLOGY_HELPER=/usr/local/lib/euro-office/redis-topology.sh
+. "$REDIS_TOPOLOGY_HELPER"
+REDIS_SENTINEL_GROUP_NAME_OVERRIDE="${REDIS_SENTINEL_GROUP_NAME:-}"
+redis_topology_init
+
+# A topology may be supplied either through the REDIS_* environment variables
+# above, local.json, or NODE_CONFIG. Keep this separate from
+# REDIS_SENTINEL_REQUESTED, which specifically describes environment-based
+# Sentinel configuration and is also used to build local.json.
+REDIS_TOPOLOGY_CONFIGURED=false
+if [ "$REDIS_SENTINEL_REQUESTED" = true ] || [ -n "${REDIS_CLUSTER_NODES:-}" ]; then
+  REDIS_TOPOLOGY_CONFIGURED=true
+fi
+if jq -e --arg nodeConfig "${NODE_CONFIG:-}" '
+  (. * ($nodeConfig | if . == "" then {} else fromjson end)).services.CoAuthoring.redis |
+  ((.optionsSentinel // {}) | keys | length > 0) or
+  (.optionsCluster.rootNodes? |
+    if type == "array" then length > 0 else false end)
+' "$CONFIG_FILE" >/dev/null 2>&1; then
+  REDIS_TOPOLOGY_CONFIGURED=true
+fi
 
 WOPI_ENABLED="${WOPI_ENABLED:-false}"
 PLUGINS_ENABLED="${PLUGINS_ENABLED:-true}"
@@ -166,7 +189,8 @@ waiting_for_connection() {
 }
 
 [ "$DB_HOST" != "localhost" ] && waiting_for_connection "$DB_HOST" "$DB_PORT"
-[ "$REDIS_SERVER_HOST" != "localhost" ] && waiting_for_connection "$REDIS_SERVER_HOST" "$REDIS_SERVER_PORT"
+[ "$REDIS_SERVER_HOST" != "localhost" ] && [ "$REDIS_TOPOLOGY_CONFIGURED" != true ] && \
+  waiting_for_connection "$REDIS_SERVER_HOST" "$REDIS_SERVER_PORT"
 if [ -n "${AMQP_URI:-}" ]; then
   : # caller picks their host; we don't parse the URI here
 elif [ "$AMQP_HOST" != "localhost" ]; then
@@ -212,6 +236,34 @@ jq_set '.services.CoAuthoring.redis.port = ($redisPort | tonumber? // $redisPort
 [ -n "${REDIS_SERVER_USER:-}" ] && jq_set '.services.CoAuthoring.redis.options.username = $redisUser'
 [ -n "${REDIS_SERVER_PASS:-}" ] && jq_set '.services.CoAuthoring.redis.options.password = $redisPass'
 [ -n "${REDIS_SERVER_DB:-}"   ] && jq_set '.services.CoAuthoring.redis.options.database = ($redisDb | tonumber? // $redisDb)'
+[ "${REDIS_SERVER_TLS:-false}" = true ] && jq_set '.services.CoAuthoring.redis.options.socket.tls = true'
+
+# Merge explicit topology overrides without replacing saved client/TLS options.
+REDIS_SENTINEL_OPTIONS_JSON='{}'
+if [ "$REDIS_SENTINEL_REQUESTED" = true ]; then
+  REDIS_SENTINEL_OPTIONS_JSON=$(redis_build_sentinel_options \
+    "$REDIS_SENTINEL_GROUP_NAME" "$REDIS_SENTINEL_NODES_JSON" \
+    "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PASS:-}" "${REDIS_SERVER_DB:-}" \
+    "$REDIS_SENTINEL_USER" "$REDIS_SENTINEL_PASS")
+  jq_set '.services.CoAuthoring.redis.optionsSentinel = (
+    {name: "mymaster", nodeClientOptions: {}} *
+    (.services.CoAuthoring.redis.optionsSentinel // {}) *
+    ($redisSentinelOptions |
+      if $redisSentinelGroupName == "" then del(.name) else . end |
+      if $redisDb == "" then del(.nodeClientOptions.database) else . end)
+  )'
+fi
+REDIS_CLUSTER_OPTIONS_JSON='{}'
+if [ -n "${REDIS_CLUSTER_NODES:-}" ]; then
+  REDIS_CLUSTER_OPTIONS_JSON=$(redis_build_cluster_options "$REDIS_CLUSTER_NODES_JSON" \
+    "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PASS:-}")
+  jq_set '.services.CoAuthoring.redis.optionsCluster |= (
+    (. // {}) * $redisClusterOptions |
+    if .defaults.socket.tls == true then
+      .rootNodes |= map(.url |= sub("^redis://"; "rediss://"))
+    else . end
+  )'
+fi
 
 # AMQP / RabbitMQ
 if [ -n "${AMQP_URI:-}" ]; then
@@ -303,6 +355,9 @@ jq \
   --arg redisUser        "${REDIS_SERVER_USER:-}" \
   --arg redisPass        "${REDIS_SERVER_PASS:-}" \
   --arg redisDb          "${REDIS_SERVER_DB:-}" \
+  --arg redisSentinelGroupName "$REDIS_SENTINEL_GROUP_NAME_OVERRIDE" \
+  --argjson redisSentinelOptions "$REDIS_SENTINEL_OPTIONS_JSON" \
+  --argjson redisClusterOptions "$REDIS_CLUSTER_OPTIONS_JSON" \
   --arg amqpUri          "$AMQP_URI_VALUE" \
   --arg wopiEnabled      "$WOPI_ENABLED" \
   --arg wopiPriv         "$WOPI_PRIVATE_KEY_DATA" \
@@ -318,6 +373,12 @@ jq \
   "$jq_filter" \
   "$CONFIG_FILE" > "${CONFIG_FILE}.tmp"
 mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+
+# Allow the standalone configuration generation to be tested without starting
+# bundled services. This is intentionally limited to the generated config.
+if [ "${ENTRYPOINT_CONFIG_ONLY:-false}" = "true" ]; then
+  exit 0
+fi
 
 # --------------------------------------------------------------------
 # log4js level
@@ -624,7 +685,7 @@ if [ "$AMQP_HOST" = "localhost" ] && [ -z "${AMQP_URI:-}" ]; then
   start_rabbitmq \
     || echo "ERROR: RabbitMQ did not become ready within ${AMQP_START_TIMEOUT}s; docservice will fail to connect." >&2
 fi
-[ "$REDIS_SERVER_HOST"  = "localhost" ] && service redis-server start
+[ "$REDIS_SERVER_HOST"  = "localhost" ] && [ "$REDIS_TOPOLOGY_CONFIGURED" != true ] && service redis-server start
 service nginx start
 
 # --------------------------------------------------------------------
