@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { openNewEditor, editorApi } from './helpers';
+import { openNewEditor, editorApi, editorFor } from './helpers';
 
 const cellText = (editorPage: import('@playwright/test').Page) =>
   editorApi(editorPage, (api) => {
@@ -9,7 +9,8 @@ const cellText = (editorPage: import('@playwright/test').Page) =>
 
 test.describe('Spreadsheet editor - numbers and formulas', () => {
   test('enter numbers and a formula', async ({ page }) => {
-    const { editorPage, frame } = await openNewEditor(page, 'a.try-editor.cell', /\.xlsx/);
+    const editor = editorFor('Spreadsheet');
+    const { editorPage, frame } = await openNewEditor(page, editor.selector, editor.fileExt);
     const nameBox = frame.locator('#ce-cell-name');
     const select = async (cell: string) => {
       await nameBox.fill(cell);
