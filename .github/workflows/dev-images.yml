@@ -146,7 +146,7 @@ jobs:
       # targets get the moving <slug> tag. Attestations are disabled so each
       # image is a single manifest.
       - name: Build and push dev images
-        uses: docker/bake-action@4a9a8d494466d37134e2bfca2d3a8de8fb2681ad # v5.13.0
+        uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
         with:
           workdir: ./build
           files: ./docker-bake.hcl
