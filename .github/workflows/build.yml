@@ -849,7 +849,7 @@ jobs:
 
       # Only runs the e2e tests, publishes nothing that a poisoned npm cache could reach.
       - name: Set up Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0 # zizmor: ignore[cache-poisoning]
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0 # zizmor: ignore[cache-poisoning]
         with:
           node-version: '22'
           cache: 'npm'
