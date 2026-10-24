@@ -1,5 +1,15 @@
 # Changelog
 
+## v9.3.7
+
+### Other changes
+
+* server: build: bump Node to 24 LTS (stable-9.3.7) by juliusknorr in [server#66](https://github.com/Euro-Office/server/pull/66)
+
+### Compare to v9.3.6
+
+* server: <https://github.com/Euro-Office/server/compare/044184a530ef...a924935680de>
+
 ## v9.3.6
 
 ### Features
