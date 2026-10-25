@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: 2026 Euro-Office contributors
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
 // Helpers specific to the document editor (rulers and other document-only
 // layout features). Generic editor helpers live in helpers.ts.
 import { FrameLocator, Page } from '@playwright/test';
