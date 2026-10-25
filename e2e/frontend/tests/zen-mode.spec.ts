@@ -15,7 +15,7 @@ import {
 } from './helpers';
 import { editorViewOffset } from './document.helpers';
 
-// Zen mode (web-apps feature/zen-mode): the View tab button hides all chrome
+// Zen mode: the View tab button hides all chrome
 // (toolbar, statusbar, left/right menus, title header) via the body-level
 // `zen-mode` class and the `.zen-mode-hideable` CSS contract, and shows an
 // overlay with an exit button. Esc exits as well.
@@ -89,8 +89,8 @@ test.describe('Zen mode', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Review regressions (web-apps PR #324 review): focus handling, Esc in
-// non-modal windows, the File-menu exit path, and localization.
+// Focus handling, Esc in non-modal windows, the File-menu exit path,
+// and localization.
 // ---------------------------------------------------------------------------
 
 /** Evaluate a void function inside the editor iframe. */
@@ -256,15 +256,17 @@ test.describe('Zen mode keyboard flows', () => {
     const editor = editorFor('Document');
     const { editorPage, frame } = await openNewEditor(page, editor.selector, editor.fileExt);
 
+    // The offset settles asynchronously after the sdkjs re-layout; poll until
+    // the rulers have actually claimed their space instead of reading once.
+    await expect.poll(() => editorViewOffset(editorPage)).not.toBeNull();
     const before = await editorViewOffset(editorPage);
-    expect(before).not.toBeNull();
     expect(before!.left).toBeGreaterThan(0); // rulers take space by default
 
     await enterZenMode(frame);
-    expect(await editorViewOffset(editorPage)).toEqual({ left: 0, top: 0 });
+    await expect.poll(() => editorViewOffset(editorPage)).toEqual({ left: 0, top: 0 });
 
     await editorPage.keyboard.press('Escape');
     await expectZenModeExited(frame);
-    expect(await editorViewOffset(editorPage)).toEqual(before);
+    await expect.poll(() => editorViewOffset(editorPage)).toEqual(before);
   });
 });
