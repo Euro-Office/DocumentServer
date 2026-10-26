@@ -114,6 +114,7 @@ run_entrypoint() {
     EO_CONF="$case_dir/conf" \
     DATA_DIR="$case_dir/data" \
     ENTRYPOINT_CONFIG_ONLY="$CONFIG_ONLY" \
+    ENTRYPOINT_CONFIG_ONLY_OUTPUT="$case_dir/node-config.json" \
     JWT_ENABLED=false \
     GENERATE_FONTS=false \
     PLUGINS_ENABLED=false \
@@ -129,7 +130,13 @@ run_entrypoint() {
   assert_config "$case_dir/conf/local.json" \
     '.services.CoAuthoring.server.port == 8123 and .FileConverter.converter.maxprocesscount == 2' || return $?
 
-  printf '%s' "$case_dir/conf/local.json"
+  if [[ $CONFIG_ONLY == true ]]; then
+    jq -s '.[0] * .[1]' "$case_dir/conf/local.json" "$case_dir/node-config.json" \
+      >"$case_dir/conf/effective.json"
+  else
+    cp "$case_dir/conf/local.json" "$case_dir/conf/effective.json"
+  fi
+  printf '%s' "$case_dir/conf/effective.json"
 }
 
 assert_config() {
@@ -162,7 +169,7 @@ check_topology() {
     local host_env=()
     [[ $host == remote ]] && host_env=(REDIS_SERVER_HOST=remote-redis)
     config=$(run_entrypoint "${name}_$host" "${host_env[@]}" "$@")
-    calls="${config%/conf/local.json}/calls"
+    calls="${config%/conf/effective.json}/calls"
     wait_count=0
     redis_count=0
     if [[ $topology == standalone ]]; then
@@ -232,13 +239,15 @@ check_topology cluster_defaults standalone \
   NODE_CONFIG='{"services":{"CoAuthoring":{"redis":{"optionsCluster":{"defaults":{"socket":{"tls":true}}}}}}}'
 check_topology cluster_empty_roots standalone \
   NODE_CONFIG='{"services":{"CoAuthoring":{"redis":{"optionsCluster":{"rootNodes":[]}}}}}'
+check_topology cluster_invalid_roots standalone \
+  NODE_CONFIG='{"services":{"CoAuthoring":{"redis":{"optionsCluster":{"rootNodes":"invalid"}}}}}'
 check_topology node_config_sentinel sentinel NODE_CONFIG="$node_config_sentinel"
 check_topology node_config_cluster cluster NODE_CONFIG="$node_config_cluster"
 check_topology env_sentinel sentinel REDIS_SENTINEL_GROUP_NAME=mymaster REDIS_SENTINEL_NODES=sentinel-a:26379
 check_topology env_cluster cluster REDIS_CLUSTER_NODES=cluster-a:7000
 
 if [[ $SERVICE_START == true ]]; then
-  echo 'standalone entrypoint Redis service startup: PASS (22 cases)'
+  echo 'standalone entrypoint Redis service startup: PASS (24 cases)'
   exit 0
 fi
 
@@ -294,10 +303,64 @@ assert_config "$cluster_overrides_config" "
 
 for kind in sentinel cluster; do
   previous_config_var="${kind}_overrides_config"
-  restarted_config=$(ENTRYPOINT_TEST_CONFIG="${!previous_config_var}" run_entrypoint "restart_$kind")
-  previous_options=$(jq '.services.CoAuthoring.redis | {optionsSentinel, optionsCluster}' "${!previous_config_var}")
-  assert_config "$restarted_config" ".services.CoAuthoring.redis | {optionsSentinel, optionsCluster} == $previous_options"
+  previous_config="${!previous_config_var}"
+  saved_config="${previous_config%/effective.json}/local.json"
+  restarted_config=$(ENTRYPOINT_TEST_CONFIG="$saved_config" run_entrypoint "restart_$kind")
+  saved_options=$(jq ".services.CoAuthoring.redis.options${kind^}" "$saved_config")
+  assert_config "$restarted_config" ".services.CoAuthoring.redis.options${kind^} == $saved_options"
 done
+
+# A mounted local.json must not retain settings that came from the environment.
+first_sentinel=$(run_entrypoint first_sentinel REDIS_SENTINEL_NODES=sentinel-a:26379 \
+  REDIS_SERVER_PASS=temporary-password)
+assert_config "$first_sentinel" '.services.CoAuthoring.redis.optionsSentinel.name == "mymaster"'
+saved_sentinel="${first_sentinel%/effective.json}/local.json"
+assert_config "$saved_sentinel" '
+  .services.CoAuthoring.redis.optionsSentinel == {} and
+  .services.CoAuthoring.redis.optionsCluster == {} and
+  (.services.CoAuthoring.redis.options.password == null)
+'
+removed_sentinel=$(ENTRYPOINT_TEST_CONFIG="$saved_sentinel" run_entrypoint removed_sentinel \
+  REDIS_SERVER_HOST=remote-redis)
+assert_config "$removed_sentinel" '
+  .services.CoAuthoring.redis.optionsSentinel == {} and
+  .services.CoAuthoring.redis.optionsCluster == {}
+'
+assert_call_count "${removed_sentinel%/conf/effective.json}/calls" 1 'nc -z -w 3 remote-redis 6379'
+
+switched_cluster=$(ENTRYPOINT_TEST_CONFIG="$saved_sentinel" run_entrypoint switched_cluster \
+  REDIS_CLUSTER_NODES=cluster-a:7000)
+assert_config "$switched_cluster" '
+  .services.CoAuthoring.redis.optionsSentinel == null and
+  .services.CoAuthoring.redis.optionsCluster.rootNodes == [{url: "redis://cluster-a:7000"}]
+'
+
+first_tls=$(run_entrypoint first_tls REDIS_CLUSTER_NODES=cluster-a:7000 REDIS_SERVER_TLS=true)
+saved_tls="${first_tls%/effective.json}/local.json"
+assert_config "$saved_tls" '(.services.CoAuthoring.redis.options.socket.tls // false) == false'
+disabled_tls=$(ENTRYPOINT_TEST_CONFIG="$saved_tls" run_entrypoint disabled_tls \
+  REDIS_CLUSTER_NODES=cluster-a:7000 REDIS_SERVER_TLS=false)
+assert_config "$disabled_tls" '
+  (.services.CoAuthoring.redis.options.socket.tls // false) == false and
+  (.services.CoAuthoring.redis.optionsCluster.defaults.socket.tls // false) == false and
+  .services.CoAuthoring.redis.optionsCluster.rootNodes == [{url: "redis://cluster-a:7000"}]
+'
+
+# A topology deliberately stored in local.json remains available after an
+# environment override is removed.
+operator_cluster=$(ENTRYPOINT_TEST_CONFIG="$sentinel_fixture" run_entrypoint operator_cluster \
+  REDIS_CLUSTER_NODES=cluster-a:7000)
+assert_config "$operator_cluster" '
+  .services.CoAuthoring.redis.optionsSentinel == null and
+  .services.CoAuthoring.redis.optionsCluster.rootNodes == [{url: "redis://cluster-a:7000"}]
+'
+assert_config "${operator_cluster%/effective.json}/local.json" \
+  '.services.CoAuthoring.redis.optionsSentinel.sentinelRootNodes[0].host == "saved-sentinel"'
+restored_operator=$(ENTRYPOINT_TEST_CONFIG="${operator_cluster%/effective.json}/local.json" \
+  run_entrypoint restored_operator)
+assert_config "$restored_operator" \
+  ".services.CoAuthoring.redis.optionsSentinel == $sentinel_options and
+   .services.CoAuthoring.redis.optionsCluster == {}"
 
 standalone_config=$(run_entrypoint standalone REDIS_SERVER_USER=redis-user REDIS_SERVER_PASS=redis-pass REDIS_SERVER_DB=2)
 assert_config "$standalone_config" '
@@ -322,7 +385,7 @@ assert_config "$cluster_config" '
     ],
     defaults: {username: "redis-user", password: "redis-pass"}
   } and
-  .services.CoAuthoring.redis.optionsSentinel == {}
+  .services.CoAuthoring.redis.optionsSentinel == null
 '
 
 sentinel_config=$(run_entrypoint sentinel \
@@ -334,7 +397,7 @@ sentinel_config=$(run_entrypoint sentinel \
   REDIS_SENTINEL_USER=sentinel-user \
   REDIS_SENTINEL_PASS=sentinel-pass)
 assert_config "$sentinel_config" '
-  .services.CoAuthoring.redis.optionsCluster == {} and
+  .services.CoAuthoring.redis.optionsCluster == null and
   .services.CoAuthoring.redis.optionsSentinel == {
     name: "mymaster",
     sentinelRootNodes: [
@@ -417,6 +480,9 @@ expect_failure incomplete_sentinel 'REDIS_SENTINEL_NODES is not set' \
   REDIS_SENTINEL_GROUP_NAME=mymaster
 expect_failure invalid_redis_tls 'REDIS_SERVER_TLS must be true or false' REDIS_SERVER_TLS=invalid
 expect_failure invalid_sentinel_tls 'REDIS_SENTINEL_TLS must be true or false' REDIS_SENTINEL_TLS=invalid
+expect_failure conflicting_node_config 'Redis Sentinel and Redis Cluster cannot be configured together' \
+  NODE_CONFIG='{"services":{"CoAuthoring":{"redis":{"optionsSentinel":{"name":"mymaster"},
+    "optionsCluster":{"rootNodes":[{"url":"redis://cluster-a:7000"}]}}}}}'
 
 redis_test_config() { run_entrypoint "$@"; }
 . "$SCRIPT_DIR/../redis-topology.test-cases.sh"

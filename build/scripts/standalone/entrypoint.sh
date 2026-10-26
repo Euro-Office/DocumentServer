@@ -48,22 +48,80 @@ REDIS_TOPOLOGY_HELPER="${REDIS_TOPOLOGY_HELPER:-$(dirname "$0")/../redis-topolog
 REDIS_SENTINEL_GROUP_NAME_OVERRIDE="${REDIS_SENTINEL_GROUP_NAME:-}"
 redis_topology_init
 
-# A topology may be supplied either through the REDIS_* environment variables
-# above, local.json, or NODE_CONFIG. Keep this separate from
-# REDIS_SENTINEL_REQUESTED, which specifically describes environment-based
-# Sentinel configuration and is also used to build local.json.
-REDIS_TOPOLOGY_CONFIGURED=false
-if [ "$REDIS_SENTINEL_REQUESTED" = true ] || [ -n "${REDIS_CLUSTER_NODES:-}" ]; then
-  REDIS_TOPOLOGY_CONFIGURED=true
+# Keep environment-derived Redis settings out of local.json. A mounted config
+# may outlive the container, so writing a topology there would make removing or
+# switching REDIS_* variables ineffective on the next start.
+REDIS_SENTINEL_OPTIONS_JSON='{}'
+if [ "$REDIS_SENTINEL_REQUESTED" = true ]; then
+  if [ -n "$REDIS_SENTINEL_GROUP_NAME_OVERRIDE" ]; then
+    sentinel_name="$REDIS_SENTINEL_GROUP_NAME"
+  else
+    sentinel_name=$(jq -r '.services.CoAuthoring.redis.optionsSentinel.name // "mymaster"' "$CONFIG_FILE")
+  fi
+  REDIS_SENTINEL_OPTIONS_JSON=$(redis_build_sentinel_options \
+    "$sentinel_name" "$REDIS_SENTINEL_NODES_JSON" \
+    "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PASS:-}" "${REDIS_SERVER_DB:-}" \
+    "$REDIS_SENTINEL_USER" "$REDIS_SENTINEL_PASS")
 fi
-if jq -e --arg nodeConfig "${NODE_CONFIG:-}" '
-  (. * ($nodeConfig | if . == "" then {} else fromjson end)).services.CoAuthoring.redis |
-  ((.optionsSentinel // {}) | keys | length > 0) or
+REDIS_CLUSTER_OPTIONS_JSON='{}'
+if [ -n "${REDIS_CLUSTER_NODES:-}" ]; then
+  REDIS_CLUSTER_OPTIONS_JSON=$(redis_build_cluster_options "$REDIS_CLUSTER_NODES_JSON" \
+    "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PASS:-}")
+fi
+
+NODE_CONFIG_OVERRIDE="${NODE_CONFIG:-}"
+[ -n "$NODE_CONFIG_OVERRIDE" ] || NODE_CONFIG_OVERRIDE='{}'
+if ! printf '%s\n' "$NODE_CONFIG_OVERRIDE" | jq -es 'length == 1 and (.[0] | type) == "object"' >/dev/null 2>&1; then
+  echo 'Supplied NODE_CONFIG must be a valid JSON object.' >&2
+  exit 1
+fi
+NODE_CONFIG=$(jq -cn --slurpfile saved "$CONFIG_FILE" \
+  --argjson override "$NODE_CONFIG_OVERRIDE" \
+  --arg host "$REDIS_SERVER_HOST" --arg port "$REDIS_SERVER_PORT" \
+  --arg user "${REDIS_SERVER_USER:-}" --arg pass "${REDIS_SERVER_PASS:-}" \
+  --arg db "${REDIS_SERVER_DB:-}" --arg tls "${REDIS_SERVER_TLS:-false}" \
+  --arg sentinelRequested "$REDIS_SENTINEL_REQUESTED" \
+  --arg clusterNodes "${REDIS_CLUSTER_NODES:-}" \
+  --argjson sentinel "$REDIS_SENTINEL_OPTIONS_JSON" \
+  --argjson cluster "$REDIS_CLUSTER_OPTIONS_JSON" '
+    ({services: {CoAuthoring: {redis: (
+      {host: $host, port: ($port | tonumber? // $port)} |
+      if $user != "" then .options.username = $user else . end |
+      if $pass != "" then .options.password = $pass else . end |
+      if $db != "" then .options.database = ($db | tonumber? // $db) else . end |
+      if $tls == "true" then .options.socket.tls = true else . end |
+      if $sentinelRequested == "true" then
+        .optionsSentinel = $sentinel | .optionsCluster = null
+      elif $clusterNodes != "" then
+        .optionsCluster = $cluster | .optionsSentinel = null
+      else . end
+    )}}}) as $generated |
+    (if $clusterNodes != "" then
+      ($saved[0] * $generated * $override |
+        .services.CoAuthoring.redis.optionsCluster.defaults.socket.tls == true) as $clusterTLS |
+      $generated | .services.CoAuthoring.redis.optionsCluster.rootNodes |= map(
+        .url |= sub("^rediss?://"; if $clusterTLS then "rediss://" else "redis://" end)
+      )
+    else $generated end) * $override
+  ')
+export NODE_CONFIG
+unset NODE_CONFIG_OVERRIDE
+
+REDIS_TOPOLOGY=$(jq -r --argjson nodeConfig "$NODE_CONFIG" '
+  (. * $nodeConfig).services.CoAuthoring.redis |
+  (((.optionsSentinel // {}) | keys | length) > 0) as $sentinel |
   (.optionsCluster.rootNodes? |
-    if type == "array" then length > 0 else false end)
-' "$CONFIG_FILE" >/dev/null 2>&1; then
-  REDIS_TOPOLOGY_CONFIGURED=true
+    if type == "array" then length > 0 else false end) as $cluster |
+  if $sentinel and $cluster then "both"
+  elif $sentinel or $cluster then "configured"
+  else "standalone" end
+' "$CONFIG_FILE")
+if [ "$REDIS_TOPOLOGY" = both ]; then
+  echo 'ERROR: Redis Sentinel and Redis Cluster cannot be configured together.' >&2
+  exit 1
 fi
+REDIS_TOPOLOGY_CONFIGURED=false
+[ "$REDIS_TOPOLOGY" = configured ] && REDIS_TOPOLOGY_CONFIGURED=true
 
 WOPI_ENABLED="${WOPI_ENABLED:-false}"
 PLUGINS_ENABLED="${PLUGINS_ENABLED:-true}"
@@ -230,41 +288,6 @@ jq_set '.services.CoAuthoring.sql.dbName = $dbName'
 jq_set '.services.CoAuthoring.sql.dbUser = $dbUser'
 [ -n "${DB_PWD:-}" ] && jq_set '.services.CoAuthoring.sql.dbPass = $dbPass'
 
-# Redis
-jq_set '.services.CoAuthoring.redis.host = $redisHost'
-jq_set '.services.CoAuthoring.redis.port = ($redisPort | tonumber? // $redisPort)'
-[ -n "${REDIS_SERVER_USER:-}" ] && jq_set '.services.CoAuthoring.redis.options.username = $redisUser'
-[ -n "${REDIS_SERVER_PASS:-}" ] && jq_set '.services.CoAuthoring.redis.options.password = $redisPass'
-[ -n "${REDIS_SERVER_DB:-}"   ] && jq_set '.services.CoAuthoring.redis.options.database = ($redisDb | tonumber? // $redisDb)'
-[ "${REDIS_SERVER_TLS:-false}" = true ] && jq_set '.services.CoAuthoring.redis.options.socket.tls = true'
-
-# Merge explicit topology overrides without replacing saved client/TLS options.
-REDIS_SENTINEL_OPTIONS_JSON='{}'
-if [ "$REDIS_SENTINEL_REQUESTED" = true ]; then
-  REDIS_SENTINEL_OPTIONS_JSON=$(redis_build_sentinel_options \
-    "$REDIS_SENTINEL_GROUP_NAME" "$REDIS_SENTINEL_NODES_JSON" \
-    "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PASS:-}" "${REDIS_SERVER_DB:-}" \
-    "$REDIS_SENTINEL_USER" "$REDIS_SENTINEL_PASS")
-  jq_set '.services.CoAuthoring.redis.optionsSentinel = (
-    {name: "mymaster", nodeClientOptions: {}} *
-    (.services.CoAuthoring.redis.optionsSentinel // {}) *
-    ($redisSentinelOptions |
-      if $redisSentinelGroupName == "" then del(.name) else . end |
-      if $redisDb == "" then del(.nodeClientOptions.database) else . end)
-  )'
-fi
-REDIS_CLUSTER_OPTIONS_JSON='{}'
-if [ -n "${REDIS_CLUSTER_NODES:-}" ]; then
-  REDIS_CLUSTER_OPTIONS_JSON=$(redis_build_cluster_options "$REDIS_CLUSTER_NODES_JSON" \
-    "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PASS:-}")
-  jq_set '.services.CoAuthoring.redis.optionsCluster |= (
-    (. // {}) * $redisClusterOptions |
-    if .defaults.socket.tls == true then
-      .rootNodes |= map(.url |= sub("^redis://"; "rediss://"))
-    else . end
-  )'
-fi
-
 # AMQP / RabbitMQ
 if [ -n "${AMQP_URI:-}" ]; then
   jq_set '.rabbitmq.url = $amqpUri'
@@ -350,14 +373,6 @@ jq \
   --arg dbName           "$DB_NAME" \
   --arg dbUser           "$DB_USER" \
   --arg dbPass           "${DB_PWD:-}" \
-  --arg redisHost        "$REDIS_SERVER_HOST" \
-  --arg redisPort        "$REDIS_SERVER_PORT" \
-  --arg redisUser        "${REDIS_SERVER_USER:-}" \
-  --arg redisPass        "${REDIS_SERVER_PASS:-}" \
-  --arg redisDb          "${REDIS_SERVER_DB:-}" \
-  --arg redisSentinelGroupName "$REDIS_SENTINEL_GROUP_NAME_OVERRIDE" \
-  --argjson redisSentinelOptions "$REDIS_SENTINEL_OPTIONS_JSON" \
-  --argjson redisClusterOptions "$REDIS_CLUSTER_OPTIONS_JSON" \
   --arg amqpUri          "$AMQP_URI_VALUE" \
   --arg wopiEnabled      "$WOPI_ENABLED" \
   --arg wopiPriv         "$WOPI_PRIVATE_KEY_DATA" \
@@ -377,6 +392,9 @@ mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
 # Allow the standalone configuration generation to be tested without starting
 # bundled services. This is intentionally limited to the generated config.
 if [ "${ENTRYPOINT_CONFIG_ONLY:-false}" = "true" ]; then
+  if [ -n "${ENTRYPOINT_CONFIG_ONLY_OUTPUT:-}" ]; then
+    (umask 077; set -C; printf '%s\n' "$NODE_CONFIG" > "$ENTRYPOINT_CONFIG_ONLY_OUTPUT")
+  fi
   exit 0
 fi
 
