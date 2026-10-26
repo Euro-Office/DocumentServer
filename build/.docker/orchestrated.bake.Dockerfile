@@ -2,7 +2,7 @@ ARG POSTGRES_VERSION="15"
 ARG MYSQL_VERSION="latest"
 ARG MARIADB_VERSION="latest"
 
-FROM fedora:43 AS ds-base
+FROM fedora:46 AS ds-base
 
     LABEL maintainer Euro-Office
 
