@@ -12,7 +12,7 @@ export async function openNewEditor(page: Page, selector: string, urlExt: RegExp
   await expect(page).toHaveTitle(/ONLYOFFICE|euro-office/i);
 
   const newPagePromise = page.context().waitForEvent('page');
-  await page.click(selector);
+  await page.locator(selector).click();
   const editorPage = await newPagePromise;
 
   await editorPage.waitForURL(/\/example\/editor/);

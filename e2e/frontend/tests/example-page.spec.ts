@@ -19,7 +19,7 @@ test.describe('Example page - Create new', () => {
       // Register the new-tab handler BEFORE clicking so the event is not missed
       const newPagePromise = page.context().waitForEvent('page');
 
-      await page.click(editor.selector);
+      await page.locator(editor.selector).click();
 
       const editorPage = await newPagePromise;
 
