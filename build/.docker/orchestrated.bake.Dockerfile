@@ -181,6 +181,14 @@ FROM ds-base AS docs
         /var/www/$COMPANY_NAME_LOW/documentserver/web-apps \
         /var/www/$COMPANY_NAME_LOW/documentserver/web-apps
     COPY --from=ds-service \
+        /var/www/$COMPANY_NAME_LOW/documentserver/LICENSE* \
+        /var/www/$COMPANY_NAME_LOW/documentserver/NOTICE \
+        /var/www/$COMPANY_NAME_LOW/documentserver/3rd-Party.txt \
+        /var/www/$COMPANY_NAME_LOW/documentserver/
+    COPY --from=ds-service \
+        /var/www/$COMPANY_NAME_LOW/documentserver/license \
+        /var/www/$COMPANY_NAME_LOW/documentserver/license
+    COPY --from=ds-service \
         /var/www/$COMPANY_NAME_LOW/documentserver/document-templates/new \
         /var/www/$COMPANY_NAME_LOW/documentserver/document-templates/new
     #COPY --from=ds-service \
