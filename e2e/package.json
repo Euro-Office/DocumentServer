@@ -2,6 +2,7 @@
   "name": "euro-office-e2e",
   "version": "1.0.0",
   "private": true,
+  "//": "Two TypeScript versions on purpose: typescript-eslint does not support TypeScript 7 yet (peer range <6.1.0), so `typescript` stays on 6.x for ESLint, while `typescript-7` (alias) runs the type-check via `npm run typecheck`. Once typescript-eslint supports 7, drop the alias and use plain `tsc`.",
   "scripts": {
     "test": "playwright test -c frontend/playwright.config.ts",
     "test:headed": "playwright test -c frontend/playwright.config.ts --headed",
@@ -9,8 +10,9 @@
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "check": "prettier --check . && eslint . && tsc --noEmit",
-    "fix": "prettier --write . && eslint . --fix && tsc --noEmit"
+    "typecheck": "node node_modules/typescript-7/bin/tsc --noEmit",
+    "check": "prettier --check . && eslint . && npm run typecheck",
+    "fix": "prettier --write . && eslint . --fix && npm run typecheck"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -20,7 +22,8 @@
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-playwright": "^2.12.1",
     "prettier": "^3.9.10",
-    "typescript": "^6.0.0",
+    "typescript": "^6.0.3",
+    "typescript-7": "npm:typescript@^7.0.2",
     "typescript-eslint": "^8.72.0"
   }
 }
