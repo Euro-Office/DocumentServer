@@ -350,18 +350,11 @@ Cluster seed URLs must also use `rediss://`, matching `socket.tls: true`.
 
 ### First-time setup
 
-The default image is the same multi-architecture development image used by the
-regular environment:
-
-```sh
-docker pull ghcr.io/euro-office/documentserver:latest-dev
-```
-
-Use an existing image containing the Redis backend from server PR #46, the
-updated standalone entrypoint/helper, and PostgreSQL schema bootstrap support.
-Until a published image includes those changes, select a suitable existing local
-development image with `EO_IMAGE=local/documentserver:my-dev make -C develop redis-up TYPE=SENTINEL`
-(replace the example tag with your existing image).
+The published `latest-dev` image cannot run these stacks until it includes the
+Redis backend from server PR #46 and this PR's standalone entrypoint changes.
+For now, build a local image from a checkout of this DocumentServer PR with its
+submodules initialized. Follow the [image build prerequisites](../build/README.md#building-the-image)
+if this is a fresh checkout.
 
 The overlays provide external dependencies and configure DocumentServer. By
 default they neither build from nor mount the source checkout. PostgreSQL no
@@ -371,8 +364,8 @@ an empty external database from the selected image's packaged
 The image must contain that file and the bootstrap logic; checking out newer
 server sources alone does not update the packaged schema.
 
-If server PR #46 is needed for local validation, first inspect `git -C server status`
-and preserve existing work before choosing a checkout. The following uses GitHub's
+To include server PR #46, first inspect `git -C server status` and preserve
+existing work before choosing a checkout. The following uses GitHub's
 pull-request ref:
 
 ```sh
@@ -384,6 +377,27 @@ This changes the submodule commit visible in the superproject's working tree.
 The recorded superproject gitlink changes only if staged and committed;
 `git commit -a` can include it. Keep validation-only submodule changes out of
 this PR, and inspect the staged diff before committing.
+
+Build the standalone image from the repository root. The `standalone` Bake
+target builds the server and its dependencies, packages them, and copies this
+PR's entrypoint into the image. `--load` makes the tagged image available to
+Docker Compose locally:
+
+```sh
+(
+  cd build
+  docker buildx bake standalone \
+    --set standalone.tags=local/documentserver:server-pr-46 --load
+)
+export EO_IMAGE=local/documentserver:server-pr-46
+docker image inspect "$EO_IMAGE" >/dev/null
+make -C develop redis-up TYPE=SENTINEL
+```
+
+The exported `EO_IMAGE` also applies to the commands below; use
+`TYPE=STANDALONE` or `TYPE=CLUSTER` when testing those topologies. Rebuild the
+image after changing the `server` checkout or the standalone entrypoint; the
+overlays do not mount either source tree into the container.
 
 For routine source testing in the regular development stack, run
 `docker compose exec -T eo make server/docservice server/converter` from `develop/`

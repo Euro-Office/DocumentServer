@@ -84,13 +84,22 @@ redis_topology_init() {
   fi
 }
 
-redis_build_sentinel_options() {
+redis_build_sentinel_options() (
+  redis_db=${5:-}
+  if [ -n "$redis_db" ]; then
+    case "$redis_db" in
+      *[!0-9]*)
+        echo 'ERROR: Redis Sentinel database must be a non-negative integer.' >&2
+        exit 1
+        ;;
+    esac
+  fi
   jq -cn \
     --arg name "${1:-mymaster}" \
     --argjson nodes "${2:-[]}" \
     --arg redisUser "${3:-}" \
     --arg redisPass "${4:-}" \
-    --arg redisDb "${5:-}" \
+    --arg redisDb "$redis_db" \
     --arg sentinelUser "${6:-}" \
     --arg sentinelPass "${7:-}" \
     --argjson redisTLS "${REDIS_SERVER_TLS:-false}" \
@@ -100,7 +109,7 @@ redis_build_sentinel_options() {
       sentinelRootNodes: $nodes,
       nodeClientOptions: (
         {} |
-        if $redisDb != "" then .database = ($redisDb | tonumber? // 0) else . end |
+        if $redisDb != "" then .database = ($redisDb | tonumber) else . end |
         if $redisTLS then .socket.tls = true else . end |
         if $redisUser != "" then .username = $redisUser else . end |
         if $redisPass != "" then .password = $redisPass else . end
@@ -112,7 +121,7 @@ redis_build_sentinel_options() {
         if $sentinelPass != "" then .password = $sentinelPass else . end
       )
     }'
-}
+)
 
 redis_build_cluster_options() {
   jq -cn \

@@ -480,6 +480,8 @@ expect_failure incomplete_sentinel 'REDIS_SENTINEL_NODES is not set' \
   REDIS_SENTINEL_GROUP_NAME=mymaster
 expect_failure invalid_redis_tls 'REDIS_SERVER_TLS must be true or false' REDIS_SERVER_TLS=invalid
 expect_failure invalid_sentinel_tls 'REDIS_SENTINEL_TLS must be true or false' REDIS_SENTINEL_TLS=invalid
+expect_failure invalid_sentinel_database 'Redis Sentinel database must be a non-negative integer' \
+  REDIS_SERVER_DB=oops REDIS_SENTINEL_NODES='sentinel-a:26379'
 expect_failure conflicting_node_config 'Redis Sentinel and Redis Cluster cannot be configured together' \
   NODE_CONFIG='{"services":{"CoAuthoring":{"redis":{"optionsSentinel":{"name":"mymaster"},
     "optionsCluster":{"rootNodes":[{"url":"redis://cluster-a:7000"}]}}}}}'

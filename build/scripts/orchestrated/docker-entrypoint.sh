@@ -259,10 +259,30 @@ if ! jq -es 'length == 1 and (.[0] | type) == "object"' <<<"$NODE_CONFIG_OVERRID
   exit 1
 fi
 
-# Explicit NODE_CONFIG values override generated defaults, preserving nested options.
+# Explicit NODE_CONFIG values override generated defaults. Align generated
+# Cluster seed URLs with the effective TLS setting before applying the override.
 NODE_CONFIG=$(jq -cn --argjson generated "$NODE_CONFIG" --argjson override "$NODE_CONFIG_OVERRIDE" \
-  '$generated * $override' 2>/dev/null)
+  'if ($generated.services.CoAuthoring.redis.optionsCluster.rootNodes? | type) == "array" then
+     ($generated * $override |
+       .services.CoAuthoring.redis.optionsCluster.defaults.socket.tls == true) as $clusterTLS |
+     ($generated | .services.CoAuthoring.redis.optionsCluster.rootNodes |= map(
+       .url |= sub("^rediss?://"; if $clusterTLS then "rediss://" else "redis://" end)
+     )) * $override
+   else $generated * $override end' 2>/dev/null)
 unset NODE_CONFIG_OVERRIDE
+
+# Match the server's topology checks after applying the operator override.
+if ! jq -e '
+  .services.CoAuthoring.redis as $redis |
+  (($redis.optionsSentinel // {}) |
+    if type == "object" or type == "array" or type == "string" then length > 0 else false end) as $sentinel |
+  ($redis.optionsCluster.rootNodes? |
+    if type == "array" then length > 0 else false end) as $cluster |
+  (($sentinel and $cluster) | not)
+' <<<"$NODE_CONFIG" >/dev/null 2>&1; then
+  echo 'ERROR: Redis Sentinel and Redis Cluster cannot be configured together.' >&2
+  exit 1
+fi
 
 if [[ "${ENTRYPOINT_CONFIG_ONLY:-false}" == "true" ]]; then
   printf '%s\n' "$NODE_CONFIG"

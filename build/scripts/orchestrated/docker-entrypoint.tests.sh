@@ -190,6 +190,32 @@ for tls in false true; do
   done
 done
 
+cluster_tls_disabled=$(run_config cluster_tls_disabled \
+  REDIS_SERVER_TLS=true REDIS_CLUSTER_NODES='cluster-a:7000,cluster-b:7001' \
+  NODE_CONFIG='{"services":{"CoAuthoring":{"redis":{"optionsCluster":{"defaults":{"socket":{"tls":false}}}}}}}')
+assert_config "$cluster_tls_disabled" '
+  .services.CoAuthoring.redis.optionsCluster == {
+    rootNodes: [{url: "redis://cluster-a:7000"}, {url: "redis://cluster-b:7001"}],
+    defaults: {socket: {tls: false}}
+  }
+'
+
+cluster_tls_enabled=$(run_config cluster_tls_enabled \
+  REDIS_SERVER_TLS=false REDIS_CLUSTER_NODES='cluster-a:7000' \
+  NODE_CONFIG='{"services":{"CoAuthoring":{"redis":{"optionsCluster":{"defaults":{"socket":{"tls":true}}}}}}}')
+assert_config "$cluster_tls_enabled" '
+  .services.CoAuthoring.redis.optionsCluster == {
+    rootNodes: [{url: "rediss://cluster-a:7000"}],
+    defaults: {socket: {tls: true}}
+  }
+'
+
+cluster_custom_roots=$(run_config cluster_custom_roots \
+  REDIS_SERVER_TLS=false REDIS_CLUSTER_NODES='cluster-a:7000' \
+  NODE_CONFIG='{"services":{"CoAuthoring":{"redis":{"optionsCluster":{"rootNodes":[{"url":"rediss://custom:7010"}],"defaults":{"socket":{"tls":true}}}}}}}')
+assert_config "$cluster_custom_roots" \
+  '.services.CoAuthoring.redis.optionsCluster.rootNodes == [{url: "rediss://custom:7010"}]'
+
 empty_tls_config=$(run_config empty_tls REDIS_SERVER_TLS= REDIS_SENTINEL_TLS=)
 assert_config "$empty_tls_config" '.services.CoAuthoring.redis.options | has("socket") | not'
 
@@ -199,6 +225,16 @@ done
 
 expect_failure conflicting_topologies 'Redis Sentinel and Redis Cluster cannot be configured together' \
   REDIS_SENTINEL_NODES='sentinel-a:26379' REDIS_CLUSTER_NODES='cluster-a:7000'
+expect_failure cluster_with_sentinel_override 'Redis Sentinel and Redis Cluster cannot be configured together' \
+  REDIS_CLUSTER_NODES='cluster-a:7000' \
+  NODE_CONFIG='{"services":{"CoAuthoring":{"redis":{"optionsSentinel":{"name":"mymaster","sentinelRootNodes":[{"host":"sentinel-a","port":26379}]}}}}}'
+expect_failure sentinel_with_cluster_override 'Redis Sentinel and Redis Cluster cannot be configured together' \
+  REDIS_SENTINEL_NODES='sentinel-a:26379' \
+  NODE_CONFIG='{"services":{"CoAuthoring":{"redis":{"optionsCluster":{"rootNodes":[{"url":"redis://cluster-a:7000"}]}}}}}'
+empty_sentinel_override=$(run_config empty_sentinel_override REDIS_CLUSTER_NODES='cluster-a:7000' \
+  NODE_CONFIG='{"services":{"CoAuthoring":{"redis":{"optionsSentinel":{}}}}}')
+assert_config "$empty_sentinel_override" \
+  '.services.CoAuthoring.redis.optionsCluster.rootNodes | length == 1'
 expect_failure invalid_storage 'EDITOR_DATA_STORAGE must be a plain module name' \
   EDITOR_DATA_STORAGE='../not-a-module'
 
@@ -207,6 +243,8 @@ redis_test_config() { run_config "$@"; }
 
 sentinel_db_config=$(run_config sentinel_database REDIS_SERVER_DB_NUM=4 REDIS_SENTINEL_NODES='sentinel-a:26379')
 assert_config "$sentinel_db_config" '.services.CoAuthoring.redis.optionsSentinel.nodeClientOptions.database == 4'
+expect_failure invalid_sentinel_database 'Redis Sentinel database must be a non-negative integer' \
+  REDIS_SERVER_DB_NUM=oops REDIS_SENTINEL_NODES='sentinel-a:26379'
 
 sentinel_base_db_config=$(run_config sentinel_base_database \
   REDIS_SENTINEL_NODES='sentinel-a:26379' \
