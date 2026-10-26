@@ -8,7 +8,9 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
-    "lint:fix": "eslint . --fix"
+    "lint:fix": "eslint . --fix",
+    "check": "prettier --check . && eslint . && tsc --noEmit",
+    "fix": "prettier --write . && eslint . --fix && tsc --noEmit"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
