@@ -6,7 +6,7 @@
 
 parse_redis_nodes() (
   node_list=$1
-  node_kind=$2
+  node_variable=$2
   nodes=$(jq -cn --arg value "$node_list" '
     ($value | sub("^[[:space:]]+"; "") | sub("[[:space:]]+$"; "")) as $trimmed |
     ($trimmed | gsub("[[:space:],]+"; " ") | split(" ") | map(select(length > 0))) as $entries |
@@ -35,7 +35,7 @@ parse_redis_nodes() (
       end
     end
   ') || {
-    echo "ERROR: invalid ${node_kind} Redis node list: ${node_list}" >&2
+    echo "ERROR: invalid ${node_variable}; see validation error above." >&2
     exit 1
   }
   printf '%s' "$nodes"
@@ -77,10 +77,10 @@ redis_topology_init() {
       echo "ERROR: Redis Sentinel was requested but REDIS_SENTINEL_NODES is not set." >&2
       return 1
     fi
-    REDIS_SENTINEL_NODES_JSON=$(parse_redis_nodes "$REDIS_SENTINEL_NODES" Sentinel) || return 1
+    REDIS_SENTINEL_NODES_JSON=$(parse_redis_nodes "$REDIS_SENTINEL_NODES" REDIS_SENTINEL_NODES) || return 1
   fi
   if [ -n "${REDIS_CLUSTER_NODES:-}" ]; then
-    REDIS_CLUSTER_NODES_JSON=$(parse_redis_nodes "$REDIS_CLUSTER_NODES" Cluster) || return 1
+    REDIS_CLUSTER_NODES_JSON=$(parse_redis_nodes "$REDIS_CLUSTER_NODES" REDIS_CLUSTER_NODES) || return 1
   fi
 }
 

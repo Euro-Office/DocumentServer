@@ -34,6 +34,19 @@ for kind in sentinel cluster; do
   done
   expect_failure "${kind}_malformed_host" 'each node must use host:port' "$nodes_var=node/a:7000"
   expect_failure "${kind}_missing_port" 'each node must use host:port' "$nodes_var=node-a"
+
+  embedded_password='embedded-password-do-not-log'
+  case_name="${kind}_embedded_credentials"
+  expect_failure "$case_name" 'each node must use host:port' \
+    "$nodes_var=redis://user:$embedded_password@node-a:7000"
+  if ! grep -Fq "$nodes_var" "$TMP_DIR/$case_name/output"; then
+    echo "$case_name: missing variable name in diagnostic" >&2
+    exit 1
+  fi
+  if grep -Fq "$embedded_password" "$TMP_DIR/$case_name/output"; then
+    echo "$case_name: node-list credential leaked in diagnostic" >&2
+    exit 1
+  fi
 done
 
 group_names=('my master' $'my\tmaster' $'my\nmaster' $'my\rmaster' $'my\001master' $'my\177master')
