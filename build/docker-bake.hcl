@@ -70,6 +70,11 @@ variable "CACHE_BUST" {
   default = "2"
 }
 
+# Changes daily in CI so the OS package layers rebuild and pick up security updates
+variable "OS_UPDATE_STAMP" {
+  default = ""
+}
+
 # ──────────────────────────────────────────────
 # BUILD GROUPS
 # ──────────────────────────────────────────────
@@ -99,6 +104,7 @@ target "_common" {
     DS_VERSION_HASH     = "${DS_VERSION_HASH}"
     NUGET_CACHE         = "${NUGET_CACHE}"
     CACHE_BUST          = "${CACHE_BUST}"
+    OS_UPDATE_STAMP     = "${OS_UPDATE_STAMP}"
     PACKAGE_BASE        = "${PACKAGE_BASE}"
     BRANDING_DIR        = "${BRANDING_DIR}"
     PRODUCT_NAME        = "${PRODUCT_NAME}"

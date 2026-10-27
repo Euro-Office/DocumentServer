@@ -210,6 +210,7 @@ jobs:
         run: |
           REF_NAME=$(echo "$GITHUB_REF_NAME" | tr '/+' '--')
           echo "ref_name=${REF_NAME}" >> $GITHUB_OUTPUT
+          echo "os_update_stamp=$(date -u +%Y-%m-%d)" >> $GITHUB_OUTPUT
           echo "build_commits=DocumentServer=$(git rev-parse HEAD) $(git submodule foreach --quiet 'echo $name=$(git rev-parse HEAD)' | tr '\n' ' ')" >> $GITHUB_OUTPUT
 
           # Cold rebuild when explicitly requested via workflow_dispatch or when
@@ -400,6 +401,7 @@ jobs:
           PRODUCT_VERSION: ${{ steps.meta.outputs.product_version }}
           BUILD_NUMBER: ${{ steps.meta.outputs.build_number }}
           BUILD_COMMITS: ${{ steps.meta.outputs.build_commits }}
+          OS_UPDATE_STAMP: ${{ steps.meta.outputs.os_update_stamp }}
           BUILD_ROOT: ${{ env.BUILD_ROOT }}
           NUGET_CACHE: local
 
