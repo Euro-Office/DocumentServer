@@ -300,7 +300,7 @@ FROM node:22-alpine3.19 AS example
     ENTRYPOINT ["/var/www/euro-office/documentserver-example/docker-entrypoint.sh", "npm", "start"]
 
 FROM python:3.15-bookworm AS builder
-    RUN pip install redis psycopg2  PyMySQL pika python-qpid-proton func_timeout requests kubernetes flask
+    RUN pip install --no-cache-dir --target /deps redis psycopg2  PyMySQL pika python-qpid-proton func_timeout requests kubernetes flask
 
 
 FROM python:3.15-slim-bookworm AS utils
@@ -309,7 +309,8 @@ FROM python:3.15-slim-bookworm AS utils
     ENV DS_VERSION_HASH=$DS_VERSION_HASH
     COPY --from=ds-base /usr/local/bin/dumb-init /usr/local/bin/dumb-init
     COPY --from=ds-base /opt/oracle/instantclient_23_7 /oracle/instantclient
-    COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
+    COPY --from=builder /deps /deps
+    ENV PYTHONPATH=/deps
     RUN apt update && \
         apt-get install -y curl wget gnupg2 lsb-release jq xxd procps libaio1 unzip && \
         echo "deb http://apt.postgresql.org/pub/repos/apt/ $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list && \
