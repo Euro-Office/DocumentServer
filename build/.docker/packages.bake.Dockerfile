@@ -9,7 +9,7 @@
 
 #### PACKAGE ####
 
-FROM ubuntu:24.04 AS package
+FROM ubuntu:26.04 AS package
 
     ARG COMPANY_NAME
     ARG COMPANY_NAME_LOW

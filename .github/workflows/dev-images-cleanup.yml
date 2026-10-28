@@ -22,7 +22,7 @@ jobs:
   cleanup:
     name: Delete images of the branch
     if: ${{ github.event.ref_type == 'branch' && startsWith(github.event.ref, 'dev/') }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read    # checkout
       packages: write   # delete package versions
