@@ -80,6 +80,22 @@ image was built from.
 
 The images are amd64 only.
 
+### Build cache report
+
+The job summary also has a **Build cache report** section, below the bake
+action's own summary. It shows, per build target, the cached and executed
+steps, the cache import and export results and the slowest steps. The same data
+is uploaded as the `cache-report-<arch>` artifact (`cache-report.json`, kept
+3 days). It is generated from the buildx build records by
+`.github/actions/cache-report/cache-report.sh`, run by the
+`.github/actions/cache-report` action, and never fails the build.
+
+The first build of a new branch reuses the build cache of `main` instead of
+starting cold; see [CI build cache](ci-cache.md). The **Scripts test** workflow
+runs all tests of the CI scripts in `.github/scripts/tests` on pull requests to
+`main` and on pushes to `dev/**` that touch the scripts. Run one locally with
+`.github/scripts/tests/<name>.test.sh`.
+
 ## 4. Clean up
 
 Delete the branch when you are done:

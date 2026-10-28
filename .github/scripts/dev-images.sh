@@ -19,10 +19,6 @@
 set -euo pipefail
 export LC_ALL=C
 
-# Bake targets that get a registry cache ref (see bake-overrides.sh).
-CACHE_TARGETS='core|core-wasm|sdkjs|web-apps|server|example|bundle|packages|standalone|cluster-docs|cluster-example|cluster-utils'
-CACHE_ARCHES='amd64|arm64'
-
 # dev/Feature_X -> feature-x-<first 6 hex of sha256("dev/Feature_X")>
 # The hash keeps slugs of different branches distinct even when their
 # sanitised names are equal; the result is at most 40 characters.
@@ -78,10 +74,11 @@ delete_versions() {
 }
 
 # jq definitions shared by all programs below. Shell values are only ever
-# passed with --arg/--argjson; $targets and $arches must always be set.
+# passed with --arg/--argjson.
+# A cache tag of the branch is any tag starting with "dev-<slug>-", whatever
+# target and architecture follow, so no target list has to be kept here.
 JQ_LIB='
-  def cache_tag_of($s): startswith("dev-" + $s + "-")
-    and (ltrimstr("dev-" + $s + "-") | test("^(" + $targets + ")-(" + $arches + ")$"));
+  def cache_tag_of($s): startswith("dev-" + $s + "-");
   # Deletes a version only if all its tags satisfy f; otherwise warns.
   def emit(f; $reason):
     if all(.tags[]; f) then "\(.id)\t\($reason)"
@@ -93,7 +90,7 @@ JQ_LIB='
 select_versions() {
   local program="$1"
   shift
-  jq -rs --arg targets "$CACHE_TARGETS" --arg arches "$CACHE_ARCHES" "$@" "$JQ_LIB $program"
+  jq -rs "$@" "$JQ_LIB $program"
 }
 
 # Deletes the versions tagged <slug> in the dev packages and the cache tags of
@@ -115,6 +112,9 @@ cleanup() {
   select_versions '.[] | select(any(.tags[]; cache_tag_of($s))) | emit(cache_tag_of($s); $reason)' \
     --arg s "$s" --arg reason "cleanup of $1" <<<"$out" | delete_versions "$CACHE_PACKAGE"
 }
+
+# Allow tests to source the functions.
+[[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
 
 cmd="${1:-}"
 case "$cmd" in
