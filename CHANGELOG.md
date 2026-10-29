@@ -1,5 +1,21 @@
 # Changelog
 
+## v9.3.7-1
+
+### Bug fixes
+
+* DocumentServer: docker: refresh OS packages on every daily build by juliusknorr in [DocumentServer#480](https://github.com/Euro-Office/DocumentServer/pull/480)
+
+### Other changes
+
+* DocumentServer: ci: build vX.Y.Z-N tags as stable patch builds by juliusknorr in [DocumentServer#479](https://github.com/Euro-Office/DocumentServer/pull/479)
+* core: fix(deps): bump brotli to v1.2.1 by juliusknorr in [core#189](https://github.com/Euro-Office/core/pull/189)
+
+### Compare to v9.3.7
+
+* DocumentServer: <https://github.com/Euro-Office/DocumentServer/compare/e8d67f92c8a8...41a1285ce046>
+* core: <https://github.com/Euro-Office/core/compare/a4a1ba1e9c8e...afb3f233704b>
+
 ## v9.3.7
 
 ### Other changes
