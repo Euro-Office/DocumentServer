@@ -15,6 +15,7 @@ FROM fedora:43 AS ds-base
         NODE_CONFIG_DIR=/etc/$COMPANY_NAME_LOW/documentserver \
         PKG_NATIVE_CACHE_PATH=/tmp/.cache
 
+    ARG OS_UPDATE_STAMP
     RUN dnf -y updateinfo list --security && \
         dnf update --security -y && \
         dnf install sudo \

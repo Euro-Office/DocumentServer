@@ -47,7 +47,9 @@ RUN groupadd -r -g 103 redis    && useradd -r -u 101 -g redis    -d /var/lib/red
     groupadd -r -g 105 rabbitmq && useradd -r -u 103 -g rabbitmq -d /var/lib/rabbitmq   -s /usr/sbin/nologin rabbitmq && \
     groupadd -r -g 107 ds       && useradd -r -u 105 -g ds       -d ${EO_ROOT}          -s /usr/sbin/nologin ds
 
+ARG OS_UPDATE_STAMP
 RUN apt-get update && \
+    apt-get upgrade -yq && \
     ACCEPT_EULA=Y apt-get install -yq --no-install-recommends \
         postgresql postgresql-client redis-server rabbitmq-server \
         nginx sudo gdb nginx-extras supervisor jq util-linux \

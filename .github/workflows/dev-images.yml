@@ -28,7 +28,7 @@ jobs:
   build:
     name: Build (${{ matrix.arch }})
     if: ${{ !github.event.deleted }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     permissions:
       contents: read    # checkout
       packages: write   # push images and build cache to ghcr.io
@@ -125,6 +125,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Set up Docker Buildx
+        id: buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GitHub Container Registry
@@ -134,10 +135,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # FALLBACK_REF: the stable cache of main (same names as build.yml), a
+      # read-only cache-from so the first build of a new branch does not start
+      # cold. buildx only warns if it is missing; the cache report shows the import.
       - name: Compute bake overrides
         id: bake
         env:
           CACHE_REF: ${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:dev-${{ steps.meta.outputs.slug }}-{target}-${{ matrix.arch }}
+          FALLBACK_REF: ${{ env.REGISTRY }}/${{ env.CACHE_PACKAGE }}:main-{target}-buildcache-${{ matrix.arch }}
           PUBLISHED: standalone cluster-docs cluster-example cluster-utils
           SKIP: develop
         run: .github/scripts/bake-overrides.sh
@@ -146,9 +151,9 @@ jobs:
       # targets get the moving <slug> tag. Attestations are disabled so each
       # image is a single manifest.
       - name: Build and push dev images
-        uses: docker/bake-action@4a9a8d494466d37134e2bfca2d3a8de8fb2681ad # v5.13.0
+        uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
         with:
-          workdir: ./build
+          source: ./build
           files: ./docker-bake.hcl
           targets: standalone,cluster-docs,cluster-example,cluster-utils
           push: false
@@ -173,6 +178,16 @@ jobs:
           BUILD_COMMITS: ${{ steps.meta.outputs.build_commits }}
           BUILD_ROOT: ${{ env.BUILD_ROOT }}
           NUGET_CACHE: local
+
+      # Cache hit rates, slowest steps and cache import/export times, from the
+      # buildx build records (the bake summary only shows an overall figure).
+      - name: Cache report
+        if: ${{ !cancelled() }}
+        uses: ./.github/actions/cache-report
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          title: ${{ matrix.arch }}
+          artifact-name: cache-report-${{ matrix.arch }}
 
       - name: Verify single-manifest images and record digests
         env:
