@@ -335,6 +335,7 @@ FROM python:3.14-slim-bookworm AS utils
         chmod +x /usr/local/bin/dumb-init && \
         rm -rf /var/lib/apt/lists/*
     COPY build/scripts/orchestrated/sqlplus /usr/bin/sqlplus
+    COPY server/schema /scripts/schema
     USER ds
 
 FROM statsd/statsd AS metrics
