@@ -22,6 +22,18 @@ NGINX_DS_SSL_TMPL="${NGINX_DS_DIR}/ds-ssl.conf.tmpl"
 SUPERVISOR_CONF_DIR="/etc/supervisor/conf.d"
 
 # --------------------------------------------------------------------
+# Normalize boolean env vars before the defaults below, so a value that is
+# not recognized falls back to the variable's own default.
+# --------------------------------------------------------------------
+. /usr/local/lib/euro-office/bool.sh
+require_bool JWT_ENABLED JWT_ENABLED_INBOX JWT_ENABLED_OUTBOX
+normalize_bool JWT_IN_BODY \
+  WOPI_ENABLED PLUGINS_ENABLED METRICS_ENABLED GENERATE_FONTS \
+  NGINX_ACCESS_LOG ONLYOFFICE_HTTPS_HSTS_ENABLED \
+  USE_UNAUTHORIZED_STORAGE ALLOW_PRIVATE_IP_ADDRESS ALLOW_META_IP_ADDRESS \
+  ADMINPANEL_ENABLED EXAMPLE_ENABLED
+
+# --------------------------------------------------------------------
 # Defaults (aligned with upstream run-document-server.sh)
 # --------------------------------------------------------------------
 JWT_ENABLED="${JWT_ENABLED:-true}"
@@ -64,50 +76,6 @@ ALLOW_PRIVATE_IP_ADDRESS="${ALLOW_PRIVATE_IP_ADDRESS:-false}"
 ALLOW_META_IP_ADDRESS="${ALLOW_META_IP_ADDRESS:-false}"
 ADMINPANEL_ENABLED="${ADMINPANEL_ENABLED:-false}"
 EXAMPLE_ENABLED="${EXAMPLE_ENABLED:-false}"
-
-# --------------------------------------------------------------------
-# Normalize boolean env vars.
-#
-# Tools such as Ansible or Python-based templating write YAML booleans as
-# "True"/"False", and compose files often use "1"/"yes". Everything below
-# compares against the literal "true", so canonicalize first. Empty values
-# are left untouched so derived defaults (e.g. JWT_ENABLED_INBOX falling
-# back to JWT_ENABLED) keep working.
-#
-# normalize_bool: an unrecognized value warns and becomes false.
-# require_bool:   an unrecognized value aborts startup. Used for the JWT
-#                 flags, where silently falling back to false would disable
-#                 authentication.
-# --------------------------------------------------------------------
-normalize_bool() { _normalize_bool lenient "$@"; }
-require_bool()   { _normalize_bool strict "$@"; }
-_normalize_bool() {
-  _mode=$1
-  shift
-  for _var in "$@"; do
-    _val=$(eval "printf '%s' \"\${$_var:-}\"")
-    case "$_val" in
-      "") ;;
-      [Tt][Rr][Uu][Ee]|[Yy][Ee][Ss]|[Yy]|[Oo][Nn]|1)             eval "$_var=true" ;;
-      [Ff][Aa][Ll][Ss][Ee]|[Nn][Oo]|[Nn]|[Oo][Ff][Ff]|0)         eval "$_var=false" ;;
-      *)
-        if [ "$_mode" = "strict" ]; then
-          echo "ERROR: ${_var}='${_val}' is not a recognized boolean (use true or false). Refusing to start rather than guess." >&2
-          exit 1
-        fi
-        echo "WARNING: ${_var}='${_val}' is not a recognized boolean (use true/false); treating it as false" >&2
-        eval "$_var=false"
-        ;;
-    esac
-  done
-}
-
-require_bool JWT_ENABLED JWT_ENABLED_INBOX JWT_ENABLED_OUTBOX
-normalize_bool JWT_IN_BODY \
-  WOPI_ENABLED PLUGINS_ENABLED METRICS_ENABLED GENERATE_FONTS \
-  NGINX_ACCESS_LOG ONLYOFFICE_HTTPS_HSTS_ENABLED \
-  USE_UNAUTHORIZED_STORAGE ALLOW_PRIVATE_IP_ADDRESS ALLOW_META_IP_ADDRESS \
-  ADMINPANEL_ENABLED EXAMPLE_ENABLED
 
 # --------------------------------------------------------------------
 # Validate DB type (standalone image only supports postgres)

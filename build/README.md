@@ -41,6 +41,15 @@ docker buildx bake TARGET
 
 After building the image, you can run it with a simple `docker run`.
 
+### Boolean environment variables
+
+Boolean settings such as `JWT_ENABLED`, `WOPI_ENABLED` or `EXAMPLE_ENABLED` accept, case-insensitively and with surrounding whitespace ignored:
+
+* `true`, `yes`, `y`, `on`, `1` for true
+* `false`, `no`, `n`, `off`, `0` for false
+
+An empty value uses the default. Any other value is rejected for `JWT_ENABLED`, `JWT_ENABLED_INBOX` and `JWT_ENABLED_OUTBOX`: the container refuses to start rather than guess whether to authenticate. For all other flags it is logged as a warning and the default applies.
+
 If the docker build stockes because of broken content in cache, for example with error:
 ```sh
 > Skipping ICU (done already).

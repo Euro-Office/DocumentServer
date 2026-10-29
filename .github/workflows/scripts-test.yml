@@ -1,12 +1,14 @@
 name: Scripts test
 
-# Runs every test of the CI scripts in .github/scripts/tests.
+# Runs every test in .github/scripts/tests: the CI scripts and the
+# entrypoint helpers in build/scripts/lib.
 on:
   pull_request:
     branches: [main]
     paths: &paths
       - .github/scripts/**
       - .github/actions/**
+      - build/scripts/lib/**
       - build/docker-bake.hcl
       - .github/workflows/scripts-test.yml
   push:
@@ -36,7 +38,7 @@ jobs:
         # shellcheck is preinstalled on the runner image; any finding fails the step
         run: |
           set -euo pipefail
-          find .github/scripts .github/actions -name '*.sh' -print0 | xargs -0 shellcheck
+          find .github/scripts .github/actions build/scripts/lib -name '*.sh' -print0 | xargs -0 shellcheck
 
       - name: Run the script tests
         run: |
