@@ -75,6 +75,14 @@ else
 fi
 
 # --------------------------------------------------------------------
+# Normalize boolean env vars. They end up raw inside NODE_CONFIG, where
+# anything but true/false is invalid JSON.
+# --------------------------------------------------------------------
+. /usr/local/lib/euro-office/bool.sh
+require_bool JWT_ENABLED JWT_ENABLED_INBOX JWT_ENABLED_OUTBOX
+normalize_bool JWT_IN_BODY METRICS_ENABLED WOPI_ENABLED ALLOW_PRIVATE_IP_ADDRESS ALLOW_META_IP_ADDRESS
+
+# --------------------------------------------------------------------
 # JWT
 #
 # docservice, converter and adminpanel run as separate containers here and

@@ -113,6 +113,7 @@ RUN --mount=type=bind,from=packages,target=/mnt/packages \
 # --- Final setup ---
 COPY build/configs/standalone/supervisor/ /etc/supervisor/conf.d/
 COPY --chmod=755 build/scripts/standalone/entrypoint.sh /entrypoint.sh
+COPY build/scripts/lib/bool.sh /usr/local/lib/euro-office/bool.sh
 
 # Give the 'ds' service user a writable HOME. supervisord runs as root and does
 # not reset HOME when dropping to user=ds, so without this the node services

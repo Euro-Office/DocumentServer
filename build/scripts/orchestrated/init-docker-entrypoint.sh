@@ -20,6 +20,9 @@ while getopts ":fpd" opt; do
 done
 shift $((OPTIND-1))
 
+. /usr/local/lib/euro-office/bool.sh
+normalize_bool PLUGINS_MARKET_DISABLED
+
 cleanup_dir() {
   local dir="$1"
   if [[ -d "$dir" ]]; then
