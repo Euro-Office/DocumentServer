@@ -42,36 +42,61 @@ case $AMQP_PROTO in
     ;;
 esac
 
-if [[ -n "$REDIS_SENTINEL_NODES" ]]; then
-  declare -a REDIS_SENTINEL_NODES_ALL=($REDIS_SENTINEL_NODES)
-  REDIS_SENTINEL_NODES_ARRAY=()
-  for node in "${REDIS_SENTINEL_NODES_ALL[@]}"; do
-    host="${node%%:*}"
-    port="${node##*:}"
-    REDIS_SENTINEL_NODES_ARRAY+=('{ "host": "'$host'", "port": '$port' }')
-  done
-  OLD_IFS="$IFS"
-  IFS=","
-  NODES=$(echo "${REDIS_SENTINEL_NODES_ARRAY[*]}")
-  IFS="$OLD_IFS"
-  REDIS_SENTINEL='[ '$NODES' ],'
-else
-  REDIS_SENTINEL='[ { "host": "'${REDIS_SERVER_HOST:-localhost}'", "port": '${REDIS_SERVER_PORT:-6379}' } ],'
+REDIS_TOPOLOGY_HELPER="${REDIS_TOPOLOGY_HELPER:-$(dirname "$0")/../redis-topology.sh}"
+[ -r "$REDIS_TOPOLOGY_HELPER" ] || REDIS_TOPOLOGY_HELPER=/usr/local/lib/euro-office/redis-topology.sh
+. "$REDIS_TOPOLOGY_HELPER"
+redis_topology_init
+REDIS_SENTINEL_OPTIONS='{}'
+if [[ "$REDIS_SENTINEL_REQUESTED" == true ]]; then
+  REDIS_SENTINEL_OPTIONS=$(redis_build_sentinel_options \
+    "$REDIS_SENTINEL_GROUP_NAME" "$REDIS_SENTINEL_NODES_JSON" \
+    "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PWD:-}" "${REDIS_SERVER_DB_NUM:-}" \
+    "$REDIS_SENTINEL_USER" "$REDIS_SENTINEL_PASS")
 fi
+REDIS_CLUSTER='{}'
+if [[ -n "${REDIS_CLUSTER_NODES:-}" ]]; then
+  REDIS_CLUSTER=$(redis_build_cluster_options "$REDIS_CLUSTER_NODES_JSON" \
+    "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PWD:-}")
+fi
+REDIS_OPTIONS=$(jq -cn \
+  --arg redisUser "${REDIS_SERVER_USER:-}" \
+  --arg redisPass "${REDIS_SERVER_PWD:-}" \
+  --arg redisDb "${REDIS_SERVER_DB_NUM:-0}" \
+  --argjson redisTLS "${REDIS_SERVER_TLS:-false}" \
+  '{user: (if $redisUser != "" then $redisUser else null end),
+    password: (if $redisPass != "" then $redisPass else null end), db: $redisDb} |
+    with_entries(select(.value != null)) |
+    if $redisTLS then .socket.tls = true else . end')
 
-if [[ -n "$REDIS_CLUSTER_NODES" ]]; then
-  declare -a REDIS_CLUSTER_NODES_ALL=($REDIS_CLUSTER_NODES)
-  REDIS_CLUSTER_NODES_ARRAY=()
-  for node in "${REDIS_CLUSTER_NODES_ALL[@]}"; do
-    REDIS_CLUSTER_NODES_ARRAY+=('{ "url": "redis://'$node'" }')
-  done
-  OLD_IFS="$IFS"
-  IFS=","
-  NODES=$(echo "${REDIS_CLUSTER_NODES_ARRAY[*]}")
-  IFS="$OLD_IFS"
-  REDIS_CLUSTER='"rootNodes": [ '$NODES' ], "defaults": { "username": "'${REDIS_SERVER_USER:-default}'", "password": "'$REDIS_SERVER_PWD'" }'
-else
-  REDIS_CLUSTER=''
+# --------------------------------------------------------------------
+# Editor-data storage
+#
+# The server package defaults to editorDataMemory. Keep the storage keys out
+# of NODE_CONFIG unless an operator explicitly selects a backend, so the
+# orchestrated image preserves that default. Values become module names in
+# DocService and must therefore be plain basenames rather than paths or JSON.
+# --------------------------------------------------------------------
+EDITOR_STORAGE_CONFIG=""
+for storage_var in EDITOR_DATA_STORAGE EDITOR_STAT_STORAGE; do
+  storage_value="${!storage_var:-}"
+  if [[ -n "$storage_value" && ! "$storage_value" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    echo "$storage_var must be a plain module name (letters, digits, '_' or '-')." >&2
+    exit 1
+  fi
+done
+
+if [[ -n "${EDITOR_DATA_STORAGE:-}" || -n "${EDITOR_STAT_STORAGE:-}" ]]; then
+  # An omitted statistics backend follows the editor-data backend.
+  EDITOR_STAT_STORAGE_EFFECTIVE="${EDITOR_STAT_STORAGE:-${EDITOR_DATA_STORAGE:-}}"
+  EDITOR_STORAGE_CONFIG='"server": {'
+  if [[ -n "${EDITOR_DATA_STORAGE:-}" ]]; then
+    EDITOR_STORAGE_CONFIG+='"editorDataStorage": "'"$EDITOR_DATA_STORAGE"'"'
+  fi
+  if [[ -n "$EDITOR_STAT_STORAGE_EFFECTIVE" ]]; then
+    [[ "$EDITOR_STORAGE_CONFIG" == *'"editorDataStorage"'* ]] && EDITOR_STORAGE_CONFIG+=', '
+    EDITOR_STORAGE_CONFIG+='"editorStatStorage": "'"$EDITOR_STAT_STORAGE_EFFECTIVE"'"'
+  fi
+  EDITOR_STORAGE_CONFIG+='},'
 fi
 
 # --------------------------------------------------------------------
@@ -99,6 +124,8 @@ fi
 # --------------------------------------------------------------------
 # NODE_CONFIG (exported for Docs services)
 # --------------------------------------------------------------------
+NODE_CONFIG_OVERRIDE="${NODE_CONFIG:-}"
+[ -n "$NODE_CONFIG_OVERRIDE" ] || NODE_CONFIG_OVERRIDE='{}'
 export NODE_CONFIG='{
   "statsd": {
     "useMetrics": '${METRICS_ENABLED:-false}',
@@ -111,6 +138,7 @@ export NODE_CONFIG='{
   },
   "services": {
     "CoAuthoring": {
+      '${EDITOR_STORAGE_CONFIG}'
       "sql": {
         "type": "'${DB_TYPE:-postgres}'",
         "dbHost": "'${DB_HOST:-localhost}'",
@@ -123,20 +151,9 @@ export NODE_CONFIG='{
         "name": "'${REDIS_CONNECTOR_NAME:-redis}'",
         "host": "'${REDIS_SERVER_HOST:-${REDIST_SERVER_HOST:-localhost}}'",
         "port": '${REDIS_SERVER_PORT:-${REDIST_SERVER_PORT:-6379}}',
-        "options": {
-          "user": "'${REDIS_SERVER_USER:-default}'",
-          "password": "'${REDIS_SERVER_PWD}'",
-          "db": "'${REDIS_SERVER_DB_NUM:-0}'"
-        },
-        "optionsCluster": { '${REDIS_CLUSTER}' },
-        "iooptions": {
-          "sentinels": '${REDIS_SENTINEL}'
-          "name": "'${REDIS_SENTINEL_GROUP_NAME:-mymaster}'",
-          "sentinelPassword": "'${REDIS_SENTINEL_PWD}'",
-          "username": "'${REDIS_SERVER_USER:-default}'",
-          "password": "'${REDIS_SERVER_PWD}'",
-          "db": "'${REDIS_SERVER_DB_NUM:-0}'"
-        }
+        "options": '${REDIS_OPTIONS}',
+        "optionsCluster": '${REDIS_CLUSTER}',
+        "optionsSentinel": '${REDIS_SENTINEL_OPTIONS}'
       },
       "token": {
         "enable": {
@@ -231,6 +248,46 @@ export NODE_CONFIG='{
     "storageFolderName": "files"
   }
 }'
+
+# Validate each input separately without exposing configuration in jq diagnostics.
+if ! jq -es 'length == 1 and (.[0] | type) == "object"' <<<"$NODE_CONFIG" >/dev/null 2>&1; then
+  echo "Generated configuration must be a valid JSON object; check environment-derived settings." >&2
+  exit 1
+fi
+if ! jq -es 'length == 1 and (.[0] | type) == "object"' <<<"$NODE_CONFIG_OVERRIDE" >/dev/null 2>&1; then
+  echo "Supplied NODE_CONFIG must be a valid JSON object." >&2
+  exit 1
+fi
+
+# Explicit NODE_CONFIG values override generated defaults. Align generated
+# Cluster seed URLs with the effective TLS setting before applying the override.
+NODE_CONFIG=$(jq -cn --argjson generated "$NODE_CONFIG" --argjson override "$NODE_CONFIG_OVERRIDE" \
+  'if ($generated.services.CoAuthoring.redis.optionsCluster.rootNodes? | type) == "array" then
+     ($generated * $override |
+       .services.CoAuthoring.redis.optionsCluster.defaults.socket.tls == true) as $clusterTLS |
+     ($generated | .services.CoAuthoring.redis.optionsCluster.rootNodes |= map(
+       .url |= sub("^rediss?://"; if $clusterTLS then "rediss://" else "redis://" end)
+     )) * $override
+   else $generated * $override end' 2>/dev/null)
+unset NODE_CONFIG_OVERRIDE
+
+# Match the server's topology checks after applying the operator override.
+if ! jq -e '
+  .services.CoAuthoring.redis as $redis |
+  (($redis.optionsSentinel // {}) |
+    if type == "object" or type == "array" or type == "string" then length > 0 else false end) as $sentinel |
+  ($redis.optionsCluster.rootNodes? |
+    if type == "array" then length > 0 else false end) as $cluster |
+  (($sentinel and $cluster) | not)
+' <<<"$NODE_CONFIG" >/dev/null 2>&1; then
+  echo 'ERROR: Redis Sentinel and Redis Cluster cannot be configured together.' >&2
+  exit 1
+fi
+
+if [[ "${ENTRYPOINT_CONFIG_ONLY:-false}" == "true" ]]; then
+  printf '%s\n' "$NODE_CONFIG"
+  exit 0
+fi
 
 WORK_DIR="/var/www/$COMPANY_NAME/documentserver"
 BUILD_FONTS=false
