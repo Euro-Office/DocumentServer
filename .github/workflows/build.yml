@@ -432,9 +432,6 @@ jobs:
           OS_UPDATE_STAMP: ${{ steps.meta.outputs.os_update_stamp }}
           BUILD_ROOT: ${{ env.BUILD_ROOT }}
           NUGET_CACHE: local
-          # Prebuilt third-party libs (V8, ICU, Boost, ...) for the core build
-          NEXTCLOUD_USER: ${{ secrets.NEXTCLOUD_USER }}
-          NEXTCLOUD_PASS: ${{ secrets.NEXTCLOUD_PASS }}
 
       # Pushed with skopeo and a private authfile rather than docker login:
       # the docker credential store holds one login per host, and ghcr.io is
