@@ -29,7 +29,7 @@ The Nextcloud integration app lives in the **sibling repo `eurooffice-nextcloud`
 - **Never** introduce workspace-wide dependencies that break the "no root package.json" rule in submodules.
 - **Never** commit changes to `docker-bake.hcl` without validating the build orchestration for all platforms.
 - **Always** verify that `AGENTS.md` is updated if you modify workspace-level developer workflows.
-- **Never** update submodule refs manually via a PR — submodule bumps are handled by an automated GitHub Action.
+- **Never** update submodule refs manually via a PR. `main` and PRs into `main` build the head of each submodule's default branch (`.github/scripts/float-submodules.sh`), and releases pin their own commits (Euro-Office/release). The gitlinks on `main` are not what CI builds; use `git submodule update --init --remote` to get the same code locally.
 
 ## Build & run a test server (Docker)
 

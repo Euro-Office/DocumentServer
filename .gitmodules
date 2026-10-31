@@ -19,7 +19,6 @@
 [submodule "dictionaries"]
 	path = dictionaries
 	url = https://github.com/Euro-Office/dictionaries.git
-	branch = master
 [submodule "document-templates"]
 	path = document-templates
 	url = https://github.com/Euro-Office/document-templates.git
