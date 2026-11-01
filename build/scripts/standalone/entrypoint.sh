@@ -22,6 +22,18 @@ NGINX_DS_SSL_TMPL="${NGINX_DS_DIR}/ds-ssl.conf.tmpl"
 SUPERVISOR_CONF_DIR="/etc/supervisor/conf.d"
 
 # --------------------------------------------------------------------
+# Normalize boolean env vars before the defaults below, so a value that is
+# not recognized falls back to the variable's own default.
+# --------------------------------------------------------------------
+. /usr/local/lib/euro-office/bool.sh
+require_bool JWT_ENABLED JWT_ENABLED_INBOX JWT_ENABLED_OUTBOX
+normalize_bool JWT_IN_BODY \
+  WOPI_ENABLED PLUGINS_ENABLED METRICS_ENABLED GENERATE_FONTS \
+  NGINX_ACCESS_LOG ONLYOFFICE_HTTPS_HSTS_ENABLED \
+  USE_UNAUTHORIZED_STORAGE ALLOW_PRIVATE_IP_ADDRESS ALLOW_META_IP_ADDRESS \
+  ADMINPANEL_ENABLED EXAMPLE_ENABLED
+
+# --------------------------------------------------------------------
 # Defaults (aligned with upstream run-document-server.sh)
 # --------------------------------------------------------------------
 JWT_ENABLED="${JWT_ENABLED:-true}"
@@ -62,6 +74,8 @@ ONLYOFFICE_HTTPS_HSTS_MAXAGE="${ONLYOFFICE_HTTPS_HSTS_MAXAGE:-31536000}"
 USE_UNAUTHORIZED_STORAGE="${USE_UNAUTHORIZED_STORAGE:-false}"
 ALLOW_PRIVATE_IP_ADDRESS="${ALLOW_PRIVATE_IP_ADDRESS:-false}"
 ALLOW_META_IP_ADDRESS="${ALLOW_META_IP_ADDRESS:-false}"
+ADMINPANEL_ENABLED="${ADMINPANEL_ENABLED:-false}"
+EXAMPLE_ENABLED="${EXAMPLE_ENABLED:-false}"
 
 # --------------------------------------------------------------------
 # Validate DB type (standalone image only supports postgres)
@@ -387,8 +401,8 @@ enable_supervisor_program() {
   [ -f "$conf" ] && sed -i 's/^autostart=false$/autostart=true/' "$conf"
 }
 
-[ "${ADMINPANEL_ENABLED:-false}" = "true" ] && enable_supervisor_program ds-adminpanel
-[ "${EXAMPLE_ENABLED:-false}"    = "true" ] && enable_supervisor_program ds-example
+[ "$ADMINPANEL_ENABLED" = "true" ] && enable_supervisor_program ds-adminpanel
+[ "$EXAMPLE_ENABLED"    = "true" ] && enable_supervisor_program ds-example
 [ "$METRICS_ENABLED" = "true" ]              && enable_supervisor_program ds-metrics
 
 # --------------------------------------------------------------------

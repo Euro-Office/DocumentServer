@@ -192,6 +192,7 @@ FROM ds-base AS docs
         /var/www/$COMPANY_NAME_LOW/documentserver-example/welcome
     COPY build/scripts/orchestrated/docker-entrypoint.sh build/scripts/orchestrated/proxy-docker-entrypoint.sh /usr/local/bin/
     COPY build/scripts/orchestrated/init-docker-entrypoint.sh /init/
+    COPY build/scripts/lib/bool.sh /usr/local/lib/euro-office/bool.sh
     RUN sed 's|\(application\/zip.*\)|\1\n    application\/wasm wasm;|' \
             -i /etc/nginx/mime.types && \
         sed 's,\(listen.\+:\)\([0-9]\+\)\(.*;\),'"\18888\3"',' \
