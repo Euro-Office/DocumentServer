@@ -80,7 +80,8 @@ longest step, the `core` compile (about 90 minutes), depends on the source of th
 `core` submodule:
 
 - If `core` is pinned to the same commit as in the last build of `main`, the compile
-  is a cache hit. A dev build measured on 21 October 2026 took 42 minutes instead of
+  is a cache hit. `main` builds the head of each submodule's default branch, not its
+  gitlinks, so pin `core=main` to get that commit. A dev build measured on 21 October 2026 took 42 minutes instead of
   2 hours 13 minutes this way.
 - If `main` has moved to another `core` commit, the compile runs again. The other
   steps that did not change are still hits.

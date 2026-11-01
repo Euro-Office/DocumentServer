@@ -8,6 +8,12 @@ on:
       - main
     tags:
       - '**'
+  # main builds the submodules' default branches (float-submodules.sh), so
+  # rebuild nightly to pick up submodule merges without a DocumentServer commit.
+  # Schedule events carry no repository.default_branch, hence the 'main'
+  # fallbacks below.
+  schedule:
+    - cron: '0 2 * * *'
   # PRs are expected from same-repo branches only. A fork PR gets a read-only
   # GITHUB_TOKEN and no secrets, so the clone job's EURO_OFFICE_MIRROR_TOKEN
   # (required to fetch private submodules + the brand repo) is empty and the
@@ -93,6 +99,12 @@ jobs:
           token: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN }}
           persist-credentials: false
 
+      # main and PRs into main build the head of every submodule's default
+      # branch. Tags, stable-* and other refs build their committed gitlinks.
+      - name: Float submodules to their default branches
+        if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
+        run: .github/scripts/float-submodules.sh
+
       - name: Align submodules to requested branches
         shell: bash
         env:
@@ -118,20 +130,18 @@ jobs:
           [ -n "$WEBAPPS_BRANCH" ] && checkout_submodule web-apps  "$WEBAPPS_BRANCH"
           [ -n "$SERVER_BRANCH" ]  && checkout_submodule server    "$SERVER_BRANCH"
 
-          checkout_submodule dictionaries       "main"
-          checkout_submodule document-templates "main"
-
           echo "--- Submodule state after alignment ---"
           git submodule status
 
-      # Keyed by commit and written by the run that checked it out; tag runs
-      # can only restore caches of the tag itself or the default branch.
+      # Keyed by commit and run, since floated submodules can differ between
+      # runs of the same commit; tag runs can only restore caches of the tag
+      # itself or the default branch.
       - name: Cache clones
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0 # zizmor: ignore[cache-poisoning]
         with:
           # Relative, so hosted and self-hosted runners (different workspace paths) share the cache.
           path: .
-          key: ${{ runner.os }}-build-${{ github.sha }}
+          key: ${{ runner.os }}-build-${{ github.sha }}-${{ github.run_id }}
 
   # ─────────────────────────────────────────────────────────────
   # BUILD
@@ -191,7 +201,7 @@ jobs:
         with:
           # Relative, so hosted and self-hosted runners (different workspace paths) share the cache.
           path: .
-          key: ${{ runner.os }}-build-${{ github.sha }}
+          key: ${{ runner.os }}-build-${{ github.sha }}-${{ github.run_id }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -224,7 +234,7 @@ jobs:
             echo "no_cache=false" >> $GITHUB_OUTPUT
           fi
 
-          IS_DEFAULT=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+          IS_DEFAULT=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch || 'main') }}
           IS_TAG=${{ startsWith(github.ref, 'refs/tags/') }}
 
           # Registry build cache: every ref reuses its own previous run and
@@ -525,7 +535,7 @@ jobs:
   publish-euro-office-images:
     runs-on: ubuntu-latest
     needs: build
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/')
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch || 'main') || startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: read
       packages: write
@@ -545,7 +555,7 @@ jobs:
         env:
           IS_STABLE: ${{ needs.build.outputs.is_stable }}
           REF: ${{ needs.build.outputs.ref_name }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch || 'main' }}
         run: |
           REGISTRY="${{ env.REGISTRY }}"
 
@@ -822,7 +832,7 @@ jobs:
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository) &&
       (github.event_name == 'pull_request' ||
-       ((github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/'))
+       ((github.ref == format('refs/heads/{0}', github.event.repository.default_branch || 'main') || startsWith(github.ref, 'refs/tags/'))
         && needs.publish-euro-office-images.result == 'success'))
     permissions:
       contents: read

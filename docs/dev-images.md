@@ -29,6 +29,10 @@ first. All pins land in one commit, for example
 `dev: pin server=feature/x@1a2b3c4d, sdkjs=a1b2c3d4`. Without `--push` the
 commit stays local.
 
+Submodules you don't pin keep the gitlinks of `main`, which can be older than
+what `main` builds (the head of each default branch). Pin them to `main` to
+build current code, for example `core=main`.
+
 The script only updates the gitlinks. To get the pinned code locally as well,
 run `git submodule update --init <submodule>`.
 

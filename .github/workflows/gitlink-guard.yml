@@ -2,8 +2,9 @@ name: Gitlink guard
 
 # Keeps feature-branch submodule pins (as used on dev/* branches, see
 # docs/dev-images.md) out of main: every submodule must be pinned to a commit
-# on that submodule's default branch. Draft PRs are skipped, so a draft that
-# bumps gitlinks to feature branches to get test images stays green.
+# on that submodule's default branch. Builds of main and PRs into main ignore
+# the gitlinks (float-submodules.sh), so test images of feature branches come
+# from dev/* branches. Draft PRs are skipped.
 on:
   pull_request:
     branches: [main]
