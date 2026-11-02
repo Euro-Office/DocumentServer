@@ -44,6 +44,8 @@ docker compose up -d eo    # document server only; add `nextcloud` for the conne
 ```
 
 If the pull fails (GHCR auth), build locally once: `cd build && docker buildx bake develop`.
+To place BuildKit caches outside `/tmp`, set `CACHE_ROOT` to an absolute path for that bake command.
+See `build/README.md` for details.
 
 Do not use `make`/`make local` in `develop/` — those exec into an interactive shell. Use `docker compose exec -T eo <cmd>` for everything.
 

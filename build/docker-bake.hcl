@@ -70,6 +70,11 @@ variable "CACHE_BUST" {
   default = "2"
 }
 
+# Root directory for local BuildKit cache import/export. Override with an
+# absolute path on a filesystem with enough space for the full build graph.
+variable "CACHE_ROOT" {
+  default = "./.docker-cache/"
+}
 # Changes daily in CI so the OS package layers rebuild and pick up security updates
 variable "OS_UPDATE_STAMP" {
   default = ""
@@ -138,8 +143,8 @@ target "core" {
     "id=nextcloud_user,env=NEXTCLOUD_USER",
     "id=nextcloud_pass,env=NEXTCLOUD_PASS",
   ]
-  cache-from = ["type=local,src=/tmp/${REGISTRY}/core"]
-  cache-to   = ["type=local,dest=/tmp/${REGISTRY}/core,mode=max"]
+  cache-from = ["type=local,src=${CACHE_ROOT}/${REGISTRY}/core"]
+  cache-to   = ["type=local,dest=${CACHE_ROOT}/${REGISTRY}/core,mode=max"]
 }
 
 target "core-wasm" {
@@ -147,8 +152,8 @@ target "core-wasm" {
   context    = ".."
   dockerfile = "./core/.docker/core-wasm.bake.Dockerfile"
   tags       = ["${REGISTRY}/core-wasm:${TAG}"]
-  cache-from = ["type=local,src=/tmp/${REGISTRY}/core-wasm"]
-  cache-to   = ["type=local,dest=/tmp/${REGISTRY}/core-wasm,mode=max"]
+  cache-from = ["type=local,src=${CACHE_ROOT}/${REGISTRY}/core-wasm"]
+  cache-to   = ["type=local,dest=${CACHE_ROOT}/${REGISTRY}/core-wasm,mode=max"]
 }
 
 target "sdkjs" {
@@ -157,8 +162,8 @@ target "sdkjs" {
   dockerfile = "./sdkjs/.docker/sdkjs.bake.Dockerfile"
   tags       = ["${REGISTRY}/sdkjs:${TAG}"]
   target     = "sdkjs"
-  cache-from = ["type=local,src=/tmp/${REGISTRY}/sdkjs"]
-  cache-to   = ["type=local,dest=/tmp/${REGISTRY}/sdkjs,mode=max"]
+  cache-from = ["type=local,src=${CACHE_ROOT}/${REGISTRY}/sdkjs"]
+  cache-to   = ["type=local,dest=${CACHE_ROOT}/${REGISTRY}/sdkjs,mode=max"]
   contexts = {
     core-wasm    = "target:core-wasm"
   }
@@ -169,8 +174,8 @@ target "web-apps" {
   context    = ".."
   dockerfile = "./web-apps/.docker/web-apps.bake.Dockerfile"
   tags       = ["${REGISTRY}/web-apps:${TAG}"]
-  cache-from = ["type=local,src=/tmp/${REGISTRY}/web-apps"]
-  cache-to   = ["type=local,dest=/tmp/${REGISTRY}/web-apps,mode=max"]
+  cache-from = ["type=local,src=${CACHE_ROOT}/${REGISTRY}/web-apps"]
+  cache-to   = ["type=local,dest=${CACHE_ROOT}/${REGISTRY}/web-apps,mode=max"]
 }
 
 target "server" {
@@ -178,8 +183,8 @@ target "server" {
   context    = ".."
   dockerfile = "./server/.docker/server.bake.Dockerfile"
   tags       = ["${REGISTRY}/server:${TAG}"]
-  cache-from = ["type=local,src=/tmp/${REGISTRY}/server"]
-  cache-to   = ["type=local,dest=/tmp/${REGISTRY}/server,mode=max"]
+  cache-from = ["type=local,src=${CACHE_ROOT}/${REGISTRY}/server"]
+  cache-to   = ["type=local,dest=${CACHE_ROOT}/${REGISTRY}/server,mode=max"]
   contexts = {
     brand-icons    = "target:brand-icons"
   }
@@ -190,8 +195,8 @@ target "example" {
   context    = ".."
   dockerfile = "./document-server-integration/.docker/example.bake.Dockerfile"
   tags       = ["${REGISTRY}/example:${TAG}"]
-  cache-from = ["type=local,src=/tmp/${REGISTRY}/example"]
-  cache-to   = ["type=local,dest=/tmp/${REGISTRY}/example,mode=max"]
+  cache-from = ["type=local,src=${CACHE_ROOT}/${REGISTRY}/example"]
+  cache-to   = ["type=local,dest=${CACHE_ROOT}/${REGISTRY}/example,mode=max"]
   contexts = {
     brand-icons    = "target:brand-icons"
   }
@@ -210,8 +215,8 @@ target "bundle" {
     web-apps      = "target:web-apps"
     example       = "target:example"
   }
-  cache-from = ["type=local,src=/tmp/${REGISTRY}/bundle"]
-  cache-to   = ["type=local,dest=/tmp/${REGISTRY}/bundle,mode=max"]
+  cache-from = ["type=local,src=${CACHE_ROOT}/${REGISTRY}/bundle"]
+  cache-to   = ["type=local,dest=${CACHE_ROOT}/${REGISTRY}/bundle,mode=max"]
 }
 
 # ──────────────────────────────────────────────
@@ -232,7 +237,7 @@ target "packages" {
   # Export the filesystem directly to a local directory instead of an image
   output = ["type=local,dest=./deploy/packages"]
 
-  cache-from = ["type=local,src=/tmp/${REGISTRY}/packages"]  # reuses builder cache
+  cache-from = ["type=local,src=${CACHE_ROOT}/${REGISTRY}/packages"]  # reuses builder cache
 }
 
 # ──────────────────────────────────────────────
@@ -250,8 +255,8 @@ target "cluster-docs" {
   contexts = {
     packages = "target:packages"
   }
-  cache-from = ["type=local,src=/tmp/${REGISTRY}/docs"]
-  cache-to   = ["type=local,dest=/tmp/${REGISTRY}/docs,mode=max"]
+  cache-from = ["type=local,src=${CACHE_ROOT}/${REGISTRY}/docs"]
+  cache-to   = ["type=local,dest=${CACHE_ROOT}/${REGISTRY}/docs,mode=max"]
 }
 
 target "cluster-example" {
@@ -260,8 +265,8 @@ target "cluster-example" {
   dockerfile = "./build/.docker/orchestrated.bake.Dockerfile"
   target     = "example"
   tags       = ["${REGISTRY}/cluster-example:${TAG}"]
-  cache-from = ["type=local,src=/tmp/${REGISTRY}/example"]
-  cache-to   = ["type=local,dest=/tmp/${REGISTRY}/example,mode=max"]
+  cache-from = ["type=local,src=${CACHE_ROOT}/${REGISTRY}/example"]
+  cache-to   = ["type=local,dest=${CACHE_ROOT}/${REGISTRY}/example,mode=max"]
 }
 
 target "cluster-utils" {
@@ -270,8 +275,8 @@ target "cluster-utils" {
   dockerfile = "./build/.docker/orchestrated.bake.Dockerfile"
   target     = "utils"
   tags       = ["${REGISTRY}/cluster-utils:${TAG}"]
-  cache-from = ["type=local,src=/tmp/${REGISTRY}/utils"]
-  cache-to   = ["type=local,dest=/tmp/${REGISTRY}/utils,mode=max"]
+  cache-from = ["type=local,src=${CACHE_ROOT}/${REGISTRY}/utils"]
+  cache-to   = ["type=local,dest=${CACHE_ROOT}/${REGISTRY}/utils,mode=max"]
 }
 
 
@@ -286,8 +291,8 @@ target "standalone" {
   contexts = {
     packages = "target:packages"
   }
-  cache-from = ["type=local,src=/tmp/${REGISTRY}/documentserver"]
-  cache-to   = ["type=local,dest=/tmp/${REGISTRY}/documentserver,mode=max"]
+  cache-from = ["type=local,src=${CACHE_ROOT}/${REGISTRY}/documentserver"]
+  cache-to   = ["type=local,dest=${CACHE_ROOT}/${REGISTRY}/documentserver,mode=max"]
 }
 
 target "develop" {
@@ -299,6 +304,6 @@ target "develop" {
   contexts = {
     finalubuntu    = "target:standalone"
   }
-  cache-from = ["type=local,src=/tmp/${REGISTRY}/develop"]
-  cache-to   = ["type=local,dest=/tmp/${REGISTRY}/develop,mode=max"]
+  cache-from = ["type=local,src=${CACHE_ROOT}/${REGISTRY}/develop"]
+  cache-to   = ["type=local,dest=${CACHE_ROOT}/${REGISTRY}/develop,mode=max"]
 }
