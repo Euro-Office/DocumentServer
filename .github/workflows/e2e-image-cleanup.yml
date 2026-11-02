@@ -2,7 +2,7 @@ name: Cleanup e2e PR image
 
 # When a PR closes, delete the throwaway documentserver:pr-<n> image that the
 # build workflow pushed for the e2e job, so per-PR tags don't accumulate in
-# ghcr. Separate from build.yml so closing a PR doesn't trigger a build.
+# ghcr. Separate from ci.yml so closing a PR doesn't trigger a build.
 on:
   pull_request:
     types: [closed]

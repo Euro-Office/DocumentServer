@@ -63,7 +63,7 @@ a release tag is never moved, and a content change gets a new tag.
 A stable name means the newest export wins. `dev-images.yml` cancels an older run of
 the same branch, so two runs do not write the same tag. For `main` it also means a
 failed or partial export can replace a good cache. If a layer from an old run is
-suspect, run `build.yml` again with `no_cache` or put `[no-cache]` in the PR title:
+suspect, run `ci.yml` manually with `no_cache` or put `[no-cache]` in the PR title:
 it ignores every `cache-from` and rewrites the cache.
 
 ## Fallback from main in dev builds
