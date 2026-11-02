@@ -44,10 +44,11 @@ on:
 # Serialise runs per ref so a re-pushed PR cancels its in-flight run instead of
 # racing the previous one on the single self-hosted e2e runner (shared host
 # port + container name). Cross-PR collisions are still possible if two PRs run
-# at once; the e2e job assumes a single runner.
+# at once; the e2e job assumes a single runner. Pushes to main queue instead,
+# so a quick follow-up merge cannot cancel a build before it refreshes the cache.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   REGISTRY: ghcr.io/euro-office
@@ -64,8 +65,9 @@ env:
 
 jobs:
   # Pull requests build only what e2e and upgrade test: the amd64
-  # euro-office standalone image. release/* PRs and PRs labelled
-  # full-build get every arch, brand and target, like main and tags.
+  # euro-office standalone image. release/* and renovate/* PRs (Renovate
+  # auto-merges) and PRs labelled full-build get every arch, brand and
+  # target, like main and tags.
   # The label is read from the API, so adding it takes effect on the
   # next push or "Re-run all jobs".
   plan:
@@ -88,7 +90,7 @@ jobs:
             exit 1
           fi
           full=true
-          if [[ "$GITHUB_EVENT_NAME" == "pull_request" && "$HEAD_REF" != release/* ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" && "$HEAD_REF" != release/* && "$HEAD_REF" != renovate/* ]]; then
             labels=$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')
             grep -qx full-build <<<"$labels" || full=false
           fi
