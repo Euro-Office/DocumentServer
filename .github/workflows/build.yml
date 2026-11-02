@@ -210,6 +210,7 @@ jobs:
         run: |
           REF_NAME=$(echo "$GITHUB_REF_NAME" | tr '/+' '--')
           echo "ref_name=${REF_NAME}" >> $GITHUB_OUTPUT
+          echo "os_update_stamp=$(date -u +%Y-%m-%d)" >> $GITHUB_OUTPUT
           echo "build_commits=DocumentServer=$(git rev-parse HEAD) $(git submodule foreach --quiet 'echo $name=$(git rev-parse HEAD)' | tr '\n' ' ')" >> $GITHUB_OUTPUT
 
           # Cold rebuild when explicitly requested via workflow_dispatch or when
@@ -282,13 +283,13 @@ jobs:
             echo "e2e_image=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${REF_NAME}" >> $GITHUB_OUTPUT
           fi
 
-          # Stable release tags are the ones scripts/tag_release.sh creates
-          # without -p: vX.Y.Z (e.g. v9.3.4). Only these are published into
-          # the public APT/DNF archive; pre-release tags (v9.3.5-rc.1, v9.3.1-tp.3,
-          # v9.3.1-beta.1, v9.3.4-hotfix.1, ...) all carry a "-" and are not.
+          # Stable release tags are vX.Y.Z (e.g. v9.3.4) and its patch builds
+          # vX.Y.Z-N (e.g. v9.3.4-1). Only these are published into the public
+          # APT/DNF archive; pre-release tags (v9.3.5-rc.1, v9.3.1-beta.1, ...)
+          # carry a suffix with letters and are not.
           # Read the tag via $GITHUB_REF_NAME rather than a template expression:
           # the tag name is attacker-controllable (zizmor template-injection).
-          if [[ "$IS_TAG" == "true" && "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          if [[ "$IS_TAG" == "true" && "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[1-9][0-9]*)?$ ]]; then
             echo "is_stable=true"  >> "$GITHUB_OUTPUT"
           else
             echo "is_stable=false" >> "$GITHUB_OUTPUT"
@@ -307,10 +308,15 @@ jobs:
           # Supported formats:
           #   v9.3.5-rc.1      →  product_version=9.3.5  build_number=0~rc.1
           #   v9.3.4           →  product_version=9.3.4  build_number=0
+          #   v9.3.4-1         →  product_version=9.3.4  build_number=1
           # The "0~" prefix sorts a prerelease before the final release
-          # (9.3.5-0~rc.1 < 9.3.5-0) in both dpkg and rpm.
+          # (9.3.5-0~rc.1 < 9.3.5-0) in both dpkg and rpm; a patch build
+          # sorts after it (9.3.4-0 < 9.3.4-1).
           # Fall back to the VERSION file for non-tag builds.
-          if [[ "$IS_TAG" == "true" && "$GITHUB_REF_NAME" =~ ^v([^-]+)-(.+)$ ]]; then
+          if [[ "$IS_TAG" == "true" && "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-([1-9][0-9]*)$ ]]; then
+            echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
+            echo "build_number=${BASH_REMATCH[2]}"    >> $GITHUB_OUTPUT
+          elif [[ "$IS_TAG" == "true" && "$GITHUB_REF_NAME" =~ ^v([^-]+)-(.+)$ ]]; then
             echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
             echo "build_number=0~${BASH_REMATCH[2]}"  >> $GITHUB_OUTPUT
           elif [[ "$IS_TAG" == "true" && "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
@@ -322,7 +328,10 @@ jobs:
           else
             VERSION_FILE=$(cat VERSION 2>/dev/null | tr -d '[:space:]')
             # Split VERSION file the same way as tags: 9.3.5-rc.1 → version=9.3.5 build=0~rc.1
-            if [[ "${VERSION_FILE}" =~ ^([^-]+)-(.+)$ ]]; then
+            if [[ "${VERSION_FILE}" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-([1-9][0-9]*)$ ]]; then
+              echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
+              echo "build_number=${BASH_REMATCH[2]}"    >> $GITHUB_OUTPUT
+            elif [[ "${VERSION_FILE}" =~ ^([^-]+)-(.+)$ ]]; then
               echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
               echo "build_number=0~${BASH_REMATCH[2]}"  >> $GITHUB_OUTPUT
             else
@@ -332,7 +341,7 @@ jobs:
           fi
 
       - name: Build all targets (packages → docker → develop)
-        uses: docker/bake-action@018cb6412ab401ebaa809aa5f85966b74628600f # v7.4.0
+        uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
         with:
           source: ./build
           # For nextcloud-office, brand-server.hcl is appended; empty lines are
@@ -420,6 +429,7 @@ jobs:
           PRODUCT_VERSION: ${{ steps.meta.outputs.product_version }}
           BUILD_NUMBER: ${{ steps.meta.outputs.build_number }}
           BUILD_COMMITS: ${{ steps.meta.outputs.build_commits }}
+          OS_UPDATE_STAMP: ${{ steps.meta.outputs.os_update_stamp }}
           BUILD_ROOT: ${{ env.BUILD_ROOT }}
           NUGET_CACHE: local
           # Prebuilt third-party libs (V8, ICU, Boost, ...) for the core build
@@ -586,8 +596,8 @@ jobs:
   # PUBLISH-NEXTCLOUD-APT-DNF
   #
   # Merges the nextcloud-office .deb/.rpm packages into the shared
-  # signed APT/DNF archive. Stable tags only (vX.Y.Z, e.g.
-  # v9.3.4); see is_stable in the build job's meta step.
+  # signed APT/DNF archive. Stable tags only (vX.Y.Z or vX.Y.Z-N,
+  # e.g. v9.3.4); see is_stable in the build job's meta step.
   # ─────────────────────────────────────────────────────────────
   publish-nextcloud-apt-dnf:
     needs: [build, publish-nextcloud-download-server]
@@ -851,7 +861,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0 # zizmor: ignore[cache-poisoning]
         with:
-          node-version: '22'
+          node-version: '26'
           cache: 'npm'
           cache-dependency-path: e2e/package-lock.json
 

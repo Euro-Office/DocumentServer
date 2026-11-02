@@ -44,6 +44,9 @@ jobs:
           # Enumerate every submodule from .gitmodules so none are missed.
           mapfile -t paths < <(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | awk '{print $2}')
 
+          # The checkout's token, for the bare clones of private submodules (they don't see its config)
+          auth="$(git config --get http.https://github.com/.extraheader || true)"
+
           for path in "${paths[@]}"; do
             old_sha="$(git ls-tree HEAD "$path" | awk '{print $3}')"
             if [ -z "$old_sha" ]; then
@@ -52,7 +55,7 @@ jobs:
             fi
             # Commits only (no trees/blobs): enough to resolve the default branch tip and build the changelog.
             meta="$RUNNER_TEMP/submodules/$path.git"
-            git clone --quiet --bare --no-tags --filter=tree:0 "$(git config -f .gitmodules --get "submodule.$path.url")" "$meta"
+            git ${auth:+-c "http.https://github.com/.extraheader=$auth"} clone --quiet --bare --no-tags --filter=tree:0 "$(git config -f .gitmodules --get "submodule.$path.url")" "$meta"
             branch="$(git -C "$meta" symbolic-ref --short HEAD)"
             new_sha="$(git -C "$meta" rev-parse HEAD)"
             echo "Updating $path → $branch ($new_sha)"

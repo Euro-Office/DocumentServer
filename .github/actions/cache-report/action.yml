@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: 2026 Euro-Office contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+name: Build cache report
+description: >-
+  Writes cached vs executed build steps, slowest steps, cache import results and
+  cache export durations of the buildx builder's builds to the job summary and
+  uploads them as cache-report.json. Never fails the job. Needs no permissions.
+
+inputs:
+  builder:
+    description: Name of the buildx builder the build ran on (setup-buildx-action output "name").
+    required: true
+  title:
+    description: Suffix of the summary heading, for example the architecture.
+    default: ''
+  artifact-name:
+    description: Name of the uploaded artifact; must be unique per job in the run.
+    required: true
+  retention-days:
+    description: Days the cache-report.json artifact is kept.
+    default: '3'
+
+runs:
+  using: composite
+  steps:
+    - name: Write cache report
+      shell: bash
+      env:
+        BUILDER: ${{ inputs.builder }}
+        TITLE: ${{ inputs.title }}
+        REPORT_DIR: ${{ runner.temp }}/cache-report
+        SCRIPT: ${{ github.action_path }}/cache-report.sh
+      run: bash "$SCRIPT" run "$BUILDER" "$REPORT_DIR"
+
+    - name: Upload cache-report.json
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ runner.temp }}/cache-report/cache-report.json
+        retention-days: ${{ inputs.retention-days }}
+        if-no-files-found: ignore

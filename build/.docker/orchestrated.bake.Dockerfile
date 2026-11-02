@@ -15,6 +15,7 @@ FROM fedora:43 AS ds-base
         NODE_CONFIG_DIR=/etc/$COMPANY_NAME_LOW/documentserver \
         PKG_NATIVE_CACHE_PATH=/tmp/.cache
 
+    ARG OS_UPDATE_STAMP
     RUN dnf -y updateinfo list --security && \
         dnf update --security -y && \
         dnf install sudo \
@@ -191,6 +192,7 @@ FROM ds-base AS docs
         /var/www/$COMPANY_NAME_LOW/documentserver-example/welcome
     COPY build/scripts/orchestrated/docker-entrypoint.sh build/scripts/orchestrated/proxy-docker-entrypoint.sh /usr/local/bin/
     COPY build/scripts/orchestrated/init-docker-entrypoint.sh /init/
+    COPY build/scripts/lib/bool.sh /usr/local/lib/euro-office/bool.sh
     RUN sed 's|\(application\/zip.*\)|\1\n    application\/wasm wasm;|' \
             -i /etc/nginx/mime.types && \
         sed 's,\(listen.\+:\)\([0-9]\+\)\(.*;\),'"\18888\3"',' \
@@ -334,6 +336,7 @@ FROM python:3.14-slim-bookworm AS utils
         chmod +x /usr/local/bin/dumb-init && \
         rm -rf /var/lib/apt/lists/*
     COPY build/scripts/orchestrated/sqlplus /usr/bin/sqlplus
+    COPY server/schema /scripts/schema
     USER ds
 
 FROM statsd/statsd AS metrics

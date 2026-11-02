@@ -43,6 +43,10 @@ FROM finalubuntu AS develop
                     libtool-bin \
                     autoconf \
                     python3-dev \
+                    clang \
+                    llvm \
+                    lld \
+                    unzip \
                     && \
         rm -rf /var/lib/apt/lists/*
 
