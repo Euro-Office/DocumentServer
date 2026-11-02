@@ -39,7 +39,6 @@ build_fonts() {
   chmod 755 "$WORK_DIR/sdkjs/common"
   chmod 755 "$WORK_DIR/sdkjs/common/Images"
   chmod 755 "$WORK_DIR/sdkjs/slide/themes"
-  chmod 755 "$WORK_DIR/server/FileConverter/bin"
   /usr/local/bin/documentserver-generate-allfonts.sh true true
   mkdir -p "$buffer_dir/bin"
   cp -ra "$WORK_DIR/sdkjs/common/Images/" "$buffer_dir/"
