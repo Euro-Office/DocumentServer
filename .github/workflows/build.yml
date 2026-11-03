@@ -322,6 +322,13 @@ jobs:
             fi
           fi
 
+      # The prebuilt core when the build cache has it (releases only take
+      # packages built on main); empty to build core in the bake
+      - name: Fetch prebuilt core
+        id: core
+        run: |
+          echo "dir=$(./build/fetch-core.sh ${{ startsWith(github.ref, 'refs/tags/') && '--channels main' || '' }})" >> "$GITHUB_OUTPUT"
+
       - name: Build all targets (packages → docker → develop)
         uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
         with:
@@ -413,6 +420,7 @@ jobs:
           BUILD_COMMITS: ${{ steps.meta.outputs.build_commits }}
           OS_UPDATE_STAMP: ${{ steps.meta.outputs.os_update_stamp }}
           BUILD_ROOT: ${{ env.BUILD_ROOT }}
+          CORE_PREBUILT: ${{ steps.core.outputs.dir }}
           NUGET_CACHE: local
 
       # Pushed with skopeo and a private authfile rather than docker login:
