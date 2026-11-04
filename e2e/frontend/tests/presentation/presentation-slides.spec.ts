@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { openNewEditor, editorApi } from './helpers';
+import { openNewEditor, editorApi } from '../helpers';
 
 const slideCount = (p: import('@playwright/test').Page) =>
   editorApi(p, (api) => api.getCountPages());

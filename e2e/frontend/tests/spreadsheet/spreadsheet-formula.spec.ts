@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { openNewEditor, editorApi } from './helpers';
+import { openNewEditor, editorApi } from '../helpers';
 
 const cellText = (editorPage: import('@playwright/test').Page) =>
   editorApi(editorPage, (api) => {

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { openNewEditor, editorApi } from './helpers';
+import { openNewEditor, editorApi } from '../helpers';
 
 test.describe('Document editor - typing and formatting', () => {
   test('type text and apply bold/italic', async ({ page }) => {
