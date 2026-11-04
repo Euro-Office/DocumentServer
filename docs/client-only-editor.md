@@ -261,7 +261,9 @@ without the UI), `web-apps/apps/common/main/lib/controller/LocalSession.js`,
   transport interface above is the hook for it.
 - No image upload, server spellcheck, plugins that call the server, version
   history, chat, or presenter mode in a local session.
-- Visio and the forms app are not wired. Mobile editor untouched.
+- Visio and the forms app are not wired. The mobile document, spreadsheet and
+  presentation editors (`type: "mobile"`) support local sessions like the
+  desktop ones; phones have less memory for x2t, so use a lower size limit there.
 - Conversion runs in the user's browser: expect seconds and hundreds of MB of
   memory for large spreadsheets. Keep the size limit and fall back to a server
   session for files that may be seen by the server.
