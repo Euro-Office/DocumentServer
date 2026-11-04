@@ -130,6 +130,7 @@ make wipe-next NC_BRANCH=stable33     # wipes nc_data_stable33
         - `make core/allfontsgen`
         - `make core/allthemesgen`
         - `make core/x2t`
+        - `make core/wasm/x2t` (x2t compiled to WebAssembly for local sessions, served as `/x2t/`)
         - `make core/docbuilder`
     - server
         - `make server`: full server build
