@@ -149,12 +149,35 @@ jobs:
           SDKJS_BRANCH:   ${{ github.event.inputs.sdkjs_branch || '' }}
           WEBAPPS_BRANCH: ${{ github.event.inputs.web_apps_branch || '' }}
           SERVER_BRANCH:  ${{ github.event.inputs.server_branch || '' }}
+          # A pull request pins branches with "<submodule>-branch: <name>"
+          # lines in its description, e.g. "core-branch: feat/x2t-wasm".
+          # Read through env so the text never reaches the script itself.
+          PR_BODY: ${{ github.event.pull_request.body || '' }}
         run: |
           set -euo pipefail
+
+          # The description is only read when the run starts; push again or
+          # re-run after editing it.
+          pr_branch() {
+            printf '%s\n' "$PR_BODY" | tr -d '\r' \
+              | sed -n "s/^$1-branch:[[:space:]]*\([^[:space:]]*\)[[:space:]]*\$/\1/p" | head -n1
+          }
+          if [ -n "$PR_BODY" ]; then
+            CORE_BRANCH=${CORE_BRANCH:-$(pr_branch core)}
+            SDKJS_BRANCH=${SDKJS_BRANCH:-$(pr_branch sdkjs)}
+            WEBAPPS_BRANCH=${WEBAPPS_BRANCH:-$(pr_branch web-apps)}
+            SERVER_BRANCH=${SERVER_BRANCH:-$(pr_branch server)}
+            PACKAGE_BRANCH=$(pr_branch document-server-package)
+          fi
+          PACKAGE_BRANCH=${PACKAGE_BRANCH:-}
 
           checkout_submodule() {
             local path=$1
             local branch=$2
+            if [[ ! "$branch" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]]; then
+              echo "::error::Invalid branch name for $path: $branch"
+              exit 1
+            fi
             echo "🔧 Updating $path → $branch"
             pushd "$path" > /dev/null
             git fetch origin "${branch}:${branch}"
@@ -166,6 +189,7 @@ jobs:
           [ -n "$SDKJS_BRANCH" ]   && checkout_submodule sdkjs     "$SDKJS_BRANCH"
           [ -n "$WEBAPPS_BRANCH" ] && checkout_submodule web-apps  "$WEBAPPS_BRANCH"
           [ -n "$SERVER_BRANCH" ]  && checkout_submodule server    "$SERVER_BRANCH"
+          [ -n "$PACKAGE_BRANCH" ] && checkout_submodule document-server-package "$PACKAGE_BRANCH"
 
           checkout_submodule dictionaries       "main"
           checkout_submodule document-templates "main"

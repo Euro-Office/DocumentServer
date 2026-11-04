@@ -116,6 +116,20 @@ Run a building instance from its own git worktree so builds don't share `node_mo
 
 Don't trust HTTP 200 — the editor shell can load while the document download fails. `browser_navigate` to a create-new URL (`…/example/editor?fileExt=docx|xlsx|pptx|pdf`; `?fileName=` expects an existing file and fails), `browser_wait_for` a few seconds, then `browser_snapshot`/`browser_take_screenshot` to confirm the toolbar and page render with no error dialog, plus `browser_console_messages` at level `error`. If it won't open, check `ds-example_out.log` (JWT) and `converter/out.log` (download 403) — usually a JWT secret mismatch.
 
+### Test submodule branches in CI
+
+A DocumentServer PR builds the image from the submodule commits it pins. To build and e2e-test unmerged submodule work instead, add lines like these to the PR description, then push or re-run (the description is read when the run starts):
+
+```
+core-branch: feat/x2t-wasm
+sdkjs-branch: feat/local-session-transport
+web-apps-branch: feat/local-session
+server-branch: <branch>
+document-server-package-branch: feat/x2t-location
+```
+
+A manual run of the CI workflow takes the same branches as inputs (core, sdkjs, web-apps, server).
+
 ## Commits
 
 - Commit messages must follow the Conventional Commits v1.0.0 specification — e.g. feat(chat): add voice message playback, fix(call): handle MCU disconnect gracefully.
