@@ -41,57 +41,71 @@ async function supportsLocalSession(page: Page): Promise<boolean> {
   });
 }
 
+// The mobile editors are a separate app (apps/*/mobile) with their own wiring.
+const EDITOR_TYPES = [
+  { type: 'desktop', app: /\/documenteditor\/main\//, viewport: { width: 1280, height: 720 } },
+  { type: 'mobile', app: /\/documenteditor\/mobile\//, viewport: { width: 390, height: 844 } },
+] as const;
+
 test.describe('Local session', () => {
-  test('opens a docx from bytes without a server session', async ({ page }) => {
-    await openHostPage(page);
-    // Skipped, not failed, while the image is built from a web-apps without
-    // local sessions; once it has them, every failure below is real.
-    // eslint-disable-next-line playwright/no-skipped-test
-    test.skip(
-      !(await supportsLocalSession(page)),
-      'this build of web-apps has no local session support',
-    );
+  for (const editor of EDITOR_TYPES) {
+    test(`opens a docx from bytes without a server session (${editor.type})`, async ({ page }) => {
+      await page.setViewportSize(editor.viewport);
+      await openHostPage(page);
+      // Skipped, not failed, while the image is built from a web-apps without
+      // local sessions; once it has them, every failure below is real.
+      // eslint-disable-next-line playwright/no-skipped-test
+      test.skip(
+        !(await supportsLocalSession(page)),
+        'this build of web-apps has no local session support',
+      );
 
-    const wasm = await page.request.get('/x2t/x2t.wasm');
-    expect(wasm.status(), 'the image serves /x2t/x2t.wasm').toBe(200);
+      const wasm = await page.request.get('/x2t/x2t.wasm');
+      expect(wasm.status(), 'the image serves /x2t/x2t.wasm').toBe(200);
 
-    const serverSession: string[] = [];
-    page.on('request', (req) => {
-      if (/\/doc\/[^/]+\/c\//.test(req.url())) serverSession.push(req.url());
-    });
-
-    const bytes = Array.from(readFileSync(FIXTURE));
-    const result = await page.evaluate((data) => {
-      return new Promise<{ ready: boolean; error?: unknown }>((resolve) => {
-        const w = window as unknown as {
-          DocsAPI: { DocEditor: new (id: string, config: unknown) => unknown };
-        };
-        new w.DocsAPI.DocEditor('placeholder', {
-          documentType: 'word',
-          width: '100%',
-          height: '100%',
-          document: {
-            title: 'local-session.docx',
-            fileType: 'docx',
-            source: { data: new Uint8Array(data) },
-          },
-          editorConfig: { session: { type: 'local' } },
-          events: {
-            onDocumentReady: () => resolve({ ready: true }),
-            onError: (e: { data: unknown }) => resolve({ ready: false, error: e.data }),
-          },
-        });
+      const serverSession: string[] = [];
+      page.on('request', (req) => {
+        if (/\/doc\/[^/]+\/c\//.test(req.url())) serverSession.push(req.url());
       });
-    }, bytes);
 
-    expect(result).toEqual({ ready: true });
+      const bytes = Array.from(readFileSync(FIXTURE));
+      const result = await page.evaluate(
+        ({ data, type }) => {
+          return new Promise<{ ready: boolean; error?: unknown }>((resolve) => {
+            const w = window as unknown as {
+              DocsAPI: { DocEditor: new (id: string, config: unknown) => unknown };
+            };
+            new w.DocsAPI.DocEditor('placeholder', {
+              type,
+              documentType: 'word',
+              width: '100%',
+              height: '100%',
+              document: {
+                title: 'local-session.docx',
+                fileType: 'docx',
+                source: { data: new Uint8Array(data) },
+              },
+              editorConfig: { session: { type: 'local' } },
+              events: {
+                onDocumentReady: () => resolve({ ready: true }),
+                onError: (e: { data: unknown }) => resolve({ ready: false, error: e.data }),
+              },
+            });
+          });
+        },
+        { data: bytes, type: editor.type },
+      );
 
-    const text = await editorApi(page, (api) => {
-      api.WordControl.m_oLogicDocument.SelectAll();
-      return api.asc_GetSelectedText();
+      expect(result).toEqual({ ready: true });
+      await expect(page.locator('iframe[name="frameEditor"]')).toHaveAttribute('src', editor.app);
+
+      const text = await editorApi(page, (api) => {
+        api.WordControl.m_oLogicDocument.SelectAll();
+        return api.asc_GetSelectedText();
+      });
+      expect(text).toContain(FIXTURE_TEXT);
+
+      expect(serverSession).toEqual([]);
     });
-    expect(text).toContain(FIXTURE_TEXT);
-
-    expect(serverSession).toEqual([]);
-  });
+  }
 });
