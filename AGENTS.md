@@ -118,7 +118,7 @@ Don't trust HTTP 200 — the editor shell can load while the document download f
 
 ### Test submodule branches in CI
 
-A DocumentServer PR builds the image from the submodule commits it pins. To build and e2e-test unmerged submodule work instead, add lines like these to the PR description, then push or re-run (the description is read when the run starts):
+A DocumentServer PR builds the image from the submodule commits it pins. To build and e2e-test unmerged submodule work instead, add lines like these to the PR description, then push a commit (a run reads the description from its triggering event, so re-running an older run does not pick up edits):
 
 ```
 core-branch: feat/x2t-wasm

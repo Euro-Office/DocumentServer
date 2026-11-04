@@ -156,8 +156,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          # The description is only read when the run starts; push again or
-          # re-run after editing it.
+          # The description comes from the triggering event: after editing
+          # it, push a commit (re-running an older run reuses the old text).
           pr_branch() {
             printf '%s\n' "$PR_BODY" | tr -d '\r' \
               | sed -n "s/^$1-branch:[[:space:]]*\([^[:space:]]*\)[[:space:]]*\$/\1/p" | head -n1
