@@ -65,6 +65,7 @@ docker compose exec -T eo make web-apps-dev       # fast rebuild, skips npm inst
 docker compose exec -T eo make sdkjs              # closure compile + allfontsgen
 docker compose exec -T eo make core               # all of core; subsets: core/x2t, core/allfontsgen, ...
 docker compose exec -T eo make server/docservice  # also: server/converter, server/metrics, server/adminp
+docker compose exec -T eo make core/wasm/x2t      # x2t.wasm for client-only (local) sessions, deployed to /x2t/
 ```
 
 For changes spanning several submodules, run the targets back to back (e.g. `make sdkjs web-apps`). First run of each target installs npm deps and is slow; later runs are faster. Core builds are incremental (ninja) only for the lifetime of the container. `web-apps`/`sdkjs` targets flush the nginx cache tag automatically.

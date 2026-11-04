@@ -216,6 +216,7 @@ target "bundle" {
   tags       = ["${REGISTRY}/bundle:${TAG}"]
   contexts = {
     core          = CORE_PREBUILT != "" ? CORE_PREBUILT : "target:core"
+    core-wasm     = "target:core-wasm"
     server        = "target:server"
     sdkjs         = "target:sdkjs"
     web-apps      = "target:web-apps"
