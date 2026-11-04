@@ -1,6 +1,6 @@
 # Client-only editor: plan and integration API
 
-Status: draft for review. Not committed. Nothing in this document is implemented yet.
+Status: plan under review; first implementation on feature branches (see section 8).
 
 Goal: open office documents in the Euro-Office editor **without a Document Server
 session**, so that
@@ -425,3 +425,48 @@ parallel. The critical path is Track A.
 
 Each PR is single-concern and lands behind the local-session option, so trunk stays
 releasable throughout.
+
+---
+
+## 8. Implementation status (first pass, view-only)
+
+Branches, one per repository, all pushed and opened as draft pull requests:
+
+| Repo | Branch | State |
+|---|---|---|
+| `core` | `feat/x2t-wasm` | x2t WASM CMake target, converter JS, worker, node harness. **Not compiled yet**: no emsdk in the authoring environment; a new `build-x2t-wasm` CI job (`continue-on-error`) attempts it on PRs. |
+| `sdkjs` | `feat/local-session-transport` | transport registry + socket adapter, local `convert`/`uploadImages` routing. 9 QUnit tests, full build green. |
+| `web-apps` | `feat/local-session` | `document.source`, `editorConfig.session`, `capabilities.localSession`, `LocalSession` util + controller wired in all four editors. Mocha: 38 passing. Verified against the real sdkjs adapter in a browser page. |
+| `DocumentServer` | `feat/x2t-wasm-serving` | bundle copies `x2t/` from the core-wasm stage; `make core/wasm/x2t` in the develop container; docs. Only `bake --print` validated. |
+| `eurooffice-nextcloud` | `feat/client-only-viewer` | `GET /api/v1/config/local`, `GET /local` page, admin settings, viewer handler with `source` support, `OCA.Eurooffice.openSource`. PHPUnit for the new controller code. |
+| `mail` | `feat/office-attachments-viewer` | office attachments open through a handler advertising `supportsSource`. 6 vitest cases. |
+
+Deviations from the plan above, decided during implementation:
+
+- **`EO_WASM_X2T` defaults to OFF in core.** CryptPad's core snapshot builds with the qmake
+  `.pro` files, which are dead in our tree (in-tree zlib removed). The converter graph has
+  never been linked with Emscripten through our CMake path, so switching it on by default
+  would break the existing `build-wasm` CI for the sdkjs modules until it links. Expected
+  first-CI issues are listed in `X2tConverter/build/wasm/README.md`.
+- **CryptPad's doctrenderer "empty" stubs were not ported.** They derive from an older
+  `doctrenderer.cpp` and do not compile against our headers; a 70-line stub implementing
+  exactly the API x2t references replaces them. Ported with attribution: `main.cpp`
+  (`proclimits`), `pdf_image.h` (`pdf.bin` from the working dir), `html.h` (FB2 behind
+  `X2T_NO_FB2`), `wasm_main.cpp`, `pre.js`.
+- **First linked format set:** docx/dotx/docm/doc/odt/rtf/txt/html/epub,
+  xlsx/xltx/xlsm/xls/ods/csv, pptx/potx/pptm/ppt/odp. PDF output only from the editor's
+  `pdf.bin`. Not linked: PDF/XPS/DjVu/OFD input (sdkjs renders PDF itself), iWork, HWP, FB2.
+- **No sdkjs image hook was needed.** Listing extracted media as `media/<name>` in the
+  `documentOpen` url map is enough for `g_oDocumentUrls`; CryptPad's `GlobalLoaders` patch
+  is unnecessary.
+- **Converter request carries both `format` (extension) and `fileType` (numeric)**; the
+  reply may include `filetype`. The adapter's `close()` moves DocsCoApi to `ClosedAll`
+  itself, so the web-apps session only releases resources.
+- **Presenter mode is hidden in local sessions** (the reporter window still expects a DS).
+- **Connector:** the server-side document-source refactor is deferred (only needed for a
+  Mail server-mode fallback). The `/x2t/` nginx location lives in
+  `document-server-package` and is still to be added there.
+- **Not wired:** Visio editor, forms app, mobile editor, image upload in local mode.
+
+Still unverified end to end: a real document opened in a browser through the full chain
+(needs the compiled `x2t.wasm` from CI and a Nextcloud with the Viewer).
