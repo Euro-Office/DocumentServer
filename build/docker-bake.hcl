@@ -138,11 +138,6 @@ target "core" {
   dockerfile = "./core/.docker/core.bake.Dockerfile"
   target     = "core"
   tags       = ["${REGISTRY}/core:${TAG}"]
-  # Optional: enables the prebuilt third-party remote cache when set
-  secret = [
-    "id=nextcloud_user,env=NEXTCLOUD_USER",
-    "id=nextcloud_pass,env=NEXTCLOUD_PASS",
-  ]
   cache-from = ["type=local,src=${CACHE_ROOT}/${REGISTRY}/core"]
   cache-to   = ["type=local,dest=${CACHE_ROOT}/${REGISTRY}/core,mode=max"]
 }
