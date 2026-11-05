@@ -71,7 +71,7 @@ const editor = new DocsAPI.DocEditor("placeholder", {
       transport: "self",                // "self" (default) | "host" (section 4)
       indexUser: 0,                     // "host": this editor's index, distinct per editor
       participants: undefined,          // "host": optional initial participant list
-      x2tUrl: undefined,                // optional, defaults to <ds>/x2t/
+      x2tUrl: undefined,                // optional, defaults to <ds>/x2t/; relative urls resolve against the editor page
     },
     mode: "view",                       // default; "edit" in section 3
     lang: "de-DE",
@@ -138,10 +138,14 @@ Print goes through the same converter (editor print data wrapped as PDF).
 
 ### Supported input formats
 
-The first WebAssembly link covers docx, dotx, docm, doc, odt, rtf, txt, html,
-epub, xlsx, xltx, xlsm, xls, ods, csv, pptx, potx, pptm, ppt and odp. PDF, DjVu,
-XPS and OXPS are opened by the editor's own renderer without conversion. iWork,
-HWP and FB2 are not linked; they fail with `-102`.
+The WebAssembly build links docx, dotx, docm, doc, odt, rtf, txt, html, epub,
+xlsx, xltx, xlsm, xls, ods, csv, pptx, potx, pptm, ppt and odp. Covered by the
+x2t smoke test in CI: docx, odt, rtf, xlsx, ods, pptx and odp into the editor
+format, and back out to docx, odt, xlsx, ods, pptx and odp. The other linked
+formats are not tested yet.
+
+PDF, DjVu, XPS and OXPS are opened by the editor's own renderer without
+conversion. iWork, HWP, OFD and FB2 are not linked; they fail with `-102`.
 
 ## 3. Editing in a local session
 
@@ -462,6 +466,10 @@ const { data, media } = await x2t.convert({
 x2t.terminate();
 ```
 
+Fonts are optional: a font url that cannot be fetched is skipped with a
+console warning and x2t falls back to the fonts it has. A theme or media url
+that cannot be fetched fails the conversion with `load`.
+
 `data` is a `Uint8Array` with the output file. `media` holds the images x2t
 extracted when `to` is `bin`. Errors reject with an `Error` whose `code` is
 `load`, `convert` (with `exitCode`), `unsupported` or `memory`. The conversion
@@ -533,7 +541,7 @@ For editor developers; integrators do not need this.
 
 ```
 host page                      editor iframe (Document Server origin)
-DocsAPI.DocEditor ──postMessage openDocumentSource──► web-apps LocalSession controller
+DocsAPI.DocEditor ──postMessage openDocumentSource──► web-apps Common.LocalSession.Host
                                                         │ createConverter() in a Worker
                                                         │ bytes ──► Editor.bin + media
                                                         ▼
@@ -568,11 +576,22 @@ DocsAPI.DocEditor ──postMessage openDocumentSource──► web-apps LocalSe
   `session.indexUser` and `session.participants`; the host learns the result
   from `sessionAuth` and answers with `connectState`.
 
-Code: `sdkjs/common/docscoapi.js` (transport registry and adapter),
-`web-apps/apps/common/main/lib/util/LocalSession.js` (session logic, tested
-without the UI), `web-apps/apps/common/main/lib/controller/LocalSession.js`,
-`web-apps/apps/api/documents/api.js`, `core/X2tConverter/build/wasm/`
-(converter, worker, README with the build details).
+Code:
+
+- `sdkjs/common/docscoapi.js`: transport registry and adapter.
+- `web-apps/apps/common/main/lib/util/LocalSession.js`: entry point that
+  publishes `Common.LocalSession`; the modules in `util/localsession/` are
+  `Protocol` (single-user DocService answers), `Relay` (transport `host`),
+  `Media`, `Conversion`, `Session`, `Host` (editor glue shared by the desktop
+  and mobile editors) and `desktop.js`. All of it runs without the UI and is
+  unit tested.
+- `web-apps/apps/api/documents/api.js`: the public API.
+- `core/X2tConverter/build/wasm/`: converter, worker, README with the build
+  details.
+
+The default `x2tUrl` is resolved against the editor page, not the script:
+`import()` resolves relative urls against the importing script, and the mobile
+bundle lives two folders deeper than the desktop one.
 
 ## 9. Building and serving
 
@@ -584,8 +603,25 @@ without the UI), `web-apps/apps/common/main/lib/controller/LocalSession.js`,
   cache policy as `web-apps/`; brotli pays off, the file is large.
 - **Develop container**: `make core/wasm/x2t` builds and deploys it in place.
 - The editor and x2t must come from the same build: `Editor.bin` is versioned.
+- `x2t.wasm` starts with 320 MB of memory: the linked converter has about
+  280 MB of static data. Desktop browsers handle that; many phones do not
+  (see section 10).
 
-## 10. Limitations and roadmap
+## 10. Status, limitations and roadmap
+
+Status of the implementation (draft pull requests, tracked in #519):
+
+- x2t compiles and links for WebAssembly; the CI smoke test converts all 13
+  fixtures (see "Supported input formats").
+- Unit tests: sdkjs local-session suite (25 tests), web-apps local-session and
+  `api.js` suites (83 tests), connector (vitest and PHPUnit).
+- End to end against a local build of the editors and x2t.wasm: view (desktop
+  and mobile), edit, save and reopen (mobile), and two desktop editors
+  co-editing through the relay in `e2e/frontend/tests/local-session-relay.ts`
+  pass. The same tests run in the Document Server CI against the image; that
+  run is not green yet.
+- Not verified yet: desktop single-user editing end to end, the Nextcloud
+  Viewer integration on a live server, a full multi-platform image build.
 
 - Editing and host-relayed co-editing need a web-apps with
   `localSessionEditing` / `localSessionHostTransport`; older servers stay
@@ -597,9 +633,15 @@ without the UI), `web-apps/apps/common/main/lib/controller/LocalSession.js`,
 - Images by URL need CORS on the image's server.
 - No server spellcheck, plugins that call the server, version history, chat,
   forcesave callbacks or presenter mode in a local session.
-- Visio and the forms app are not wired. The mobile document, spreadsheet and
-  presentation editors (`type: "mobile"`) support local sessions like the
-  desktop ones; phones have less memory for x2t, so use a lower size limit there.
+- Visio and the forms app are not wired, and PDF stays view-only (saving a PDF
+  needs an x2t mode that applies changes to the original file).
+- The mobile document, spreadsheet and presentation editors (`type: "mobile"`)
+  support local sessions like the desktop ones, but x2t's 320 MB start
+  memory is more than many phones allow. Expect `-103` there until the
+  converter's static data shrinks; use a lower size limit on phones.
+- The mobile editors have no save button; Ctrl+S and `downloadAs()` work.
+- A host that drops a connection in transport `host` has to reopen the editor;
+  reconnecting a live editor is not implemented.
 - Conversion runs in the user's browser: expect seconds and hundreds of MB of
   memory for large spreadsheets. Keep the size limit and fall back to a server
   session for files that may be seen by the server.
