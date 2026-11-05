@@ -10,6 +10,8 @@
 // server/DocService/sources/DocsCoServer.js (getLock, saveChanges, isSaveLock,
 // unSaveLock, unLockDocument, cursor, connectState).
 //
+// Editors join when they report their connection id with `sessionAuth`.
+//
 // Deliberately left out: waitAuth / authChanges for late joiners (all editors
 // open the same bytes and join before anyone edits), Excel lock range checks
 // and index recalculation (locks conflict by id only), forcesave, chat,
@@ -24,8 +26,8 @@ export interface RelayUser {
 }
 
 export interface RelayIdentity {
-  // The id sdkjs uses for this connection (user.id + indexUser); locks and
-  // changes carry it in their `user` field.
+  // The id sdkjs uses for this connection (sessionAuth.connectionId, user.id
+  // followed by indexUser); locks and changes carry it in their `user` field.
   userId: string;
   indexUser: number;
 }
@@ -35,6 +37,7 @@ export interface LocalSessionRelay {
   join(clientId: string, identity: RelayIdentity): void;
   leave(clientId: string): void;
   receive(clientId: string, message: unknown): void;
+  identity(clientId: string): RelayIdentity | null;
   changeCount(): number;
   log: { dir: 'in' | 'out'; client: string; type: string }[];
   errors: string[];
@@ -333,6 +336,14 @@ export function installLocalSessionRelay(editorType: RelayEditorType): void {
       }
       const message = (typeof raw === 'string' ? JSON.parse(raw) : raw) as Message;
       log.push({ dir: 'in', client: clientId, type: String(message && message.type) });
+      // Sent once by each editor after its local auth.
+      if (message.type === 'sessionAuth') {
+        relay.join(clientId, {
+          userId: String(message.connectionId),
+          indexUser: Number(message.indexUser),
+        });
+        return;
+      }
       // Until the host knows the connection id, messages wait: lock and change
       // owners must match the id sdkjs compares them against.
       if (!client.identity) {
@@ -344,6 +355,9 @@ export function installLocalSessionRelay(editorType: RelayEditorType): void {
       } catch (e) {
         errors.push(`${message.type}: ${e instanceof Error ? e.message : String(e)}`);
       }
+    },
+    identity(clientId) {
+      return clients.get(clientId)?.identity ?? null;
     },
     changeCount() {
       return changes.length;

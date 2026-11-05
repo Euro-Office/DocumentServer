@@ -142,23 +142,38 @@ async function openSingle(
   }, options);
 }
 
-// Types TYPED_TEXT at the end of the document and saves it.
-async function typeAndSaveWithKeyboard(page: Page) {
+// Types TYPED_TEXT at the end of the document.
+async function typeWithKeyboard(page: Page) {
   await page.frameLocator(EDITOR_IFRAME).locator('#editor_sdk').click();
   await page.keyboard.press('Control+End');
   await page.keyboard.type(` ${TYPED_TEXT}`);
+}
+
+async function saveWithKeyboard(page: Page) {
+  await page.frameLocator(EDITOR_IFRAME).locator('#editor_sdk').click();
   await page.keyboard.press('Control+S');
 }
 
-// The mobile editor has no keyboard shortcuts; this drives the sdkjs entry
+// The mobile editor has no keyboard shortcuts; these drive the sdkjs entry
 // points its on-screen keyboard and save action use. editorApi functions
 // cannot close over TYPED_TEXT, hence the literal.
-async function typeAndSaveWithApi(page: Page) {
+async function typeWithApi(page: Page) {
   await editorApi(page, (api) => {
     api.WordControl.m_oLogicDocument.MoveCursorToEndPos();
     api.asc_enterText(' Typed in a local session');
-    api.asc_Save(false);
   });
+}
+
+async function saveWithApi(page: Page) {
+  await editorApi(page, (api) => api.asc_Save(false));
+}
+
+function savedCount(page: Page, count: number) {
+  return page.waitForFunction(
+    (n) => (window as unknown as SingleWindow).e2eSaves.length >= n,
+    count,
+    { timeout: 60_000 },
+  );
 }
 
 const EDITOR_TYPES = [
@@ -166,13 +181,15 @@ const EDITOR_TYPES = [
     type: 'desktop',
     app: /\/documenteditor\/main\//,
     viewport: { width: 1280, height: 720 },
-    typeAndSave: typeAndSaveWithKeyboard,
+    typeText: typeWithKeyboard,
+    save: saveWithKeyboard,
   },
   {
     type: 'mobile',
     app: /\/documenteditor\/mobile\//,
     viewport: { width: 390, height: 844 },
-    typeAndSave: typeAndSaveWithApi,
+    typeText: typeWithApi,
+    save: saveWithApi,
   },
 ] as const;
 
@@ -200,15 +217,9 @@ test.describe('Local session editing', () => {
       await expect(page.locator(EDITOR_IFRAME)).toHaveAttribute('src', editor.app);
       expect(await editorApi(page, (api) => api.isViewMode)).toBe(false);
 
-      await editor.typeAndSave(page);
-
-      await page.waitForFunction(
-        () => (window as unknown as SingleWindow).e2eSaves.length > 0,
-        null,
-        {
-          timeout: 60_000,
-        },
-      );
+      await editor.typeText(page);
+      await editor.save(page);
+      await savedCount(page, 1);
       const saved = await page.evaluate(async () => {
         const { fileType, blob } = (window as unknown as SingleWindow).e2eSaves[0];
         return {
@@ -230,6 +241,13 @@ test.describe('Local session editing', () => {
           message: 'the document is not modified after the save',
         })
         .toBe(false);
+
+      // Saving again exports again, although nothing changed since.
+      await editor.save(page);
+      await savedCount(page, 2);
+      expect(
+        await page.evaluate(() => (window as unknown as SingleWindow).e2eSaves[1].fileType),
+      ).toBe('docx');
       expect(serverSession).toEqual([]);
 
       // The saved file is what the host would store: it opens in a fresh
@@ -265,9 +283,10 @@ test.describe('Local session editing', () => {
     const serverSession = watchServerSession(page);
     await page.evaluate(installLocalSessionRelay, 'word' as RelayEditorType);
 
+    // The host picks distinct indexes: they prefix the ids of new objects.
     const users = [
-      { id: 'alice', name: 'Alice' },
-      { id: 'bob', name: 'Bob' },
+      { id: 'alice', name: 'Alice', indexUser: 1 },
+      { id: 'bob', name: 'Bob', indexUser: 2 },
     ];
     const opened = await page.evaluate(
       ({ data, users }) => {
@@ -289,9 +308,9 @@ test.describe('Local session editing', () => {
                   },
                   editorConfig: {
                     mode: 'edit',
-                    session: { type: 'local', transport: 'host' },
+                    session: { type: 'local', transport: 'host', indexUser: user.indexUser },
                     coEditing: { mode: 'fast', change: false },
-                    user,
+                    user: { id: user.id, name: user.name },
                   },
                   events: {
                     onDocumentReady: () => resolve({ ready: true }),
@@ -300,7 +319,7 @@ test.describe('Local session editing', () => {
                   },
                 });
                 relay.addClient(user.id, {
-                  user,
+                  user: { id: user.id, name: user.name },
                   send: (message) => editor.sendSessionMessage(message),
                 });
               }),
@@ -319,10 +338,25 @@ test.describe('Local session editing', () => {
       });
 
     try {
-      // The host learns each editor's connection id (user id + indexUser, the
-      // owner of its locks and changes) and announces both participants.
+      // Each editor reports its connection id with sessionAuth; the relay
+      // joins it on that message and announces the participants.
       for (const user of users) {
-        const identity = await editorApi(
+        await expect
+          .poll(
+            () =>
+              page.evaluate(
+                (clientId) =>
+                  (window as unknown as PairWindow).localSessionRelay.identity(clientId),
+                user.id,
+              ),
+            { message: `${user.id} sent sessionAuth` },
+          )
+          .toEqual(expect.objectContaining({ indexUser: user.indexUser }));
+        const identity = (await page.evaluate(
+          (clientId) => (window as unknown as PairWindow).localSessionRelay.identity(clientId),
+          user.id,
+        )) as RelayIdentity;
+        const inFrame = await editorApi(
           page,
           (api) => ({
             userId: api.CoAuthoringApi.getUserConnectionId(),
@@ -330,12 +364,7 @@ test.describe('Local session editing', () => {
           }),
           iframeOf(user.id),
         );
-        expect(identity.userId, `${user.id} has a connection id`).toBeTruthy();
-        await page.evaluate(
-          ({ clientId, identity }) =>
-            (window as unknown as PairWindow).localSessionRelay.join(clientId, identity),
-          { clientId: user.id, identity: identity as RelayIdentity },
-        );
+        expect(inFrame, 'sessionAuth names the id sdkjs uses').toEqual(identity);
       }
 
       for (const user of users) {
