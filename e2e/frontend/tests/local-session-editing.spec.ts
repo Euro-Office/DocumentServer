@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Euro-Office contributors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { test, expect, Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { test, expect } from './diagnostics';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { editorApi } from './helpers';
