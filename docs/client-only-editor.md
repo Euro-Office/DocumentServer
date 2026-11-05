@@ -37,6 +37,10 @@ spreadsheets convert faster on the server.
 </script>
 ```
 
+`localSessionHostTransport` also covers `session.indexUser`,
+`session.participants`, the `sessionAuth` message and `api.js` buffering
+`sendSessionMessage` until the frame is ready (section 4).
+
 Older servers have no `capabilities` object, or only `localSession`; treat a
 missing flag as unsupported and fall back to a view-only local session or a
 server session.
@@ -65,6 +69,8 @@ const editor = new DocsAPI.DocEditor("placeholder", {
     session: {
       type: "local",                    // "server" (default) | "local"
       transport: "self",                // "self" (default) | "host" (section 4)
+      indexUser: 0,                     // "host": this editor's index, distinct per editor
+      participants: undefined,          // "host": optional initial participant list
       x2tUrl: undefined,                // optional, defaults to <ds>/x2t/
     },
     mode: "view",                       // default; "edit" in section 3
@@ -167,43 +173,44 @@ const editor = new DocsAPI.DocEditor("placeholder", {
 - **Transport `self`** (default): the editor is the only user and answers its
   own co-editing messages. Locks are granted to itself, changes are kept in
   memory since the document was opened, there is no co-authoring.
-- **Saving**: the save button, Ctrl+S and `asc_Save` export the current
-  document to `document.fileType` in the browser (x2t `bin → <fileType>`, with
-  all media including inserted images) and fire `onLocalSessionSave`. The
-  document then counts as unmodified. The editor writes nothing anywhere: the
-  host stores the blob, for end-to-end encrypted files through the browser's
-  encrypting upload. Only user saves fire the event, not autosave or the
-  change sends of co-editing.
-- **Images**: inserting or pasting an image stores it as session media
-  `media/<generated name>`, shows it from a blob URL, includes it in later
-  exports and fires `onLocalSessionMedia`. `addSessionMedia({ name: blob })`
-  adds images that come from elsewhere, for example another editor (section 4).
+- **Saving**: the save button, Ctrl+S and `asc_Save` always export the current
+  document in the browser (x2t `bin → <fileType>`, with all media including
+  inserted images) and fire `onLocalSessionSave`, also when nothing changed
+  since the last save. The document then counts as unmodified. Autosave and
+  the change sends of co-editing never fire the event. The editor writes
+  nothing anywhere: the host stores the blob, for end-to-end encrypted files
+  through the browser's encrypting upload.
+- **Format**: the export uses `document.fileType`. Formats x2t cannot write
+  (`doc`, `xls`, `ppt`, `epub`, `html`, …; the writers are listed in section 6)
+  are saved as their OOXML equivalent (`docx`, `xlsx`, `pptx`); the event's
+  `fileType` says which, so name the stored file after it.
+- **Images**: inserting or pasting an image stores it as session media under a
+  bare file name (`image7.png`), shows it from a blob URL, includes it in later
+  exports and fires `onLocalSessionMedia { name, blob }`.
+  `addSessionMedia({ "image7.png": blob })` adds images that come from
+  elsewhere, for example another editor (section 4). An image inserted by URL
+  is fetched into a blob when the URL allows CORS; otherwise the editor shows
+  its usual image error.
 - Off in a local session: chat, version history, the server spellchecker,
   plugins that call the server, forcesave callbacks.
-
-Open in the contract:
-
-- `fileType` formats x2t cannot write (`doc`, `xls`, `ppt`, `epub`, `html`, …;
-  the writers are listed in section 6) have no defined save behaviour. Convert
-  such files first (section 6) and open the result, or keep them view-only.
-- Whether Ctrl+S on an unmodified document fires `onLocalSessionSave` again.
-- Images inserted by URL (fetched by the DocService in a server session).
 
 ## 4. Co-editing through the host page
 
 Needs `capabilities.localSessionHostTransport`. With `transport: "host"` the
-editor still answers `license`, `auth`, `documentOpen` and `imgurls` itself;
-every other message sdkjs would send to the DocService goes to
-`onSessionMessage`, and whatever the host passes to `sendSessionMessage` reaches
-sdkjs unchanged. Lock arbitration, change order and the participant list are
+editor still answers `license`, `auth`, `documentOpen`, `imgurls`,
+`forceSaveStart`/`forceSave` and `rpc` itself. The co-editing messages
+`getLock`, `releaseLock`, `isSaveLock`, `saveChanges`, `unLockDocument`,
+`cursor`, `message`, `close` and `authChangesAck` go to `onSessionMessage`, and
+whatever the host passes to `sendSessionMessage` reaches sdkjs unchanged.
+`api.js` buffers `sendSessionMessage` calls until the editor frame is ready. Lock arbitration, change order and the participant list are
 the host's job, as in CryptPad, where the host relays over its encrypted
-realtime channel. Messages are plain JSON (changes are strings), so any
-channel works.
+realtime channel. Messages are plain JSON (changes are strings;
+`binaryChanges` stays off), so any channel works.
 
 ```js
 editorConfig: {
   mode: "edit",
-  session: { type: "local", transport: "host" },
+  session: { type: "local", transport: "host", indexUser: 1 },
   coEditing: { mode: "fast", change: false },   // or "strict"
   user: { id: "u1", name: "Alice" },
 },
@@ -213,33 +220,46 @@ events: {
 // and: relay sends with editor.sendSessionMessage(message)
 ```
 
-Locks and changes name their owner by the **connection id**, `user.id` followed
-by `indexUser` (sdkjs `_userId`, for example `u10`), and sdkjs compares against
-it. The host must use the same id. Open in the contract: the editor's local
-`auth` reply chooses `indexUser` (0 today) and the host has no way to read or
-set it. Editors with the same `indexUser` generate the same ids for new objects
-(`<indexUser>_<n>`), so co-editing editors need distinct values.
+The host chooses each editor's `indexUser` with `editorConfig.session.indexUser`
+(default `0`). Give every editor of a document a distinct value: sdkjs builds
+the ids of new objects from it (`<indexUser>_<n>`), so equal values collide.
+`session.participants` optionally seeds the participant list of the editor's
+local `auth` reply (DocService shape, see `connectState` below); in edit mode
+the editor lists itself with `view: false`.
+
+After its local `auth` the editor sends one message the DocService never
+sends:
+
+```js
+{ type: "sessionAuth", user, indexUser, connectionId }
+```
+
+`connectionId` is the id that owns this editor's locks and changes (`user.id`
+followed by `indexUser`, for example `u11`); sdkjs compares lock and change
+owners against it, so the host must use exactly this value. Join the editor to
+the relay when it arrives.
 
 ### Editor → host (`onSessionMessage`)
 
 | `type` | Fields | Host answers |
 |---|---|---|
+| `sessionAuth` | `user`, `indexUser`, `connectionId` | `connectState` to every editor |
 | `getLock` | `block`: array of block ids (word) or objects with `guid` (cell, slide, pdf) | `getLock` to the sender and every other editor |
 | `isSaveLock` | `syncChangesIndex` | `saveLock` to the sender |
 | `saveChanges` | `changes` (JSON string of an array of change strings), `startSaveChanges`, `endSaveChanges`, `deleteIndex`, `releaseLocks`, `unlock`, `isCoAuthoring`, `isExcel`, `excelAdditionalInfo` (JSON string or `null`), `reSave` | `saveChanges` to the others; `savePartChanges` to the sender, or `unSaveLock` after the last chunk |
-| `unSaveLock` | – | `unSaveLock` with `index`, `time`, `syncChangesIndex` all `-1` |
+| `unSaveLock` | – | not in the forwarded set; if it arrives, `unSaveLock` with `index`, `time`, `syncChangesIndex` all `-1` |
 | `unLockDocument` | `isSave`, `unlock`, `deleteIndex`, `releaseLocks` | `releaseLock` to everyone if the sender held locks and `releaseLocks`; `unSaveLock` (`-1`s) if `isSave` |
 | `cursor` | `cursor` | `cursor` to the others |
 | `close` | – | drop the sender's locks (`releaseLock`), new `connectState` |
-| `message`, `getMessages` | – | chat, off in local sessions; ignore |
-| `authChangesAck`, `extendSession`, `clientLog`, `updateVersion` | – | nothing |
-| `forceSaveStart`, `rpc` | – | open in the contract; ignore |
+| `releaseLock` | – | nothing; locks are released through `saveChanges` and `unLockDocument` |
+| `message` | `message` | chat, off in local sessions; ignore |
+| `authChangesAck` | – | nothing |
 
 ### Host → editor (`sendSessionMessage`)
 
 ```js
 { type: "connectState", participantsTimestamp, waitAuth: false, participants: [
-    { id: "u10", idOriginal: "u1", username: "Alice", indexUser: 0,
+    { id: "u11", idOriginal: "u1", username: "Alice", indexUser: 1,
       connectionId: "c1", isCloseCoAuthoring: false, view: false } ] }
 { type: "getLock", locks: { [lockId]: { time, user, block } } }           // every current lock
 { type: "releaseLock", locks: [{ block, user, time, changes: null }] }
@@ -369,19 +389,19 @@ function createRelay() {
 const relay = createRelay();
 const user = { id: "alice", name: "Alice" };
 const alice = new DocsAPI.DocEditor("left", {
-  /* document as in section 3, editorConfig as above with this user */
+  /* document as in section 3, editorConfig as above with this user, indexUser: 1 */
   events: {
-    onSessionMessage: (e) => relay.receive("alice", e.data),
-    // "alice0": user.id + indexUser, see the open point on the connection id
-    onDocumentReady: () => relay.join("alice", { userId: "alice0", indexUser: 0, user,
-      send: (m) => alice.sendSessionMessage(m) }),
+    onSessionMessage: (e) => e.data.type === "sessionAuth"
+      ? relay.join("alice", { userId: e.data.connectionId, indexUser: e.data.indexUser,
+          user, send: (m) => alice.sendSessionMessage(m) })
+      : relay.receive("alice", e.data),
   },
 });
-// the same for "bob" in a second placeholder
+// the same for "bob" in a second placeholder, with session.indexUser: 2
 ```
 
-Messages an editor sends before `join` need the connection id; the e2e relay
-queues them until the editor has joined.
+`sessionAuth` comes before any other co-editing message of that editor; the
+e2e relay still queues messages from editors that have not joined.
 
 ## 5. Opening from Editor.bin and saved changes
 
@@ -406,11 +426,10 @@ document: {
 - `changes` go into the editor's local `auth` reply (and `authChanges`), so
   sdkjs replays them as it does a server session's pending changes. They also
   work with a normal (`format` unset) source.
-- Open in the contract: the element shape of `changes`. It says "as sdkjs sends
-  them in `saveChanges`"; the simplest reading is the change strings of every
-  batch in list order (`JSON.parse(msg.changes)` of each `saveChanges`,
-  flattened). Whether DocService-style records (`{ change, user, time, … }`)
-  are accepted as well is for the implementation to settle.
+- Each element of `changes` is either a DocService record
+  `{ docid, change, time, user, useridoriginal }`, exactly what the relay sent
+  to the other editors, or a plain change string (`JSON.parse(msg.changes)` of
+  each `saveChanges`, flattened). Keep the order of the host's change list.
 
 ## 6. Using the converter on its own
 
@@ -535,8 +554,9 @@ DocsAPI.DocEditor ──postMessage openDocumentSource──► web-apps LocalSe
   `{ data, format, fileType, title, isPrint, options }` and answers
   `{ status: "ok", data: url }` or `{ status: "err", error }`. `uploadImages`
   answers with blob URLs of the stored media.
-- In transport `host`, `auth` is still answered in the frame, so the host
-  never sees it; the host's first messages are `connectState`.
+- In transport `host`, `auth` is still answered in the frame from
+  `session.indexUser` and `session.participants`; the host learns the result
+  from `sessionAuth` and answers with `connectState`.
 
 Code: `sdkjs/common/docscoapi.js` (transport registry and adapter),
 `web-apps/apps/common/main/lib/util/LocalSession.js` (session logic, tested
@@ -563,10 +583,8 @@ without the UI), `web-apps/apps/common/main/lib/controller/LocalSession.js`,
 - The host owns storage and, in transport `host`, the relay: lock arbitration,
   change order and participants. There is no `waitAuth` handshake for late
   joiners; open them from the same base plus the changes so far (section 5).
-- Open in the contract: how the host learns or sets each editor's connection
-  id and `indexUser` (section 4), the element shape of `source.changes`,
-  saving to formats x2t cannot write, `forceSaveStart` and `rpc` in transport
-  `host`, and images inserted by URL.
+- Files in formats x2t cannot write are saved as OOXML (section 3).
+- Images by URL need CORS on the image's server.
 - No server spellcheck, plugins that call the server, version history, chat,
   forcesave callbacks or presenter mode in a local session.
 - Visio and the forms app are not wired. The mobile document, spreadsheet and
@@ -586,7 +604,7 @@ covers the same ground with the stock `api.js`:
 |---|---|
 | `connectMockServer(server)`, `server.onMessage(msg)` fed by the `cryptPadSendMessageFromOO` event | `session: { type: "local", transport: "host" }` and `events.onSessionMessage` |
 | `cryptPadMessageToOO(msg)` / `sendMessageToOO(msg)` | `docEditor.sendSessionMessage(msg)`, same message shapes |
-| the host answers `auth`: `authChanges`, `auth` with `server.getParticipants()` and `indexUser`, `documentOpen` with `Editor.bin` | answered in the frame; participants arrive with `connectState` from the host, `Editor.bin` with `source: { data, format: "bin" }`, initial changes with `source.changes`. Choosing `indexUser` is open (section 4) |
+| the host answers `auth`: `authChanges`, `auth` with `server.getParticipants()` and `indexUser`, `documentOpen` with `Editor.bin` | answered in the frame; `indexUser` and the initial participants come from `session.indexUser` / `session.participants`, the result is reported with `sessionAuth`, later participants arrive with `connectState`, `Editor.bin` with `source: { data, format: "bin" }`, initial changes with `source.changes` |
 | `server.getInitialChanges()` (patches since the checkpoint) | `document.source.changes` |
 | `getImageURL(name)` resolving images to blob URLs, `g_oDocumentUrls.addImageUrl` from the host | `source.media` at open, `addSessionMedia({ name: blob })` later |
 | `APP.AddImage` / `APP.UploadImageFiles` with CryptPad's file picker | the editor's own image insert and paste; `onLocalSessionMedia { name, blob }` gives the host the file to encrypt and share |
