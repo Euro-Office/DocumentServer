@@ -129,8 +129,9 @@ async function openSingle(
           mode,
           session: { type: 'local', transport: 'self' },
           user: { id: 'alice', name: 'Alice' },
-          // Keep the mobile document editor out of its read-only reader view.
-          customization: { mobile: { standardView: true } },
+          // The mobile editors open read-only (forceView) and in the reflowed
+          // mobile view by default; edit in the standard view instead.
+          customization: { mobile: { forceView: false, standardView: true } },
         },
         events: {
           onDocumentReady: () => resolve({ ready: true }),
