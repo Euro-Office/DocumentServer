@@ -1,4 +1,5 @@
-import { test, expect, Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
+import { test, expect } from './diagnostics';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { editorApi } from './helpers';

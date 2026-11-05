@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './diagnostics';
 
 // Canvas id differs by engine: doc/presentation use #id_viewer, spreadsheet #ws-canvas.
 // PDF excluded: with ?type=mobile, api.js coerces appType to 'word', so a .pdf loads the same
