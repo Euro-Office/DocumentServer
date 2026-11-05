@@ -202,8 +202,10 @@ editor still answers `license`, `auth`, `documentOpen`, `imgurls`,
 `getLock`, `releaseLock`, `isSaveLock`, `saveChanges`, `unLockDocument`,
 `cursor`, `message`, `close` and `authChangesAck` go to `onSessionMessage`, and
 whatever the host passes to `sendSessionMessage` reaches sdkjs unchanged.
-`api.js` buffers `sendSessionMessage` calls until the editor frame is ready. Lock arbitration, change order and the participant list are
-the host's job, as in CryptPad, where the host relays over its encrypted
+`api.js` buffers `sendSessionMessage` calls until the editor frame is ready,
+and sdkjs receives every message asynchronously, as from a socket, so a host
+may answer synchronously inside its `onSessionMessage` handler. Lock
+arbitration, change order and the participant list are the host's job, as in CryptPad, where the host relays over its encrypted
 realtime channel. Messages are plain JSON (changes are strings;
 `binaryChanges` stays off), so any channel works.
 
@@ -247,7 +249,7 @@ the relay when it arrives.
 | `getLock` | `block`: array of block ids (word) or objects with `guid` (cell, slide, pdf) | `getLock` to the sender and every other editor |
 | `isSaveLock` | `syncChangesIndex` | `saveLock` to the sender |
 | `saveChanges` | `changes` (JSON string of an array of change strings), `startSaveChanges`, `endSaveChanges`, `deleteIndex`, `releaseLocks`, `unlock`, `isCoAuthoring`, `isExcel`, `excelAdditionalInfo` (JSON string or `null`), `reSave` | `saveChanges` to the others; `savePartChanges` to the sender, or `unSaveLock` after the last chunk |
-| `unSaveLock` | – | not in the forwarded set; if it arrives, `unSaveLock` with `index`, `time`, `syncChangesIndex` all `-1` |
+| `unSaveLock` | – | not in the forwarded set; if it arrives, `unSaveLock` with `index`, `time`, `syncChangesIndex` all `-1` (sdkjs resends it every 10 s until answered) |
 | `unLockDocument` | `isSave`, `unlock`, `deleteIndex`, `releaseLocks` | `releaseLock` to everyone if the sender held locks and `releaseLocks`; `unSaveLock` (`-1`s) if `isSave` |
 | `cursor` | `cursor` | `cursor` to the others |
 | `close` | – | drop the sender's locks (`releaseLock`), new `connectState` |
@@ -291,13 +293,19 @@ The rules, from `server/DocService/sources/DocsCoServer.js`:
   `syncChangesIndex` are the list length after appending. To the sender,
   `index` (or `changesIndex` in `savePartChanges`) is the batch's start index
   when it is the first chunk without `deleteIndex`, else `-1`;
-  `syncChangesIndex` is the list length and `time` the batch time in ms.
+  `syncChangesIndex` is the list length and `time` the batch time in ms (a
+  number; sdkjs requires it). A batch larger than about 1.5 MB arrives in
+  several chunks: answer each but the last with `savePartChanges`.
 - **Releasing with the save**: with `releaseLocks` on the last chunk, remove the
   sender's locks and send them as `locks` in the others' `saveChanges`.
 
 Not covered: the `waitAuth` handshake and `authChanges` for editors that join
 after changes were made. Open such an editor from the same base with the
 changes so far (section 5) instead.
+
+Connections: when the host closes the transport (sdkjs `onClose(false)`), sdkjs
+does not reconnect by itself. The editor authenticates again, and sends a new
+`sessionAuth`, when the transport reopens.
 
 ### A minimal relay
 
@@ -423,8 +431,9 @@ document: {
 
 - `Editor.bin` is tied to the editor build that wrote it (section 9). Keep the
   original file, or a saved one, to rebuild the checkpoint after an upgrade.
-- `changes` go into the editor's local `auth` reply (and `authChanges`), so
-  sdkjs replays them as it does a server session's pending changes. They also
+- The editor sends `changes` to sdkjs as `{ type: "authChanges", changes }`
+  before its local `auth` reply (sdkjs ignores `auth.changes`), so they replay
+  as a server session's pending changes do. They also
   work with a normal (`format` unset) source.
 - Each element of `changes` is either a DocService record
   `{ docid, change, time, user, useridoriginal }`, exactly what the relay sent
@@ -542,7 +551,8 @@ DocsAPI.DocEditor ──postMessage openDocumentSource──► web-apps LocalSe
 
 - web-apps registers the transport with `AscCommon.setLocalSessionTransport`
   before `asc_setDocInfo`; sdkjs wraps it so `DocsCoApi` keeps its normal
-  `auth`/`license`/`documentOpen` flow. Reconnection is not modelled.
+  `auth`/`license`/`documentOpen` flow. Transport callbacks reach sdkjs
+  asynchronously. sdkjs does not reconnect a closed transport on its own.
 - The `documentOpen` reply lists every extracted image as `media/<name>`, which
   `g_oDocumentUrls` resolves like a server session. Inserted images and
   `addSessionMedia` go into the same map, so no image hook exists.
