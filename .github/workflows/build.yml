@@ -106,9 +106,17 @@ jobs:
   #              (euro-office → GitHub Release, nextcloud-office → artifact for
   #              the publish-nextcloud-* jobs)
   # ─────────────────────────────────────────────────────────────
+  # Without a package of the pinned core yet, wait for core's CI instead of building core
+  wait-for-core:
+    uses: $/.github/workflows/wait-for-core.yml
+    permissions:
+      contents: read
+    with:
+      packages: linux-amd64/server linux-arm64/server
+
   build:
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
-    needs: scope
+    needs: [scope, wait-for-core]
     outputs:
       # Identical in every matrix leg (depends on the ref only), so it does
       # not matter which leg writes it last.

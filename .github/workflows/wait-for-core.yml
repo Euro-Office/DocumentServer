@@ -1,0 +1,111 @@
+# SPDX-FileCopyrightText: 2026 Euro-Office contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Holds a run back while core's CI builds the packages of the pinned core, so that it doesn't
+# build core itself. A job of the environment core-package-wait, which has a wait timer of 15
+# minutes, waits without a runner. After four rounds, or when core's CI ended, the run goes on
+# and builds core if it has to. Without the environment there is no timer, so it doesn't wait.
+name: Wait for core
+
+on:
+  workflow_call:
+    inputs:
+      packages:
+        description: The packages this repository needs, as <platform>/<product>
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  # As the release builds, which take only packages of core's main and stable branches
+  EO_CORE_CHANNELS: ${{ startsWith(github.ref, 'refs/tags/') && 'main' || '' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    outputs:
+      pending: ${{ steps.pending.outputs.pending }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: pending
+        uses: ./.github/actions/core-pending
+        with:
+          packages: ${{ inputs.packages }}
+
+  wait-1:
+    needs: check
+    if: needs.check.outputs.pending == 'true'
+    environment: core-package-wait
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    outputs:
+      pending: ${{ steps.pending.outputs.pending }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: pending
+        uses: ./.github/actions/core-pending
+        with:
+          packages: ${{ inputs.packages }}
+
+  wait-2:
+    needs: wait-1
+    if: needs.wait-1.outputs.pending == 'true'
+    environment: core-package-wait
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    outputs:
+      pending: ${{ steps.pending.outputs.pending }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: pending
+        uses: ./.github/actions/core-pending
+        with:
+          packages: ${{ inputs.packages }}
+
+  wait-3:
+    needs: wait-2
+    if: needs.wait-2.outputs.pending == 'true'
+    environment: core-package-wait
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    outputs:
+      pending: ${{ steps.pending.outputs.pending }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: pending
+        uses: ./.github/actions/core-pending
+        with:
+          packages: ${{ inputs.packages }}
+
+  wait-4:
+    needs: wait-3
+    if: needs.wait-3.outputs.pending == 'true'
+    environment: core-package-wait
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    outputs:
+      pending: ${{ steps.pending.outputs.pending }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: pending
+        uses: ./.github/actions/core-pending
+        with:
+          packages: ${{ inputs.packages }}
