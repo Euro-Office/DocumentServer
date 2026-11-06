@@ -41,8 +41,6 @@ FROM alpine AS bundle
 
     COPY --from=core ${BUILD_ROOT}/bin/ /build/documentserver/server/FileConverter/bin/
     COPY --from=core ${BUILD_ROOT}/tools/ /build/documentserver/server/tools/
-    COPY --from=core ${BUILD_ROOT}/*.so* /build/documentserver/server/FileConverter/lib/
-    COPY --from=core ${BUILD_ROOT}/tools/*.so* /build/documentserver/server/tools/
 
     COPY --from=server ${BUILD_ROOT}/docservice    /build/documentserver/server/DocService/docservice
     COPY --from=server ${BUILD_ROOT}/fileconverter /build/documentserver/server/FileConverter/converter
