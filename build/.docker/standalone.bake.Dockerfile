@@ -83,6 +83,10 @@ RUN apt-get update && \
 # The packages are bind-mounted rather than copied in. The packages context
 # holds both the .deb and the .rpm (~1.2 GB together), and a COPY commits them
 # to a layer of their own that a later `rm` cannot shrink (#76).
+#
+# DS_PLUGIN_INSTALLATION=false skips the postinst plugin download from the
+# plugin store: the image ships the bundled plugins, and the entrypoint runs
+# the update at start unless PLUGINS_ENABLED=false.
 ARG TARGETARCH
 RUN --mount=type=bind,from=packages,target=/mnt/packages \
     apt-get update && \
@@ -100,7 +104,7 @@ RUN --mount=type=bind,from=packages,target=/mnt/packages \
     echo "${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW} ds/db-user string eurooffice" | debconf-set-selections && \
     echo "${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW} ds/db-pwd password eurooffice" | debconf-set-selections && \
     echo "${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW} ds/db-name string eurooffice" | debconf-set-selections && \
-    DS_DOCKER_INSTALLATION=true apt-get install -yq /mnt/packages/${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW}_${PRODUCT_VERSION}-${BUILD_NUMBER}_${TARGETARCH}.deb && \
+    DS_DOCKER_INSTALLATION=true DS_PLUGIN_INSTALLATION=false apt-get install -yq /mnt/packages/${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW}_${PRODUCT_VERSION}-${BUILD_NUMBER}_${TARGETARCH}.deb && \
     (runuser -u rabbitmq -- rabbitmqctl shutdown || true) && \
     service postgresql stop && \
     rm -rf /var/lib/rabbitmq/mnesia /var/lib/apt/lists/* /tmp/*
