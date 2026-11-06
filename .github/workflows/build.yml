@@ -174,6 +174,7 @@ jobs:
           git submodule status
 
       - name: Set up Docker Buildx
+        id: buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GitHub Container Registry
@@ -329,6 +330,31 @@ jobs:
         run: |
           echo "dir=$(./build/fetch-core.sh ${{ startsWith(github.ref, 'refs/tags/') && '--channels main' || '' }})" >> "$GITHUB_OUTPUT"
 
+      # Without a package the bake builds core. The hosted runners start with
+      # an empty BuildKit cache, so ccache keeps the objects. Not for releases.
+      - name: Restore ccache
+        if: steps.core.outputs.dir == '' && !startsWith(github.ref, 'refs/tags/')
+        id: ccache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0 # zizmor: ignore[cache-poisoning]
+        with:
+          path: ccache
+          # A new key per run: an exact hit would save nothing
+          key: ccache-core-${{ matrix.brand.name }}-${{ matrix.arch }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-core-${{ matrix.brand.name }}-${{ matrix.arch }}-
+            ccache-core-
+
+      - name: Inject ccache into BuildKit
+        if: steps.core.outputs.dir == '' && !startsWith(github.ref, 'refs/tags/')
+        uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723 # v3.4.0
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          cache-map: |
+            {
+              "ccache": { "target": "/ccache", "id": "core-ccache" }
+            }
+          skip-extraction: ${{ steps.ccache.outputs.cache-hit }}
+
       - name: Build all targets (packages → docker → develop)
         uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
         with:
@@ -355,6 +381,7 @@ jobs:
           # set: block below, which is parsed line by line.)
           set: |
             *.context=..
+            core.args.CORE_CCACHE=1
             core.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}core-buildcache-${{ matrix.arch }}
             core.cache-from+=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_fallback }}-${{ matrix.brand.cache_prefix }}core-buildcache-${{ matrix.arch }}
             core.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}core-buildcache-${{ matrix.arch }},mode=max
