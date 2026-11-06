@@ -20,9 +20,6 @@ while getopts ":fpd" opt; do
 done
 shift $((OPTIND-1))
 
-. /usr/local/lib/euro-office/bool.sh
-normalize_bool PLUGINS_MARKET_DISABLED
-
 cleanup_dir() {
   local dir="$1"
   if [[ -d "$dir" ]]; then
@@ -61,13 +58,12 @@ build_plugins() {
   cleanup_dir "$buffer_dir"
   chmod 755 "$WORK_DIR/sdkjs-plugins"
   if [[ -n "$PLUGINS_LIST_DEFAULT" ]]; then
-    find "$WORK_DIR/sdkjs-plugins" -mindepth 1 -maxdepth 1 -name '{*' -exec rm -rf -- {} +
+    # The list replaces the bundled set, so only the v1/ runtime helpers stay
+    find "$WORK_DIR/sdkjs-plugins" -mindepth 1 -maxdepth 1 -type d ! -name v1 -exec rm -rf -- {} +
   fi
-  if [[ "${PLUGINS_MARKET_DISABLED}" == "true" ]]; then
-    chmod 755 -R "$WORK_DIR/sdkjs-plugins/marketplace"
-    rm -rf "$WORK_DIR/sdkjs-plugins/marketplace"
-  fi
-  /usr/local/bin/documentserver-pluginsmanager.sh -r false -k true --update=\"/var/www/$COMPANY_NAME/documentserver/sdkjs-plugins/plugin-list-default.json\"
+  # Not fatal: the bundled plugins are already in place and still get copied
+  /usr/local/bin/documentserver-pluginsmanager.sh -r false -k true --update=\"/var/www/$COMPANY_NAME/documentserver/sdkjs-plugins/plugin-list-default.json\" \
+    || echo -e "\e[0;31m Plugin update failed, keeping the bundled plugins \e[0m"
   mkdir -p "$buffer_dir"
   cp -ra "$WORK_DIR/sdkjs-plugins" "$buffer_dir/"
   echo -e "\e[0;32m Changed files have been added successfully \e[0m"
