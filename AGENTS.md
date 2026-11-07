@@ -65,6 +65,7 @@ docker compose exec -T eo make web-apps-dev       # fast rebuild, skips npm inst
 docker compose exec -T eo make sdkjs              # closure compile + allfontsgen
 docker compose exec -T eo make core               # all of core; subsets: core/x2t, core/allfontsgen, ...
 docker compose exec -T eo make server/docservice  # also: server/converter, server/metrics, server/adminp
+docker compose exec -T eo make core/wasm/x2t      # x2t.wasm for client-only (local) sessions, deployed to /x2t/
 ```
 
 For changes spanning several submodules, run the targets back to back (e.g. `make sdkjs web-apps`). First run of each target installs npm deps and is slow; later runs are faster. Core builds are incremental (ninja) only for the lifetime of the container. `web-apps`/`sdkjs` targets flush the nginx cache tag automatically.
@@ -114,6 +115,20 @@ Run a building instance from its own git worktree so builds don't share `node_mo
 ### Verify in a browser (Playwright MCP)
 
 Don't trust HTTP 200 — the editor shell can load while the document download fails. `browser_navigate` to a create-new URL (`…/example/editor?fileExt=docx|xlsx|pptx|pdf`; `?fileName=` expects an existing file and fails), `browser_wait_for` a few seconds, then `browser_snapshot`/`browser_take_screenshot` to confirm the toolbar and page render with no error dialog, plus `browser_console_messages` at level `error`. If it won't open, check `ds-example_out.log` (JWT) and `converter/out.log` (download 403) — usually a JWT secret mismatch.
+
+### Test submodule branches in CI
+
+A DocumentServer PR builds the image from the submodule commits it pins. To build and e2e-test unmerged submodule work instead, add lines like these to the PR description, then push a commit (a run reads the description from its triggering event, so re-running an older run does not pick up edits):
+
+```
+core-branch: feat/x2t-wasm
+sdkjs-branch: feat/local-session-transport
+web-apps-branch: feat/local-session
+server-branch: <branch>
+document-server-package-branch: feat/x2t-location
+```
+
+A manual run of the CI workflow takes the same branches as inputs (core, sdkjs, web-apps, server).
 
 ## Commits
 

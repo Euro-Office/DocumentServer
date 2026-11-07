@@ -8,6 +8,7 @@
 # - core: builds from core repo
 # - web-apps: builds from web-apps repo
 # - sdkjs: builds from sdkjs repo
+# - core-wasm: wasm modules from core repository (x2t for local sessions)
 # - example: builds from example repo
 # ==============================================================================
 
@@ -43,6 +44,12 @@ FROM alpine AS bundle
     COPY --from=core ${BUILD_ROOT}/tools/ /build/documentserver/server/tools/
     COPY --from=core ${BUILD_ROOT}/*.so* /build/documentserver/server/FileConverter/lib/
     COPY --from=core ${BUILD_ROOT}/tools/*.so* /build/documentserver/server/tools/
+
+    # x2t for the browser (local sessions). Served next to web-apps/ and sdkjs/
+    # as /x2t/. Copied through a staging dir so the bundle still builds while
+    # core-wasm does not produce it yet.
+    COPY --from=core-wasm ${BUILD_ROOT}/ /tmp/core-wasm/
+    RUN if [ -d /tmp/core-wasm/x2t ]; then cp -a /tmp/core-wasm/x2t /build/documentserver/x2t; fi && rm -rf /tmp/core-wasm
 
     COPY --from=server ${BUILD_ROOT}/docservice    /build/documentserver/server/DocService/docservice
     COPY --from=server ${BUILD_ROOT}/fileconverter /build/documentserver/server/FileConverter/converter
