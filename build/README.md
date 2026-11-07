@@ -58,8 +58,9 @@ available space.
 
 ### Prebuilt core
 
-Core CI publishes its build output for every commit on main and every pull
-request. To use it instead of building core:
+Core CI publishes its build output for every commit on main and for pull
+requests from branches of the core repository that are up to date with their
+base. To use it instead of building core:
 
 ```sh
 cd DocumentServer/build
