@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Euro-Office contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
 # Puts the prebuilt core for the core checkout into build/core-prebuilt, laid
 # out like the core target's image (${BUILD_ROOT}/bin and /tools), and prints
 # the context for docker-bake.hcl's CORE_PREBUILT ("./core-prebuilt"). Prints
