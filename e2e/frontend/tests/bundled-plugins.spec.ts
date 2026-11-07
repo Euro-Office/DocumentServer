@@ -2,7 +2,7 @@ import { test, expect, Page } from '@playwright/test';
 import { openNewEditor } from './helpers';
 
 // Plugins shipped in the image by plugins/scripts/bundle.sh (bundle.txt)
-const BUNDLED = ['highlightcode', 'photoeditor', 'mendeley'];
+const BUNDLED = ['highlightcode', 'photoeditor', 'doc2md', 'html'];
 
 /** Records requests to the upstream plugin host and errors raised by plugin code. */
 function watch(page: Page) {
