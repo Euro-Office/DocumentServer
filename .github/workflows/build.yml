@@ -48,6 +48,7 @@ jobs:
     outputs:
       matrix: ${{ steps.scope.outputs.matrix }}
       targets: ${{ steps.scope.outputs.targets }}
+      core_packages: ${{ steps.scope.outputs.core_packages }}
     steps:
       - name: Choose matrix and targets
         id: scope
@@ -90,6 +91,7 @@ jobs:
           fi
           echo "matrix=$(jq -nc --argjson arch "$arch" --argjson brand "$brands" '{arch: $arch, brand: $brand}')" >> "$GITHUB_OUTPUT"
           echo "targets=$targets" >> "$GITHUB_OUTPUT"
+          echo "core_packages=$(jq -r 'map("linux-\(.)/server") | join(" ")' <<<"$arch")" >> "$GITHUB_OUTPUT"
 
   # ─────────────────────────────────────────────────────────────
   # BUILD
@@ -106,9 +108,18 @@ jobs:
   #              (euro-office → GitHub Release, nextcloud-office → artifact for
   #              the publish-nextcloud-* jobs)
   # ─────────────────────────────────────────────────────────────
+  # Without a package of the pinned core yet, wait for core's CI instead of building core
+  wait-for-core:
+    needs: scope
+    uses: $/.github/workflows/wait-for-core.yml
+    permissions:
+      contents: read
+    with:
+      packages: ${{ needs.scope.outputs.core_packages }}
+
   build:
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
-    needs: scope
+    needs: [scope, wait-for-core]
     outputs:
       # Identical in every matrix leg (depends on the ref only), so it does
       # not matter which leg writes it last.
@@ -174,6 +185,7 @@ jobs:
           git submodule status
 
       - name: Set up Docker Buildx
+        id: buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GitHub Container Registry
@@ -322,6 +334,42 @@ jobs:
             fi
           fi
 
+      # The prebuilt core when the build cache has it (releases and main
+      # only take packages built on core's main and stable branches); empty
+      # to build core in the bake. A no-cache build always builds core.
+      - name: Fetch prebuilt core
+        id: core
+        env:
+          EO_CORE_CACHE: ${{ steps.meta.outputs.no_cache == 'true' && 'off' || 'auto' }}
+        run: |
+          dir=$(./build/fetch-core.sh ${{ (startsWith(github.ref, 'refs/tags/') || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) && '--channels main' || '' }})
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+
+      # Without a package the bake builds core. The hosted runners start with
+      # an empty BuildKit cache, so ccache keeps the objects. Not for releases.
+      - name: Restore ccache
+        if: steps.core.outputs.dir == '' && !startsWith(github.ref, 'refs/tags/') && steps.meta.outputs.no_cache != 'true'
+        id: ccache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0 # zizmor: ignore[cache-poisoning]
+        with:
+          path: ccache
+          # A new key per run: an exact hit would save nothing
+          key: ccache-core-${{ matrix.brand.name }}-${{ matrix.arch }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-core-${{ matrix.brand.name }}-${{ matrix.arch }}-
+            ccache-core-
+
+      - name: Inject ccache into BuildKit
+        if: steps.core.outputs.dir == '' && !startsWith(github.ref, 'refs/tags/') && steps.meta.outputs.no_cache != 'true'
+        uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723 # v3.4.0
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          cache-map: |
+            {
+              "ccache": { "target": "/ccache", "id": "core-ccache" }
+            }
+          skip-extraction: ${{ steps.ccache.outputs.cache-hit }}
+
       - name: Build all targets (packages → docker → develop)
         uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
         with:
@@ -348,6 +396,7 @@ jobs:
           # set: block below, which is parsed line by line.)
           set: |
             *.context=..
+            core.args.CORE_CCACHE=1
             core.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}core-buildcache-${{ matrix.arch }}
             core.cache-from+=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_fallback }}-${{ matrix.brand.cache_prefix }}core-buildcache-${{ matrix.arch }}
             core.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}core-buildcache-${{ matrix.arch }},mode=max
@@ -413,6 +462,7 @@ jobs:
           BUILD_COMMITS: ${{ steps.meta.outputs.build_commits }}
           OS_UPDATE_STAMP: ${{ steps.meta.outputs.os_update_stamp }}
           BUILD_ROOT: ${{ env.BUILD_ROOT }}
+          CORE_PREBUILT: ${{ steps.core.outputs.dir }}
           NUGET_CACHE: local
 
       # Pushed with skopeo and a private authfile rather than docker login:

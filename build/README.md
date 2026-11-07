@@ -56,6 +56,21 @@ CACHE_ROOT=/path/with/enough/space docker buildx bake develop
 `CACHE_ROOT` should be an absolute path on a filesystem with sufficient
 available space.
 
+### Prebuilt core
+
+Core CI publishes its build output for every commit on main and for pull
+requests from branches of the core repository that are up to date with their
+base. To use it instead of building core:
+
+```sh
+cd DocumentServer/build
+CORE_PREBUILT=$(./fetch-core.sh) docker buildx bake
+```
+
+`fetch-core.sh` downloads the package for the `core` checkout. It prints
+nothing, and the bake builds core, when there is none or `core` has local
+changes.
+
 ## Running the Container
 
 After building the image, you can run it with a simple `docker run`.
