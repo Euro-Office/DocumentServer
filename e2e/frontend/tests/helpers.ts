@@ -32,11 +32,16 @@ export async function openNewEditor(page: Page, selector: string, urlExt: RegExp
 /**
  * Evaluate a function against the editor's automation API (window.Asc.editor)
  * inside the editor iframe. The function is serialized, so it must be
- * self-contained (no closures over test scope).
+ * self-contained (no closures over test scope). Pass `iframe` to pick one
+ * editor on a page that hosts several.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function editorApi<T>(editorPage: Page, fn: (api: any) => T): Promise<T> {
-  const handle = await editorPage.locator(EDITOR_IFRAME).elementHandle();
+export async function editorApi<T>(
+  editorPage: Page,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  fn: (api: any) => T,
+  iframe: string = EDITOR_IFRAME,
+): Promise<T> {
+  const handle = await editorPage.locator(iframe).elementHandle();
   if (!handle) throw new Error('editor iframe not found');
   const frame = await handle.contentFrame();
   if (!frame) throw new Error('editor iframe has no content frame');

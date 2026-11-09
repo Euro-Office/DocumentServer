@@ -155,6 +155,11 @@ build-draw:
 build-oform:
 	$(call build_wasm,/build/wasm/oform,$(EO_DEV)/core/DesktopEditor/xmlsec/src/wasm/oform_plugin/module/deploy,$(EO_DEV)/core/DesktopEditor/xmlsec/src/wasm/oform_plugin/module)
 
+# x2t for the browser (local sessions); core writes it to <output dir>/x2t/,
+# which the Document Server serves as /x2t/ next to web-apps/ and sdkjs/.
+build-x2t:
+	$(call build_wasm,/build/wasm/x2t,$(EO_ROOT),$(EO_DEV)/core/X2tConverter/build/wasm)
+
 core/wasm/font: build-font
 	@$(MAKE) sdkjs
 
@@ -171,6 +176,9 @@ core/wasm/draw: build-draw
 	@$(MAKE) sdkjs
 
 core/wasm/oform: build-oform
+
+core/wasm/x2t: build-x2t
+	$(FLUSH_CACHE)
 
 core/wasm: build-font build-spell build-zlib build-hash build-draw
 	@echo "All WASM modules built. Running sdkjs..."
