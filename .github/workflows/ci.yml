@@ -109,6 +109,27 @@ jobs:
       NEXTCLOUD_USER: ${{ secrets.NEXTCLOUD_USER }}
       NEXTCLOUD_PASS: ${{ secrets.NEXTCLOUD_PASS }}
 
+  # Every run that built core saves its ccache under a new key, and only the
+  # newest one per leg is restored. Deletes the others of this ref, or the
+  # caches outgrow their limit and GitHub evicts the ones still in use.
+  prune-ccache:
+    runs-on: ubuntu-latest
+    needs: build
+    if: always()
+    permissions:
+      actions: write
+    steps:
+      - name: Prune
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh cache list --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF" --key ccache-core- \
+              --sort created_at --order desc --limit 1000 --json id,key |
+            jq -r 'group_by(.key | sub("-[0-9]+$"; "")) | map(.[1:]) | flatten | .[].id' |
+            while read -r id; do
+              gh cache delete "$id" --repo "$GITHUB_REPOSITORY" || true
+            done
+
   # Points release/v* PRs (opened by Euro-Office/release) to the test build.
   # Edits its previous comment on re-runs instead of adding a new one.
   pr-comment:

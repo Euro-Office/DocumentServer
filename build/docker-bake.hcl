@@ -50,6 +50,11 @@ variable "BUILD_ROOT" {
   default = "/package"
 }
 
+# A prebuilt core (fetch-core.sh prints it) instead of building core
+variable "CORE_PREBUILT" {
+  default = ""
+}
+
 variable "PACKAGE_BASE" {
   default = "docsrv-build"
 }
@@ -204,7 +209,7 @@ target "bundle" {
   target     = "bundle"
   tags       = ["${REGISTRY}/bundle:${TAG}"]
   contexts = {
-    core          = "target:core"
+    core          = CORE_PREBUILT != "" ? CORE_PREBUILT : "target:core"
     server        = "target:server"
     sdkjs         = "target:sdkjs"
     web-apps      = "target:web-apps"
