@@ -374,6 +374,29 @@ jobs:
             }
           skip-extraction: ${{ steps.ccache.outputs.cache-hit }}
 
+      # The same for core-wasm when there is no wasm package
+      - name: Restore wasm ccache
+        if: steps.core.outputs.wasm == '' && !startsWith(github.ref, 'refs/tags/') && steps.meta.outputs.no_cache != 'true'
+        id: wasm-ccache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0 # zizmor: ignore[cache-poisoning]
+        with:
+          path: wasm-ccache
+          key: ccache-wasm-${{ matrix.brand.name }}-${{ matrix.arch }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-wasm-${{ matrix.brand.name }}-${{ matrix.arch }}-
+            ccache-wasm-
+
+      - name: Inject wasm ccache into BuildKit
+        if: steps.core.outputs.wasm == '' && !startsWith(github.ref, 'refs/tags/') && steps.meta.outputs.no_cache != 'true'
+        uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723 # v3.4.0
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          cache-map: |
+            {
+              "wasm-ccache": { "target": "/ccache", "id": "wasm-ccache" }
+            }
+          skip-extraction: ${{ steps.wasm-ccache.outputs.cache-hit }}
+
       - name: Build all targets (packages → docker → develop)
         uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
         with:
