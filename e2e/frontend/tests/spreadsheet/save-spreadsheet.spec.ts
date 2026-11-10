@@ -1,5 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-import { openNewEditor, editorApi } from '../helpers';
+import { openNewEditor, editorApi, downloadStoredFile, saveAndReopen } from '../helpers';
 
 // What each cell holds as text.
 const CELLS: [cell: string, text: string][] = [
@@ -16,22 +16,21 @@ const cellText = (editorPage: Page) =>
   }).catch((e: Error) => `error: ${e.message}`);
 
 test.describe('Spreadsheet - add data and save', () => {
-  test('entered cells are saved and survive a reload', async ({ page }) => {
+  test('entered cells are saved and survive closing and reopening', async ({ page }) => {
     // Reloading can need several attempts, so allow more than the default 60s.
     test.setTimeout(120_000);
 
     // 1. Open the example page, click "Spreadsheet" (it has no id, so it is
     //    found by its title) and wait until the new .xlsx editor has finished
     //    loading.
-    const { editorPage, frame } = await openNewEditor(
-      page,
-      'a[title="Create new spreadsheet"]',
-      /\.xlsx/,
-    );
+    const { editorPage, frame } = await openNewEditor(page, 'a[href*="fileExt=xlsx"]', /\.xlsx/);
+
+    // Storage holds the blank template until a save really reaches it.
+    const blank = await downloadStoredFile(page, editorPage.url());
 
     // The name box selects a cell; it is an id, so it is the stable handle.
-    const selectCell = async (cell: string) => {
-      const nameBox = frame.locator('#ce-cell-name');
+    const selectCell = async (editorFrame: typeof frame, cell: string) => {
+      const nameBox = editorFrame.locator('#ce-cell-name');
       await nameBox.fill(cell);
       await nameBox.press('Enter');
     };
@@ -51,7 +50,7 @@ test.describe('Spreadsheet - add data and save', () => {
 
       // 5. Read each cell back through the automation API.
       for (const [cell, text] of CELLS) {
-        await selectCell(cell);
+        await selectCell(frame, cell);
         await expect.poll(() => cellText(editorPage)).toBe(text);
       }
     });
@@ -61,34 +60,30 @@ test.describe('Spreadsheet - add data and save', () => {
     //    relying on autosave), then wait until the changes are saved. The
     //    example page prefixes document.title with "*" while there are unsaved
     //    changes and removes it once they are saved.
-    await test.step('save the spreadsheet with Ctrl+S', async () => {
+    const saved = await test.step('save the spreadsheet with Ctrl+S', async () => {
       await editorPage.keyboard.press('Control+Home');
       await editorPage.keyboard.press('Control+S');
       await expect(editorPage).not.toHaveTitle(/^\*/, { timeout: 30_000 });
+      // The title only reflects the editor's own state. Close the editor so
+      // docservice writes the file back, wait for storage to change, and reopen
+      // the saved file in a new tab (a reload would be served from cache).
+      return saveAndReopen(page, editorPage, blank);
     });
 
-    await test.step('saved data is still there after reload', async () => {
-      // 7. Reload the editor and check every cell. After a reload the editor
-      //    page can come back blank, and a blank page does not recover by
-      //    itself, so the whole reload-and-check is retried as a unit.
+    await test.step('saved data is still there after reopening', async () => {
+      // 7. Check every cell in the reopened editor, retried as a unit.
       await expect(async () => {
-        await editorPage.reload();
-        await editorPage.waitForLoadState('domcontentloaded');
-
         // 8. Wait until the editor has finished loading again. The loading
         //    mask is not enough: it counts as hidden while it does not exist
         //    yet, and the name box shows before the document is loaded.
         //    Selecting a cell too early makes the editor throw in
         //    asc_findCell ("reading 'getWorksheet'") and break, so wait for
         //    the editor's own isDocumentLoadComplete flag.
-        await expect(editorPage.locator('iframe[name="frameEditor"]')).toBeAttached({
-          timeout: 15_000,
-        });
-        await expect(frame.locator('#ce-cell-name')).toBeVisible({ timeout: 15_000 });
+        await expect(saved.frame.locator('#ce-cell-name')).toBeVisible({ timeout: 15_000 });
         await expect
           .poll(
             () =>
-              editorApi(editorPage, (api) => api.isDocumentLoadComplete === true).catch(
+              editorApi(saved.editorPage, (api) => api.isDocumentLoadComplete === true).catch(
                 () => false,
               ),
             { timeout: 30_000 },
@@ -97,8 +92,8 @@ test.describe('Spreadsheet - add data and save', () => {
 
         // 9. Each cell still holds the typed text.
         for (const [cell, text] of CELLS) {
-          await selectCell(cell);
-          await expect.poll(() => cellText(editorPage), { timeout: 10_000 }).toBe(text);
+          await selectCell(saved.frame, cell);
+          await expect.poll(() => cellText(saved.editorPage), { timeout: 10_000 }).toBe(text);
         }
       }).toPass({ timeout: 80_000, intervals: [2_000, 5_000] });
     });

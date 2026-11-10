@@ -26,7 +26,7 @@ e2e/
 │       ├── pdf-form/          create-pdf-form, save-pdf-form
 │       ├── mobile/            mobile-editor
 │       ├── example-page.spec.ts
-│       └── helpers.ts         Shared openNewEditor and editorApi
+│       └── helpers.ts         Shared openNewEditor, editorApi, downloadStoredFile, saveAndReopen
 ├── eslint.config.mjs          ESLint rules (typescript-eslint + Playwright plugin)
 ├── .prettierrc.json           Prettier rules
 ├── .editorconfig              Indentation and line endings
