@@ -91,7 +91,7 @@ jobs:
           fi
           echo "matrix=$(jq -nc --argjson arch "$arch" --argjson brand "$brands" '{arch: $arch, brand: $brand}')" >> "$GITHUB_OUTPUT"
           echo "targets=$targets" >> "$GITHUB_OUTPUT"
-          echo "core_packages=$(jq -r 'map("linux-\(.)/server") | join(" ")' <<<"$arch")" >> "$GITHUB_OUTPUT"
+          echo "core_packages=$(jq -r 'map("linux-\(.)/server") + ["wasm/engine"] | join(" ")' <<<"$arch")" >> "$GITHUB_OUTPUT"
 
   # ─────────────────────────────────────────────────────────────
   # BUILD
@@ -334,16 +334,20 @@ jobs:
             fi
           fi
 
-      # The prebuilt core when the build cache has it (releases and main
-      # only take packages built on core's main and stable branches); empty
-      # to build core in the bake. A no-cache build always builds core.
+      # The prebuilt core and its WebAssembly modules when the build cache
+      # has them (releases and main only take packages built on core's main
+      # and stable branches); empty to build them in the bake. A no-cache
+      # build always builds core.
       - name: Fetch prebuilt core
         id: core
         env:
           EO_CORE_CACHE: ${{ steps.meta.outputs.no_cache == 'true' && 'off' || 'auto' }}
         run: |
-          dir=$(./build/fetch-core.sh ${{ (startsWith(github.ref, 'refs/tags/') || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) && '--channels main' || '' }})
+          channels="${{ (startsWith(github.ref, 'refs/tags/') || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) && '--channels main' || '' }}"
+          dir=$(./build/fetch-core.sh $channels)
           echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          wasm=$(./build/fetch-core-wasm.sh $channels)
+          echo "wasm=$wasm" >> "$GITHUB_OUTPUT"
 
       # Without a package the bake builds core. The hosted runners start with
       # an empty BuildKit cache, so ccache keeps the objects. Not for releases.
@@ -463,6 +467,7 @@ jobs:
           OS_UPDATE_STAMP: ${{ steps.meta.outputs.os_update_stamp }}
           BUILD_ROOT: ${{ env.BUILD_ROOT }}
           CORE_PREBUILT: ${{ steps.core.outputs.dir }}
+          CORE_WASM_PREBUILT: ${{ steps.core.outputs.wasm }}
           NUGET_CACHE: local
 
       # Pushed with skopeo and a private authfile rather than docker login:

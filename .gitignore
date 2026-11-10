@@ -9,3 +9,4 @@ e2e/test-results/
 e2e/dist/
 develop/.env
 build/core-prebuilt/
+build/core-wasm-prebuilt/
