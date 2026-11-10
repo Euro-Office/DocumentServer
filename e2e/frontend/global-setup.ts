@@ -59,6 +59,28 @@ export default async function globalSetup(): Promise<void> {
     throw new Error(`[global-setup] docker run failed:\n${result.stderr}`);
   }
 
+  // docservice sends saved files back to the example app at the address the
+  // browser used (127.0.0.1:HOST_PORT), but inside the container nginx only
+  // listens on 80. Without this forwarder every save-back is refused and the
+  // file ends up in docservice's "forgotten" folder instead of storage.
+  // Workaround for https://github.com/Euro-Office/DocumentServer/issues/157;
+  // remove it once callback URLs no longer depend on the browser-visible port.
+  const forward = spawnSync(
+    'docker',
+    [
+      'exec',
+      '-d',
+      CONTAINER_NAME,
+      'socat',
+      `TCP-LISTEN:${HOST_PORT},bind=127.0.0.1,fork,reuseaddr`,
+      'TCP:127.0.0.1:80',
+    ],
+    { stdio: 'pipe', encoding: 'utf8' },
+  );
+  if (forward.status !== 0) {
+    throw new Error(`[global-setup] could not start the port forwarder:\n${forward.stderr}`);
+  }
+
   process.env.E2E_BASE_URL = `http://localhost:${HOST_PORT}`;
   // Signal teardown that we own the container
   process.env.E2E_DOCKER_MANAGED = 'true';

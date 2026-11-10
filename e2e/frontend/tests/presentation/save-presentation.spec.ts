@@ -1,5 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-import { openNewEditor, editorApi } from '../helpers';
+import { openNewEditor, editorApi, downloadStoredFile, saveAndReopen } from '../helpers';
 
 const TITLE = 'Euro-Office e2e title';
 const SUBTITLE = 'Euro-Office e2e subtitle';
@@ -33,15 +33,14 @@ async function readShape(editorPage: Page, shapeNumber: number) {
 }
 
 test.describe('Presentation - add title and subtitle and save', () => {
-  test('title and subtitle are saved and survive a reload', async ({ page }) => {
+  test('title and subtitle are saved and survive closing and reopening', async ({ page }) => {
     // 1. Open the example page, click "Presentation" (it has no id, so it is
     //    found by its title) and wait until the new .pptx editor has finished
     //    loading.
-    const { editorPage, frame } = await openNewEditor(
-      page,
-      'a[title="Create new presentation"]',
-      /\.pptx/,
-    );
+    const { editorPage, frame } = await openNewEditor(page, 'a[href*="fileExt=pptx"]', /\.pptx/);
+
+    // Storage holds the blank template until a save really reaches it.
+    const blank = await downloadStoredFile(page, editorPage.url());
 
     await test.step('add title and subtitle', async () => {
       // 2. Type the title and the subtitle into their placeholders.
@@ -60,34 +59,26 @@ test.describe('Presentation - add title and subtitle and save', () => {
     //    autosave), then wait until the changes are saved. The example page
     //    prefixes document.title with "*" while there are unsaved changes and
     //    removes it once they are saved.
-    await test.step('save the presentation with Ctrl+S', async () => {
+    const saved = await test.step('save the presentation with Ctrl+S', async () => {
       await editorPage.keyboard.press('Escape');
       await editorPage.keyboard.press('Escape');
       await editorPage.keyboard.press('Control+S');
       await expect(editorPage).not.toHaveTitle(/^\*/, { timeout: 30_000 });
+      // The title only reflects the editor's own state. Close the editor so
+      // docservice writes the file back, wait for storage to change, and reopen
+      // the saved file in a new tab (a reload would be served from cache).
+      return saveAndReopen(page, editorPage, blank);
     });
 
-    await test.step('reload the editor', async () => {
-      // 6. Reload the editor page.
-      await editorPage.reload();
-      await editorPage.waitForLoadState('domcontentloaded');
-
-      // 7. Wait until the editor has finished loading again.
-      await expect(editorPage.locator('iframe[name="frameEditor"]')).toBeAttached({
-        timeout: 15_000,
-      });
-      await expect(frame.locator('#loading-mask')).toBeHidden({ timeout: 30_000 });
-    });
-
-    await test.step('saved title and subtitle are still there after reload', async () => {
+    await test.step('saved title and subtitle are still there after reopening', async () => {
       // 8. Focus the editor surface so the keyboard shortcuts reach it, then
       //    check both placeholders still hold the typed text. The editor can
       //    rebuild its iframe shortly after a reload, so the whole sequence is
       //    retried as a unit.
       await expect(async () => {
-        await frame.locator('#editor_sdk').click();
-        expect(await readShape(editorPage, 1)).toBe(TITLE);
-        expect(await readShape(editorPage, 2)).toBe(SUBTITLE);
+        await saved.frame.locator('#editor_sdk').click();
+        expect(await readShape(saved.editorPage, 1)).toBe(TITLE);
+        expect(await readShape(saved.editorPage, 2)).toBe(SUBTITLE);
       }).toPass({ timeout: 30_000 });
     });
   });
