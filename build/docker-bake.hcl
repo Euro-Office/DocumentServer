@@ -55,6 +55,12 @@ variable "CORE_PREBUILT" {
   default = ""
 }
 
+# Core's prebuilt WebAssembly modules (fetch-core-wasm.sh prints it) instead of
+# building core-wasm
+variable "CORE_WASM_PREBUILT" {
+  default = ""
+}
+
 variable "PACKAGE_BASE" {
   default = "docsrv-build"
 }
@@ -165,7 +171,7 @@ target "sdkjs" {
   cache-from = ["type=local,src=${CACHE_ROOT}/${REGISTRY}/sdkjs"]
   cache-to   = ["type=local,dest=${CACHE_ROOT}/${REGISTRY}/sdkjs,mode=max"]
   contexts = {
-    core-wasm    = "target:core-wasm"
+    core-wasm    = CORE_WASM_PREBUILT != "" ? CORE_WASM_PREBUILT : "target:core-wasm"
   }
 }
 

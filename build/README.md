@@ -64,12 +64,13 @@ base. To use it instead of building core:
 
 ```sh
 cd DocumentServer/build
-CORE_PREBUILT=$(./fetch-core.sh) docker buildx bake
+CORE_PREBUILT=$(./fetch-core.sh) CORE_WASM_PREBUILT=$(./fetch-core-wasm.sh) docker buildx bake
 ```
 
-`fetch-core.sh` downloads the package for the `core` checkout. It prints
-nothing, and the bake builds core, when there is none or `core` has local
-changes.
+`fetch-core.sh` downloads the package for the `core` checkout, and
+`fetch-core-wasm.sh` the editors' WebAssembly modules. Each prints nothing,
+and the bake builds that part of core, when there is no package or `core` has
+local changes.
 
 ## Running the Container
 
