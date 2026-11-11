@@ -64,7 +64,7 @@ REDIS_OPTIONS=$(jq -cn \
   --arg redisDb "${REDIS_SERVER_DB_NUM:-0}" \
   --argjson redisTLS "${REDIS_SERVER_TLS:-false}" \
   '{user: (if $redisUser != "" then $redisUser else null end),
-    password: (if $redisPass != "" then $redisPass else null end), db: $redisDb} |
+    password: (if $redisPass != "" or $redisUser == "default" then $redisPass else null end), db: $redisDb} |
     with_entries(select(.value != null)) |
     if $redisTLS then .socket.tls = true else . end')
 

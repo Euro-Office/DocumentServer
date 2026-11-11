@@ -487,6 +487,8 @@ expect_failure conflicting_node_config 'Redis Sentinel and Redis Cluster cannot 
     "optionsCluster":{"rootNodes":[{"url":"redis://cluster-a:7000"}]}}}}}'
 
 redis_test_config() { run_entrypoint "$@"; }
+REDIS_TEST_PASSWORD_VAR=REDIS_SERVER_PASS
+REDIS_TEST_USER_KEY=username
 . "$SCRIPT_DIR/../redis-topology.test-cases.sh"
 
 echo 'standalone entrypoint Redis configuration: PASS'

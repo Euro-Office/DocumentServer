@@ -55,3 +55,73 @@ for index in "${!group_names[@]}"; do
     'REDIS_SENTINEL_GROUP_NAME must not contain whitespace or control characters' \
     REDIS_SENTINEL_NODES=node-a:26379 "REDIS_SENTINEL_GROUP_NAME=${group_names[$index]}"
 done
+
+# The server normalizes default + password: "" to unauthenticated, but rejects
+# any username with an omitted password. These are configuration assertions,
+# not live connection or server normalization tests.
+for kind in standalone sentinel cluster; do
+  topology_env=()
+  option_paths=(.services.CoAuthoring.redis.options)
+  user_keys=("$REDIS_TEST_USER_KEY")
+  case "$kind" in
+    sentinel)
+      topology_env=(REDIS_SENTINEL_NODES=node-a:26379)
+      option_paths+=(.services.CoAuthoring.redis.optionsSentinel.nodeClientOptions)
+      user_keys+=(username)
+      ;;
+    cluster)
+      topology_env=(REDIS_CLUSTER_NODES=node-a:7000)
+      option_paths+=(.services.CoAuthoring.redis.optionsCluster.defaults)
+      user_keys+=(username)
+      ;;
+  esac
+  for user in default redis-user; do
+    for password_state in unset empty authenticated; do
+      password_env=()
+      expected_password='{}'
+      case "$password_state" in
+        unset|empty)
+          [[ $password_state == empty ]] && password_env=("$REDIS_TEST_PASSWORD_VAR=")
+          [[ $user == default ]] && expected_password='{"password":""}'
+          ;;
+        authenticated)
+          password_env=("$REDIS_TEST_PASSWORD_VAR=redis-pass")
+          expected_password='{"password":"redis-pass"}'
+          ;;
+      esac
+      config=$(redis_test_config "${kind}_${user}_${password_state}" \
+        "${topology_env[@]}" "REDIS_SERVER_USER=$user" "${password_env[@]}")
+      for index in "${!option_paths[@]}"; do
+        # For redis-user without a password, keep the username and omit the
+        # password so the server still rejects the invalid credentials.
+        assert_config "$config" "
+          (${option_paths[$index]} |
+            with_entries(select(.key == \"user\" or .key == \"username\" or .key == \"password\"))) ==
+          ({${user_keys[$index]}: \"$user\"} + $expected_password)
+        "
+      done
+    done
+  done
+
+  operator_options='{"username":"operator-user","password":"operator-pass"}'
+  operator_config=$(jq -cn --argjson options "$operator_options" '
+    {services: {CoAuthoring: {redis: {
+      options: $options,
+      optionsSentinel: {nodeClientOptions: $options},
+      optionsCluster: {defaults: $options}
+    }}}}')
+  # Only override options for the active topology; avoid requesting both.
+  case "$kind" in
+    standalone) operator_config=$(jq 'del(.services.CoAuthoring.redis.optionsSentinel,
+      .services.CoAuthoring.redis.optionsCluster)' <<<"$operator_config") ;;
+    sentinel) operator_config=$(jq 'del(.services.CoAuthoring.redis.optionsCluster)' <<<"$operator_config") ;;
+    cluster) operator_config=$(jq 'del(.services.CoAuthoring.redis.optionsSentinel)' <<<"$operator_config") ;;
+  esac
+  config=$(redis_test_config "${kind}_operator_auth" "${topology_env[@]}" \
+    REDIS_SERVER_USER=default "NODE_CONFIG=$operator_config")
+  for path in "${option_paths[@]}"; do
+    assert_config "$config" "
+      $path.username == \"operator-user\" and $path.password == \"operator-pass\"
+    "
+  done
+done

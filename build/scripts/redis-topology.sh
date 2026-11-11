@@ -112,7 +112,7 @@ redis_build_sentinel_options() (
         if $redisDb != "" then .database = ($redisDb | tonumber) else . end |
         if $redisTLS then .socket.tls = true else . end |
         if $redisUser != "" then .username = $redisUser else . end |
-        if $redisPass != "" then .password = $redisPass else . end
+        if $redisPass != "" or $redisUser == "default" then .password = $redisPass else . end
       ),
       sentinelClientOptions: (
         {} |
@@ -137,7 +137,7 @@ redis_build_cluster_options() {
         {} |
         if $redisTLS then .socket.tls = true else . end |
         if $redisUser != "" then .username = $redisUser else . end |
-        if $redisPass != "" then .password = $redisPass else . end
+        if $redisPass != "" or $redisUser == "default" then .password = $redisPass else . end
       )
     }'
 }

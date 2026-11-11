@@ -87,7 +87,7 @@ NODE_CONFIG=$(jq -cn --slurpfile saved "$CONFIG_FILE" \
     ({services: {CoAuthoring: {redis: (
       {host: $host, port: ($port | tonumber? // $port)} |
       if $user != "" then .options.username = $user else . end |
-      if $pass != "" then .options.password = $pass else . end |
+      if $pass != "" or $user == "default" then .options.password = $pass else . end |
       if $db != "" then .options.database = ($db | tonumber? // $db) else . end |
       if $tls == "true" then .options.socket.tls = true else . end |
       if $sentinelRequested == "true" then

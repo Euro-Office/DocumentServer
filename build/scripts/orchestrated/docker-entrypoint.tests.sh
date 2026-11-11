@@ -239,6 +239,8 @@ expect_failure invalid_storage 'EDITOR_DATA_STORAGE must be a plain module name'
   EDITOR_DATA_STORAGE='../not-a-module'
 
 redis_test_config() { run_config "$@"; }
+REDIS_TEST_PASSWORD_VAR=REDIS_SERVER_PWD
+REDIS_TEST_USER_KEY=user
 . "$SCRIPT_DIR/../redis-topology.test-cases.sh"
 
 sentinel_db_config=$(run_config sentinel_database REDIS_SERVER_DB_NUM=4 REDIS_SENTINEL_NODES='sentinel-a:26379')
