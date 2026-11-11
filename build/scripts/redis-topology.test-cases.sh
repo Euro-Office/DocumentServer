@@ -28,18 +28,42 @@ for nodes_state in unset empty; do
   done
 done
 
+for endpoint_state in unset empty; do
+  endpoint_env=()
+  [[ $endpoint_state == empty ]] && endpoint_env=(REDIS_SERVER_HOST=)
+  config=$(redis_test_config "sentinel_fallback_host_${endpoint_state}" \
+    REDIS_SENTINEL_GROUP_NAME=helm-master REDIS_SERVER_PORT=26380 "${endpoint_env[@]}")
+  assert_config "$config" '
+    .services.CoAuthoring.redis.optionsSentinel.sentinelRootNodes == [{host: "localhost", port: 26380}]
+  '
+
+  endpoint_env=()
+  [[ $endpoint_state == empty ]] && endpoint_env=(REDIS_SERVER_PORT=)
+  config=$(redis_test_config "sentinel_fallback_port_${endpoint_state}" \
+    REDIS_SENTINEL_GROUP_NAME=helm-master REDIS_SERVER_HOST=helm-sentinel "${endpoint_env[@]}")
+  assert_config "$config" '
+    .services.CoAuthoring.redis.optionsSentinel.sentinelRootNodes == [{host: "helm-sentinel", port: 6379}]
+  '
+done
+
 for credential_var in REDIS_SENTINEL_USER REDIS_SENTINEL_USERNAME REDIS_SENTINEL_PASS REDIS_SENTINEL_PWD; do
   case "$credential_var" in
     REDIS_SENTINEL_USER|REDIS_SENTINEL_USERNAME) credential_key=username ;;
     *) credential_key=password ;;
   esac
-  config=$(redis_test_config "sentinel_fallback_$credential_var" "$credential_var=sentinel-credential" \
-    REDIS_SERVER_HOST=credential-sentinel REDIS_SERVER_PORT=26381)
-  assert_config "$config" "
-    .services.CoAuthoring.redis.optionsSentinel.sentinelRootNodes ==
-      [{host: \"credential-sentinel\", port: 26381}] and
-    .services.CoAuthoring.redis.optionsSentinel.sentinelClientOptions.$credential_key == \"sentinel-credential\"
-  "
+  for nodes_state in unset empty; do
+    nodes_env=()
+    [[ $nodes_state == empty ]] && nodes_env=(REDIS_SENTINEL_NODES=)
+    config=$(redis_test_config "sentinel_fallback_${credential_var}_$nodes_state" \
+      "$credential_var=sentinel-credential" "${nodes_env[@]}" \
+      REDIS_SERVER_HOST=credential-sentinel REDIS_SERVER_PORT=26381)
+    assert_config "$config" "
+      .services.CoAuthoring.redis.optionsSentinel.name == \"mymaster\" and
+      .services.CoAuthoring.redis.optionsSentinel.sentinelRootNodes ==
+        [{host: \"credential-sentinel\", port: 26381}] and
+      .services.CoAuthoring.redis.optionsSentinel.sentinelClientOptions.$credential_key == \"sentinel-credential\"
+    "
+  done
   expect_failure "sentinel_fallback_cluster_$credential_var" \
     'Redis Sentinel and Redis Cluster cannot be configured together' \
     "$credential_var=sentinel-credential" REDIS_CLUSTER_NODES=cluster-a:7000
@@ -62,7 +86,7 @@ for port in 0 65536; do
 done
 
 config=$(redis_test_config sentinel_explicit_precedence REDIS_SENTINEL_GROUP_NAME=helm-master \
-  REDIS_SENTINEL_NODES=explicit-sentinel:26379 REDIS_SERVER_HOST=fallback-host REDIS_SERVER_PORT=6380)
+  REDIS_SENTINEL_NODES=explicit-sentinel:26379 REDIS_SERVER_HOST=invalid/host REDIS_SERVER_PORT=6380)
 assert_config "$config" '
   .services.CoAuthoring.redis.optionsSentinel.sentinelRootNodes == [{host: "explicit-sentinel", port: 26379}]
 '
