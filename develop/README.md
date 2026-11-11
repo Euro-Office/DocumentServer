@@ -202,9 +202,12 @@ The standalone entrypoint passes Redis settings derived from environment
 variables through `NODE_CONFIG` to its services. It leaves Redis settings in
 `local.json` untouched, so removing or changing topology and TLS variables on
 the next start takes effect without changing a mounted configuration file.
-Settings deliberately supplied in `local.json` still apply when no environment
-override is present. If an earlier version of this PR wrote generated Redis
-settings into a mounted `local.json`, remove those stale values once, including
+The standalone Redis host and port always come from `REDIS_SERVER_HOST` and
+`REDIS_SERVER_PORT`, defaulting to `localhost:6379`. These values override the
+host and port in `local.json` even when the environment variables are unset.
+Other settings deliberately supplied in `local.json` still apply when no
+environment override is present. If an earlier entrypoint version wrote
+generated Redis settings into a mounted `local.json`, remove those stale values once, including
 topology, TLS, and credentials; the file cannot distinguish them from
 operator-supplied settings.
 
@@ -246,7 +249,7 @@ under `services.CoAuthoring.redis` (certificate values are PEM contents):
 | Sentinel discovery endpoints | `optionsSentinel.sentinelClientOptions.socket` |
 | Cluster | `optionsCluster.defaults.socket` |
 
-With the current server PR #46 implementation, putting a CA only in
+With the server's Redis implementation, putting a CA only in
 `options.socket.ca` is insufficient for every topology. Sentinel shallow-merges
 base and node-client options: a generated topology-specific `socket` can replace
 the entire base `options.socket`, including its CA. Sentinel discovery has its
@@ -309,7 +312,7 @@ make -C develop redis-tls
 CLI checks inside Redis/Valkey containers require
 `--tls --cacert /tls/ca.crt`, as shown in the verification commands below.
 
-The image must contain the updated entrypoint as well as server PR #46's Redis
+The image must contain the updated entrypoint as well as the Redis editor-data
 backend. These stacks exercise the TLS environment variables on the standalone
 image; the orchestrated entrypoint's merge needs separate testing.
 
@@ -351,8 +354,8 @@ Cluster seed URLs must also use `rediss://`, matching `socket.tls: true`.
 ### First-time setup
 
 The published `latest-dev` image cannot run these stacks until it includes the
-Redis backend from server PR #46 and this PR's standalone entrypoint changes.
-For now, build a local image from a checkout of this DocumentServer PR with its
+Redis editor-data backend and standalone entrypoint topology support.
+To include these components, build a local image from a checkout with its
 submodules initialized. Follow the [image build prerequisites](../build/README.md#building-the-image)
 if this is a fresh checkout.
 
@@ -364,32 +367,18 @@ an empty external database from the selected image's packaged
 The image must contain that file and the bootstrap logic; checking out newer
 server sources alone does not update the packaged schema.
 
-To include server PR #46, first inspect `git -C server status` and preserve
-existing work before choosing a checkout. The following uses GitHub's
-pull-request ref:
-
-```sh
-git -C server fetch https://github.com/Euro-Office/server.git pull/46/head:server-pr-46
-git -C server checkout --detach server-pr-46
-```
-
-This changes the submodule commit visible in the superproject's working tree.
-The recorded superproject gitlink changes only if staged and committed;
-`git commit -a` can include it. Keep validation-only submodule changes out of
-this PR, and inspect the staged diff before committing.
-
 Build the standalone image from the repository root. The `standalone` Bake
-target builds the server and its dependencies, packages them, and copies this
-PR's entrypoint into the image. `--load` makes the tagged image available to
+target builds the server and its dependencies, packages them, and copies the
+standalone entrypoint into the image. `--load` makes the tagged image available to
 Docker Compose locally:
 
 ```sh
 (
   cd build
   docker buildx bake standalone \
-    --set standalone.tags=local/documentserver:server-pr-46 --load
+    --set standalone.tags=local/documentserver:redis-topology --load
 )
-export EO_IMAGE=local/documentserver:server-pr-46
+export EO_IMAGE=local/documentserver:redis-topology
 docker image inspect "$EO_IMAGE" >/dev/null
 make -C develop redis-up TYPE=SENTINEL
 ```
