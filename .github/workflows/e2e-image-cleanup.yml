@@ -16,7 +16,7 @@ env:
 
 jobs:
   delete-pr-image:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     steps:
       - name: Delete pr-<n> image version
         env:

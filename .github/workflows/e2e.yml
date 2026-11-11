@@ -15,7 +15,7 @@ env:
 
 jobs:
   e2e:
-    runs-on: self-hosted
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     permissions:
       contents: read
       packages: read

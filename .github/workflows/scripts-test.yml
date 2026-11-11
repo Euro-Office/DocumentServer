@@ -25,7 +25,7 @@ concurrency:
 jobs:
   test:
     name: Script tests
-    runs-on: ubuntu-24.04
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-24.04' }}
     permissions:
       contents: read  # checkout
     steps:
