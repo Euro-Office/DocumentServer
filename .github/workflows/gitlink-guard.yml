@@ -19,7 +19,7 @@ jobs:
   check:
     name: Submodule pins are on default branches
     if: ${{ !github.event.pull_request.draft }}
-    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
     permissions:
       contents: read  # checkout
     steps:

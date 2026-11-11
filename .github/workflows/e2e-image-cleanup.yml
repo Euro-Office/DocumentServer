@@ -12,11 +12,11 @@ permissions:
 
 env:
   ORG: euro-office
-  PACKAGE: documentserver-build-cache
+  PACKAGE: documentserver-build-cache${{ github.repository != 'Euro-Office/DocumentServer' && '-private' || '' }}
 
 jobs:
   delete-pr-image:
-    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
     steps:
       - name: Delete pr-<n> image version
         env:

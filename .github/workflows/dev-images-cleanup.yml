@@ -21,8 +21,8 @@ env:
 jobs:
   cleanup:
     name: Delete images of the branch
-    if: ${{ github.event.ref_type == 'branch' && startsWith(github.event.ref, 'dev/') }}
-    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-24.04' }}
+    if: ${{ (github.event.ref_type == 'branch' && startsWith(github.event.ref, 'dev/')) && github.repository == 'Euro-Office/DocumentServer' }}
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-24.04' }}
     permissions:
       contents: read    # checkout
       packages: write   # delete package versions

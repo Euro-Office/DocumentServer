@@ -21,7 +21,8 @@ permissions:
 
 jobs:
   request-triage:
-    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
+    if: ${{ github.repository == 'Euro-Office/DocumentServer' }}
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
     steps:
       - name: Ask two random team members to triage a community issue
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7

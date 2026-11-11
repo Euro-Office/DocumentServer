@@ -18,7 +18,7 @@ permissions: {}
 jobs:
   zizmor:
     name: Run zizmor
-    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
     permissions:
       security-events: write
     steps:

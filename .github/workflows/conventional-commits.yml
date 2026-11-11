@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   conventional-commits:
-    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
+    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
     steps:
       - name: Check PR title and commit subjects
         env:
