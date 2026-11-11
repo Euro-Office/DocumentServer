@@ -14,7 +14,7 @@ FROM finalubuntu AS develop
     ENV TZ=Etc/UTC
 
     RUN apt-get update && \
-        curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+        curl -fsSL https://deb.nodesource.com/setup_26.x | bash - && \
         apt-get install -yq --no-install-recommends nodejs openjdk-21-jdk wget zip brotli && \
         npm install -g @yao-pkg/pkg grunt-cli && \
         rm -rf /var/lib/apt/lists/*
