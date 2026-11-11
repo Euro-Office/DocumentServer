@@ -4,6 +4,79 @@
 # Sourced by both entrypoint suites, which provide redis_test_config,
 # assert_config, and expect_failure. Assertions inspect generated configuration.
 
+for nodes_state in unset empty; do
+  nodes_env=()
+  [[ $nodes_state == empty ]] && nodes_env=(REDIS_SENTINEL_NODES=)
+  config=$(redis_test_config "sentinel_fallback_${nodes_state}" \
+    REDIS_SENTINEL_GROUP_NAME=helm-master "${nodes_env[@]}" \
+    REDIS_SERVER_HOST=helm-sentinel REDIS_SERVER_PORT=26380 \
+    NODE_CONFIG='{"services":{"CoAuthoring":{"server":{"editorDataStorage":"editorDataMemory"}}}}')
+  assert_config "$config" '
+    .services.CoAuthoring.redis.optionsSentinel.name == "helm-master" and
+    .services.CoAuthoring.redis.optionsSentinel.sentinelRootNodes == [{host: "helm-sentinel", port: 26380}] and
+    .services.CoAuthoring.server.editorDataStorage == "editorDataMemory"
+  '
+
+  for endpoint_state in unset empty; do
+    endpoint_env=()
+    [[ $endpoint_state == empty ]] && endpoint_env=(REDIS_SERVER_HOST= REDIS_SERVER_PORT=)
+    config=$(redis_test_config "sentinel_fallback_${nodes_state}_${endpoint_state}_defaults" \
+      REDIS_SENTINEL_GROUP_NAME=helm-master "${nodes_env[@]}" "${endpoint_env[@]}")
+    assert_config "$config" '
+      .services.CoAuthoring.redis.optionsSentinel.sentinelRootNodes == [{host: "localhost", port: 6379}]
+    '
+  done
+done
+
+for credential_var in REDIS_SENTINEL_USER REDIS_SENTINEL_USERNAME REDIS_SENTINEL_PASS REDIS_SENTINEL_PWD; do
+  case "$credential_var" in
+    REDIS_SENTINEL_USER|REDIS_SENTINEL_USERNAME) credential_key=username ;;
+    *) credential_key=password ;;
+  esac
+  config=$(redis_test_config "sentinel_fallback_$credential_var" "$credential_var=sentinel-credential" \
+    REDIS_SERVER_HOST=credential-sentinel REDIS_SERVER_PORT=26381)
+  assert_config "$config" "
+    .services.CoAuthoring.redis.optionsSentinel.sentinelRootNodes ==
+      [{host: \"credential-sentinel\", port: 26381}] and
+    .services.CoAuthoring.redis.optionsSentinel.sentinelClientOptions.$credential_key == \"sentinel-credential\"
+  "
+  expect_failure "sentinel_fallback_cluster_$credential_var" \
+    'Redis Sentinel and Redis Cluster cannot be configured together' \
+    "$credential_var=sentinel-credential" REDIS_CLUSTER_NODES=cluster-a:7000
+done
+
+expect_failure sentinel_fallback_invalid_host 'each node must use host:port' \
+  REDIS_SENTINEL_GROUP_NAME=helm-master REDIS_SERVER_HOST=invalid/host
+expect_failure sentinel_fallback_invalid_port 'each node must use host:port' \
+  REDIS_SENTINEL_GROUP_NAME=helm-master REDIS_SERVER_PORT=invalid
+fallback_password='fallback-password-do-not-log'
+expect_failure sentinel_fallback_private 'each node must use host:port' \
+  "REDIS_SENTINEL_PASS=$fallback_password" "REDIS_SERVER_HOST=user:$fallback_password@host"
+if grep -Fq "$fallback_password" "$TMP_DIR/sentinel_fallback_private/output"; then
+  echo 'sentinel_fallback_private: credential leaked in diagnostic' >&2
+  exit 1
+fi
+for port in 0 65536; do
+  expect_failure "sentinel_fallback_port_$port" 'port must be between 1 and 65535' \
+    REDIS_SENTINEL_GROUP_NAME=helm-master "REDIS_SERVER_PORT=$port"
+done
+
+config=$(redis_test_config sentinel_explicit_precedence REDIS_SENTINEL_GROUP_NAME=helm-master \
+  REDIS_SENTINEL_NODES=explicit-sentinel:26379 REDIS_SERVER_HOST=fallback-host REDIS_SERVER_PORT=6380)
+assert_config "$config" '
+  .services.CoAuthoring.redis.optionsSentinel.sentinelRootNodes == [{host: "explicit-sentinel", port: 26379}]
+'
+
+config=$(redis_test_config no_sentinel_settings REDIS_SERVER_HOST=standalone-host REDIS_SERVER_PORT=6380)
+assert_config "$config" '
+  .services.CoAuthoring.redis.host == "standalone-host" and
+  .services.CoAuthoring.redis.port == 6380 and
+  ((.services.CoAuthoring.redis.optionsSentinel // {}) | length) == 0 and
+  ((.services.CoAuthoring.redis.optionsCluster // {}) | length) == 0
+'
+expect_failure sentinel_fallback_cluster_group 'Redis Sentinel and Redis Cluster cannot be configured together' \
+  REDIS_SENTINEL_GROUP_NAME=helm-master REDIS_CLUSTER_NODES=cluster-a:7000
+
 separators=(' ' ',' ', ' $'\t' $'\n')
 format_names=(space comma comma_space tab newline)
 for kind in sentinel cluster; do

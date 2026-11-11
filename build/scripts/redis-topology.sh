@@ -74,8 +74,7 @@ redis_topology_init() {
         ;;
     esac
     if [ -z "${REDIS_SENTINEL_NODES:-}" ]; then
-      echo "ERROR: Redis Sentinel was requested but REDIS_SENTINEL_NODES is not set." >&2
-      return 1
+      REDIS_SENTINEL_NODES="${REDIS_SERVER_HOST:-localhost}:${REDIS_SERVER_PORT:-6379}"
     fi
     REDIS_SENTINEL_NODES_JSON=$(parse_redis_nodes "$REDIS_SENTINEL_NODES" REDIS_SENTINEL_NODES) || return 1
   fi

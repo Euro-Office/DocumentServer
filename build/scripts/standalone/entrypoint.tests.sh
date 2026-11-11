@@ -476,8 +476,6 @@ expect_failure() {
   fi
 }
 
-expect_failure incomplete_sentinel 'REDIS_SENTINEL_NODES is not set' \
-  REDIS_SENTINEL_GROUP_NAME=mymaster
 expect_failure invalid_redis_tls 'REDIS_SERVER_TLS must be true or false' REDIS_SERVER_TLS=invalid
 expect_failure invalid_sentinel_tls 'REDIS_SENTINEL_TLS must be true or false' REDIS_SENTINEL_TLS=invalid
 expect_failure invalid_sentinel_database 'Redis Sentinel database must be a non-negative integer' \
