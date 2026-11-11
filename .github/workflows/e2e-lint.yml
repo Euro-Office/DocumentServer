@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   check:
-    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     defaults:
       run:
         working-directory: e2e

@@ -54,7 +54,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   publish-euro-office-images:
     if: ${{ github.repository == 'Euro-Office/DocumentServer' }}
-    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: build
     permissions:
       contents: read
@@ -138,7 +138,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   publish-euro-office-release:
     if: ${{ github.repository == 'Euro-Office/DocumentServer' }}
-    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: build
     permissions:
       actions: read
@@ -190,7 +190,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   publish-nextcloud-download-server:
     if: ${{ github.repository == 'Euro-Office/DocumentServer' }}
-    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: build
     permissions:
       actions: read
@@ -236,7 +236,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   publish-nextcloud-images:
     if: ${{ github.repository == 'Euro-Office/DocumentServer' }}
-    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: [build]
     permissions: {}
     steps:
@@ -273,7 +273,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   publish-nextcloud-github-release:
     if: ${{ github.repository == 'Euro-Office/DocumentServer' }}
-    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: [build, publish-nextcloud-images]
     permissions:
       actions: read

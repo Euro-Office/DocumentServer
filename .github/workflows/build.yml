@@ -44,7 +44,7 @@ env:
 
 jobs:
   scope:
-    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     permissions: {}
     outputs:
       matrix: ${{ steps.scope.outputs.matrix }}
@@ -121,7 +121,7 @@ jobs:
       packages: ${{ needs.scope.outputs.core_packages }}
 
   build:
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: [scope, wait-for-core]
     outputs:
       # Identical in every matrix leg (depends on the ref only), so it does

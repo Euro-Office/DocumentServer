@@ -9,7 +9,7 @@ on:
 jobs:
   update-submodules:
     if: ${{ github.repository == 'Euro-Office/DocumentServer' }}
-    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     permissions:
       contents: write
       pull-requests: write

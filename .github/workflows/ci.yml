@@ -42,7 +42,7 @@ on:
         type: boolean
 
 # Serialise runs per ref so a re-pushed PR cancels its in-flight run instead of
-# racing the previous one on the single self-hosted e2e runner (with RUNNER_LABEL set; shared host
+# racing the previous one on the single self-hosted e2e runner of a private repo (shared host
 # port + container name). Cross-PR collisions are still possible if two PRs run
 # at once; the e2e job assumes a single runner. Pushes to main queue instead,
 # so a quick follow-up merge cannot cancel a build before it refreshes the cache.
@@ -71,7 +71,7 @@ jobs:
   # The label is read from the API, so adding it takes effect on the
   # next push or "Re-run all jobs".
   plan:
-    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     permissions:
       pull-requests: read
     outputs:
@@ -113,7 +113,7 @@ jobs:
   # newest one per leg is restored. Deletes the others of this ref, or the
   # caches outgrow their limit and GitHub evicts the ones still in use.
   prune-ccache:
-    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: build
     if: always()
     permissions:
@@ -135,7 +135,7 @@ jobs:
   # Points release/v* PRs (opened by Euro-Office/release) to the test build.
   # Edits its previous comment on re-runs instead of adding a new one.
   pr-comment:
-    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: build
     if: ${{ (github.event_name == 'pull_request' && startsWith(github.head_ref, 'release/')) && github.repository == 'Euro-Office/DocumentServer' }}
     permissions:
@@ -160,7 +160,7 @@ jobs:
   # Merges the arch-specific images of the default branch into the
   # multi-arch :nightly and :latest-dev tags.
   publish-nightly-images:
-    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: build
     if: ${{ (github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) && github.repository == 'Euro-Office/DocumentServer' }}
     permissions:
@@ -237,7 +237,7 @@ jobs:
   # :latest to the image under test by then, so there would be nothing to
   # upgrade from. PR and main builds are where :latest is genuinely the previous release.
   upgrade:
-    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: [build, publish-nightly-images]
     if: |
       !cancelled() &&
@@ -352,7 +352,7 @@ jobs:
   # The one build check for branch protection: the build matrix differs
   # between PRs and full builds, so its per-leg checks cannot be required.
   ci-result:
-    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: [build, publish-nightly-images, e2e, upgrade]
     if: ${{ !cancelled() }}
     permissions: {}

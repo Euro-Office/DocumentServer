@@ -28,7 +28,7 @@ jobs:
   build:
     name: Build (${{ matrix.arch }})
     if: ${{ (!github.event.deleted) && github.repository == 'Euro-Office/DocumentServer' }}
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || vars.RUNNER_LABEL || 'ubuntu-24.04' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || github.event.repository.private && 'self-hosted' || 'ubuntu-24.04' }}
     permissions:
       contents: read    # checkout
       packages: write   # push images and build cache to ghcr.io

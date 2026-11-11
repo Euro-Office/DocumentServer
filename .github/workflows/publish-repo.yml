@@ -56,7 +56,7 @@ permissions: {}
 
 jobs:
   publish:
-    runs-on: ${{ vars.RUNNER_LABEL || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     permissions:
       actions: read          # download-artifact from the calling run
     # Up to 90 min waiting for the cross-repo lock plus the publish itself.
