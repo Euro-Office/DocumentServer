@@ -12,7 +12,7 @@ permissions:
 
 env:
   ORG: euro-office
-  PACKAGE: documentserver-build-cache${{ github.repository != 'Euro-Office/DocumentServer' && '-private' || '' }}
+  PACKAGE: documentserver-build-cache${{ github.repository != 'Euro-Office/DocumentServer' && format('-{0}', github.repository_id) || '' }}
 
 jobs:
   delete-pr-image:

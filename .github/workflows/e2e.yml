@@ -11,7 +11,7 @@ on:
 env:
   REGISTRY: ghcr.io/euro-office
   IMAGE_NAME: documentserver
-  CACHE_IMAGE_NAME: documentserver-build-cache${{ github.repository != 'Euro-Office/DocumentServer' && '-private' || '' }}
+  CACHE_IMAGE_NAME: documentserver-build-cache${{ github.repository != 'Euro-Office/DocumentServer' && format('-{0}', github.repository_id) || '' }}
 
 jobs:
   e2e:

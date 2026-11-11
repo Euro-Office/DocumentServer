@@ -37,7 +37,7 @@ on:
 env:
   REGISTRY: ghcr.io/euro-office
   # Copies of this repo keep their build cache and e2e images in their own package.
-  CACHE_IMAGE_NAME: documentserver-build-cache${{ github.repository != 'Euro-Office/DocumentServer' && '-private' || '' }}
+  CACHE_IMAGE_NAME: documentserver-build-cache${{ github.repository != 'Euro-Office/DocumentServer' && format('-{0}', github.repository_id) || '' }}
   BUILD_NUMBER: dev.1
   BUILD_ROOT: /package
   NEXTCLOUD_RELEASES_IMAGE: ghcr.io/nextcloud-releases/office-documentserver

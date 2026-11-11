@@ -56,7 +56,7 @@ env:
   CLUSTER_IMG_DOCS: cluster-docs
   CLUSTER_IMG_EXAMPLE: cluster-example
   CLUSTER_IMG_UTILS: cluster-utils
-  CACHE_IMAGE_NAME: documentserver-build-cache${{ github.repository != 'Euro-Office/DocumentServer' && '-private' || '' }}
+  CACHE_IMAGE_NAME: documentserver-build-cache${{ github.repository != 'Euro-Office/DocumentServer' && format('-{0}', github.repository_id) || '' }}
   # Branded image names (nextcloud-office)
   NEXTCLOUD_IMAGE_NAME: nextcloud-office-documentserver
   NEXTCLOUD_CLUSTER_IMG_DOCS: nextcloud-office-cluster-docs
