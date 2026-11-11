@@ -1,6 +1,6 @@
 # Euro-Office E2E tests
 
-Browser-level end-to-end tests for Euro-Office DocumentServer, built on [Playwright Test](https://playwright.dev/docs/intro). They exercise the example app and the Document, Spreadsheet and Presentation editors against a running server.
+Browser-level end-to-end tests for Euro-Office DocumentServer, built on [Playwright Test](https://playwright.dev/docs/intro). They exercise the example app and the Document, Spreadsheet, Presentation and PDF form editors (plus a mobile smoke test) against a running server.
 
 ## Contents
 
@@ -19,7 +19,14 @@ e2e/
 │   ├── constants.ts           Host port, container name, default base URL
 │   ├── global-setup.ts        Starts the Docker container, waits for readiness
 │   ├── global-teardown.ts     Removes the container
-│   └── tests/                 *.spec.ts files and shared helpers.ts
+│   └── tests/
+│       ├── document/          create-document, save-document, document-editing
+│       ├── spreadsheet/       create-spreadsheet, save-spreadsheet, spreadsheet-formula
+│       ├── presentation/      create-presentation, save-presentation, presentation-slides
+│       ├── pdf-form/          create-pdf-form, save-pdf-form
+│       ├── mobile/            mobile-editor
+│       ├── example-page.spec.ts
+│       └── helpers.ts         Shared openNewEditor, editorApi, downloadStoredFile, saveAndReopen
 ├── eslint.config.mjs          ESLint rules (typescript-eslint + Playwright plugin)
 ├── .prettierrc.json           Prettier rules
 ├── .editorconfig              Indentation and line endings
@@ -55,7 +62,8 @@ npm run test:headed      # all tests, visible browser
 Run a subset by passing Playwright CLI arguments after `--`:
 
 ```sh
-npm test -- tests/document-editing.spec.ts   # a single spec file
+npm test -- tests/pdf-form                   # all specs in one folder
+npm test -- tests/document/document-editing.spec.ts   # a single spec file
 npm test -- -g "<test title>"                # tests matching a title
 npm test -- --debug                          # Playwright Inspector, step through
 npm test -- --ui                             # interactive UI mode

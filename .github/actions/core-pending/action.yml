@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: 2026 Euro-Office contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
+name: Core packages pending
+description: Tells whether core's CI is still building the packages of the pinned core
+inputs:
+  packages:
+    description: The packages this repository needs, as <platform>/<product>
+    required: true
+outputs:
+  pending:
+    description: '"true" to wait, anything else to go on: not waiting is always safe'
+    value: ${{ steps.check.outputs.pending }}
+runs:
+  using: composite
+  steps:
+    - id: pin
+      shell: bash
+      run: echo "sha=$(git ls-tree HEAD core | awk '{print $3}')" >>"$GITHUB_OUTPUT"
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      continue-on-error: true
+      with:
+        repository: Euro-Office/core
+        ref: ${{ steps.pin.outputs.sha }}
+        path: .core-pending
+        sparse-checkout: scripts
+        persist-credentials: false
+    - id: check
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PACKAGES: ${{ inputs.packages }}
+      run: python3 .core-pending/scripts/core_package.py pending --core .core-pending $PACKAGES || true

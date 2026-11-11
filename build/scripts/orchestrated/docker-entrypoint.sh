@@ -100,6 +100,16 @@ if [[ -n "${EDITOR_DATA_STORAGE:-}" || -n "${EDITOR_STAT_STORAGE:-}" ]]; then
 fi
 
 # --------------------------------------------------------------------
+# Normalize boolean env vars. They end up raw inside NODE_CONFIG, where
+# anything but true/false is invalid JSON.
+# --------------------------------------------------------------------
+BOOL_HELPER="${BOOL_HELPER:-$(dirname "$0")/../lib/bool.sh}"
+[ -r "$BOOL_HELPER" ] || BOOL_HELPER=/usr/local/lib/euro-office/bool.sh
+. "$BOOL_HELPER"
+require_bool JWT_ENABLED JWT_ENABLED_INBOX JWT_ENABLED_OUTBOX
+normalize_bool JWT_IN_BODY METRICS_ENABLED WOPI_ENABLED ALLOW_PRIVATE_IP_ADDRESS ALLOW_META_IP_ADDRESS
+
+# --------------------------------------------------------------------
 # JWT
 #
 # docservice, converter and adminpanel run as separate containers here and

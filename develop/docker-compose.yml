@@ -53,7 +53,7 @@ services:
       USE_UNAUTHORIZED_STORAGE: true
       JWT_SECRET: ${EO_JWT_SECRET:-euro-office-dev-jwt-secret-key-2026}
   glitchtip:
-    image: glitchtip/glitchtip:6
+    image: glitchtip/glitchtip:7
     profiles: [sentry]
     depends_on: [glitchtip-db]
     restart: unless-stopped # retries until the db accepts connections

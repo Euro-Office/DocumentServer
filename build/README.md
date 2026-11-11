@@ -37,9 +37,53 @@ If you only want to build one of the components, you can specify the respective 
 docker buildx bake TARGET
 ```
 
+### Using an alternate BuildKit cache directory
+
+By default, local BuildKit caches are stored under `./.docker-cache/`.  
+Full builds can require more than 20 GB of cache space, so you can override the cache root using the `CACHE_ROOT` environment variable:
+
+```sh
+cd DocumentServer/build
+CACHE_ROOT=/path/with/enough/space docker buildx bake
+```
+
+The same option can be used when building a specific target:
+
+```sh
+CACHE_ROOT=/path/with/enough/space docker buildx bake develop
+```
+
+`CACHE_ROOT` should be an absolute path on a filesystem with sufficient
+available space.
+
+### Prebuilt core
+
+Core CI publishes its build output for every commit on main and for pull
+requests from branches of the core repository that are up to date with their
+base. To use it instead of building core:
+
+```sh
+cd DocumentServer/build
+CORE_PREBUILT=$(./fetch-core.sh) CORE_WASM_PREBUILT=$(./fetch-core-wasm.sh) docker buildx bake
+```
+
+`fetch-core.sh` downloads the package for the `core` checkout, and
+`fetch-core-wasm.sh` the editors' WebAssembly modules. Each prints nothing,
+and the bake builds that part of core, when there is no package or `core` has
+local changes.
+
 ## Running the Container
 
 After building the image, you can run it with a simple `docker run`.
+
+### Boolean environment variables
+
+Boolean settings such as `JWT_ENABLED`, `WOPI_ENABLED` or `EXAMPLE_ENABLED` accept, case-insensitively and with surrounding whitespace ignored:
+
+* `true`, `yes`, `y`, `on`, `1` for true
+* `false`, `no`, `n`, `off`, `0` for false
+
+An empty value uses the default. Any other value is rejected for `JWT_ENABLED`, `JWT_ENABLED_INBOX` and `JWT_ENABLED_OUTBOX`: the container refuses to start rather than guess whether to authenticate. For all other flags it is logged as a warning and the default applies.
 
 If the docker build stockes because of broken content in cache, for example with error:
 ```sh

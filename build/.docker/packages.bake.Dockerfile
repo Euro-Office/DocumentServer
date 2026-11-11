@@ -37,7 +37,7 @@ FROM ubuntu:24.04 AS package
         apt-get install -yq --no-install-recommends \
             devscripts dpkg-dev build-essential fakeroot debhelper \
             rpm m4 curl ca-certificates gnupg symlinks && \
-        curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+        curl -fsSL https://deb.nodesource.com/setup_26.x | bash - && \
         apt-get install -yq --no-install-recommends nodejs && \
         npm install -g @yao-pkg/pkg && \
         rm -rf /var/lib/apt/lists/*

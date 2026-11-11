@@ -20,6 +20,9 @@ while getopts ":fpd" opt; do
 done
 shift $((OPTIND-1))
 
+. /usr/local/lib/euro-office/bool.sh
+normalize_bool PLUGINS_MARKET_DISABLED
+
 cleanup_dir() {
   local dir="$1"
   if [[ -d "$dir" ]]; then
@@ -36,7 +39,6 @@ build_fonts() {
   chmod 755 "$WORK_DIR/sdkjs/common"
   chmod 755 "$WORK_DIR/sdkjs/common/Images"
   chmod 755 "$WORK_DIR/sdkjs/slide/themes"
-  chmod 755 "$WORK_DIR/server/FileConverter/bin"
   /usr/local/bin/documentserver-generate-allfonts.sh true true
   mkdir -p "$buffer_dir/bin"
   cp -ra "$WORK_DIR/sdkjs/common/Images/" "$buffer_dir/"

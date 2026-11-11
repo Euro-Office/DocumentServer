@@ -33,3 +33,6 @@ core/job-logs.txt
 # Build outputs that shouldn't leak into context
 build/deploy
 build/packages
+
+# Prebuilt core, its own bake context
+build/core-prebuilt
