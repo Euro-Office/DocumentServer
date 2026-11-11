@@ -28,6 +28,31 @@ async function pollUntil(
   );
 }
 
+// Succeeds once something accepts TCP connections on 127.0.0.1:HOST_PORT
+// inside the container. Uses bash's /dev/tcp so it needs no curl/nc in the image.
+async function waitForForwarder(timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = '';
+  while (Date.now() < deadline) {
+    const probe = spawnSync(
+      'docker',
+      ['exec', CONTAINER_NAME, 'bash', '-c', `exec 3<>/dev/tcp/127.0.0.1/${HOST_PORT}`],
+      { stdio: 'pipe', encoding: 'utf8' },
+    );
+    if (probe.status === 0) {
+      console.log(`[global-setup] port forwarder listening on 127.0.0.1:${HOST_PORT}`);
+      return;
+    }
+    lastError = probe.stderr.trim();
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(
+    `[global-setup] port forwarder is not listening on 127.0.0.1:${HOST_PORT} inside ` +
+      `${CONTAINER_NAME} after ${timeoutMs / 1000}s (socat missing or port already in use?)` +
+      (lastError ? `:\n${lastError}` : ''),
+  );
+}
+
 export default async function globalSetup(): Promise<void> {
   if (process.env.E2E_BASE_URL) {
     // Running against a pre-existing server — skip Docker
@@ -65,20 +90,30 @@ export default async function globalSetup(): Promise<void> {
   // file ends up in docservice's "forgotten" folder instead of storage.
   // Workaround for https://github.com/Euro-Office/DocumentServer/issues/157;
   // remove it once callback URLs no longer depend on the browser-visible port.
-  const forward = spawnSync(
-    'docker',
-    [
-      'exec',
-      '-d',
-      CONTAINER_NAME,
-      'socat',
-      `TCP-LISTEN:${HOST_PORT},bind=127.0.0.1,fork,reuseaddr`,
-      'TCP:127.0.0.1:80',
-    ],
-    { stdio: 'pipe', encoding: 'utf8' },
-  );
-  if (forward.status !== 0) {
-    throw new Error(`[global-setup] could not start the port forwarder:\n${forward.stderr}`);
+  if (HOST_PORT === 80) {
+    // nginx already listens on 80 inside the container, so callbacks reach it
+    // directly and a forwarder would only fail with "address already in use".
+    console.log('[global-setup] HOST_PORT is 80, port forwarder not needed');
+  } else {
+    const forward = spawnSync(
+      'docker',
+      [
+        'exec',
+        '-d',
+        CONTAINER_NAME,
+        'socat',
+        `TCP-LISTEN:${HOST_PORT},bind=127.0.0.1,fork,reuseaddr`,
+        'TCP:127.0.0.1:80',
+      ],
+      { stdio: 'pipe', encoding: 'utf8' },
+    );
+    if (forward.status !== 0) {
+      throw new Error(`[global-setup] could not start the port forwarder:\n${forward.stderr}`);
+    }
+    // `exec -d` returns once the process is spawned, not once it is listening,
+    // so a socat that exits straight away (port in use, binary missing) would
+    // go unnoticed. Probe the port from inside the container instead.
+    await waitForForwarder();
   }
 
   process.env.E2E_BASE_URL = `http://localhost:${HOST_PORT}`;
