@@ -50,6 +50,7 @@ const selectCell = async (frame: FrameLocator, cell: string) => {
 test.describe('Spreadsheet editor - editing a stored file', () => {
   test.afterAll(({ browser }) => cleanUpStoredFiles(browser, createdFiles));
 
+  // Editor state only; persistence is the next test. See edit-document.spec.ts.
   test('enter a value into a spreadsheet reopened from the file list', async ({ page }) => {
     const fileName = await createStoredFile(page, newFileLink('xlsx'), XLSX);
     createdFiles.push(fileName);
@@ -76,7 +77,9 @@ test.describe('Spreadsheet editor - editing a stored file', () => {
   });
 
   test('an edit survives closing and reopening the spreadsheet', async ({ page }) => {
-    test.setTimeout(120_000); // the save callback only fires once the tab closes
+    // Sized from the step timeouts inside, not the run time; see
+    // edit-document.spec.ts.
+    test.setTimeout(270_000);
     const fileName = await createStoredFile(page, newFileLink('xlsx'), XLSX);
     createdFiles.push(fileName);
     const { editorPage, frame } = await openStoredEditor(page, fileName, XLSX);

@@ -186,6 +186,58 @@ export async function deleteStoredFile(
   }
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// How long a stored file has to stop changing before cleanup will delete it,
+// and how long to wait for that. See waitForStoredFileToSettle.
+const SETTLE_STABLE_MS = 3_000;
+const SETTLE_TIMEOUT_MS = 20_000;
+const SETTLE_POLL_MS = 500;
+
+/**
+ * Wait until a stored file stops changing, i.e. until docservice has finished
+ * writing back the editor tab this spec just closed.
+ *
+ * Deleting a file releases its name, and the create-new route hands the lowest
+ * free name straight to whoever asks next — a spec in a parallel worker. If our
+ * write-back is still in flight when that happens, it lands on *their* file and
+ * fails their test on content it never typed. Waiting for quiet first keeps the
+ * write and the delete in that order.
+ *
+ * Stability is a mitigation, not a proof: a write-back that has not started yet
+ * reads as quiet. The window is sized well past the few seconds docservice
+ * takes after the last disconnect, and cleanup only runs once a whole spec is
+ * done, so in practice the write has long since begun. Treats "not listed" and
+ * "download refused" as quiet — there is nothing left to wait for either way.
+ */
+async function waitForStoredFileToSettle(
+  request: APIRequestContext,
+  fileName: string,
+): Promise<void> {
+  const hash = async () => {
+    try {
+      return sha256(await storedFileBytes(request, fileName));
+    } catch {
+      return null;
+    }
+  };
+
+  const deadline = Date.now() + SETTLE_TIMEOUT_MS;
+  let previous = await hash();
+  let quietSince = Date.now();
+
+  while (Date.now() < deadline) {
+    await sleep(SETTLE_POLL_MS);
+    const current = await hash();
+    if (current !== previous) {
+      previous = current;
+      quietSince = Date.now();
+    } else if (Date.now() - quietSince >= SETTLE_STABLE_MS) {
+      return;
+    }
+  }
+}
+
 /**
  * Remove the files a spec created, and empty the list. Call from afterAll:
  *
@@ -198,7 +250,8 @@ export async function deleteStoredFile(
  * released — while docservice is still writing the first one back a few
  * seconds after its tab closed. That write then lands on the second test's
  * file and the test fails on content it never typed. Waiting until the whole
- * spec is done leaves no sibling to hand the name to.
+ * spec is done leaves no sibling to hand the name to; waiting for the file to
+ * settle first keeps the same from happening to a parallel worker.
  *
  * Needs its own context because test fixtures (`page`, `request`) are not
  * available in afterAll; it takes the same baseURL playwright.config.ts does.
@@ -211,7 +264,12 @@ export async function cleanUpStoredFiles(browser: Browser, fileNames: string[]):
     baseURL: process.env.E2E_BASE_URL ?? DEFAULT_BASE_URL,
   });
   try {
-    await Promise.all(names.map((name) => deleteStoredFile(context.request, name)));
+    await Promise.all(
+      names.map(async (name) => {
+        await waitForStoredFileToSettle(context.request, name);
+        await deleteStoredFile(context.request, name);
+      }),
+    );
   } finally {
     await context.close();
   }
@@ -252,15 +310,20 @@ const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex
 export async function downloadStoredFile(page: Page, editorUrl: string): Promise<Buffer> {
   const fileName = new URL(editorUrl).searchParams.get('fileName');
   if (!fileName) throw new Error(`no fileName in editor URL: ${editorUrl}`);
+  return storedFileBytes(page.request, fileName);
+}
 
-  const listRes = await page.request.get('/example/');
+/** The bytes of a stored file, by name. Takes a request context so cleanup can
+ * use it with no page open. */
+async function storedFileBytes(request: APIRequestContext, fileName: string): Promise<Buffer> {
+  const listRes = await request.get('/example/');
   const list = await listRes.text();
   const encoded = encodeURIComponent(fileName).replace(/[()]/g, (c) => `\\${c}`);
   const href = new RegExp(`href="([^"]*download\\?fileName=${encoded}[^"]*)"`).exec(list)?.[1];
   if (!href) throw new Error(`"${fileName}" is not in the example app file list`);
 
   // Links are absolute with a token under JWT, relative to /example/ without.
-  const res = await page.request.get(new URL(href.replace(/&amp;/g, '&'), listRes.url()).href);
+  const res = await request.get(new URL(href.replace(/&amp;/g, '&'), listRes.url()).href);
   if (!res.ok()) throw new Error(`download of "${fileName}" failed: HTTP ${res.status()}`);
   return res.body();
 }

@@ -45,18 +45,37 @@ async function typeIntoShape(editorPage: Page, shapeNumber: number, text: string
   await editorPage.keyboard.type(text);
 }
 
-async function readShape(editorPage: Page, shapeNumber: number) {
+/**
+ * Put the caret in a shape and select all of its text. Key presses, so it
+ * changes editor state: call it once, never from inside expect.poll.
+ */
+async function selectShapeText(editorPage: Page, shapeNumber: number) {
   await focusShape(editorPage, shapeNumber);
   await editorPage.keyboard.press('Enter');
   await editorPage.keyboard.press('Control+A');
-  // Ctrl+A also selects the paragraph end, so the editor appends a line break.
-  const text = await editorApi(editorPage, (api) => api.asc_GetSelectedText());
-  return String(text).trim();
+}
+
+/**
+ * The current selection, as the editor reports it. Read-only, so this is the
+ * half that is safe to poll. Returns an "error: ..." string rather than
+ * throwing while the iframe is still settling, so a poll retries.
+ * Ctrl+A also selects the paragraph end, so the editor appends a line break.
+ */
+const selectedText = (editorPage: Page) =>
+  editorApi(editorPage, (api) => api.asc_GetSelectedText())
+    .then((text) => String(text).trim())
+    .catch((e: Error) => `error: ${e.message}`);
+
+/** One-shot read of a shape's text: select, then read. */
+async function readShape(editorPage: Page, shapeNumber: number) {
+  await selectShapeText(editorPage, shapeNumber);
+  return selectedText(editorPage);
 }
 
 test.describe('Presentation editor - editing a stored file', () => {
   test.afterAll(({ browser }) => cleanUpStoredFiles(browser, createdFiles));
 
+  // Editor state only; persistence is the next test. See edit-document.spec.ts.
   test('type a title into a presentation reopened from the file list', async ({ page }) => {
     const fileName = await createStoredFile(page, newFileLink('pptx'), PPTX);
     createdFiles.push(fileName);
@@ -71,13 +90,18 @@ test.describe('Presentation editor - editing a stored file', () => {
 
     await test.step('the title placeholder holds the typed text', async () => {
       await typeIntoShape(editorPage, 1, TITLE);
-      await expect.poll(() => readShape(editorPage, 1)).toBe(TITLE);
+      // Select once, then poll the read: polling the navigation too would press
+      // keys on every retry and change the state it is reading.
+      await selectShapeText(editorPage, 1);
+      await expect.poll(() => selectedText(editorPage)).toBe(TITLE);
       await expect(undoButton(frame)).not.toHaveClass(/disabled/);
     });
   });
 
   test('an edit survives closing and reopening the presentation', async ({ page }) => {
-    test.setTimeout(120_000); // the save callback only fires once the tab closes
+    // Sized from the step timeouts inside, not the run time; see
+    // edit-document.spec.ts.
+    test.setTimeout(270_000);
     const fileName = await createStoredFile(page, newFileLink('pptx'), PPTX);
     createdFiles.push(fileName);
     const { editorPage } = await openStoredEditor(page, fileName, PPTX);
@@ -85,7 +109,8 @@ test.describe('Presentation editor - editing a stored file', () => {
 
     const saved = await test.step('edit the stored presentation and close it', async () => {
       await typeIntoShape(editorPage, 1, TITLE);
-      await expect.poll(() => readShape(editorPage, 1)).toBe(TITLE);
+      await selectShapeText(editorPage, 1);
+      await expect.poll(() => selectedText(editorPage)).toBe(TITLE);
       await editorPage.keyboard.press('Escape');
       await editorPage.keyboard.press('Escape');
 
@@ -98,6 +123,9 @@ test.describe('Presentation editor - editing a stored file', () => {
     });
 
     await test.step('reopening shows the edited content', async () => {
+      // toPass, not expect.poll: the editor can rebuild its iframe shortly
+      // after opening, so click, select and read are retried together as one
+      // unit rather than the read alone.
       await expect(async () => {
         await saved.frame.locator('#editor_sdk').click();
         expect(await readShape(saved.editorPage, 1)).toBe(TITLE);

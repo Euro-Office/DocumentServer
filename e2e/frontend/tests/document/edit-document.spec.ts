@@ -35,6 +35,8 @@ const createdFiles: string[] = [];
 test.describe('Document editor - editing a stored file', () => {
   test.afterAll(({ browser }) => cleanUpStoredFiles(browser, createdFiles));
 
+  // Editor state only: that the typed text is in the open document. Whether it
+  // reaches storage is the next test's job, not this one's.
   test('type text into a document reopened from the file list', async ({ page }) => {
     const fileName = await createStoredFile(page, newFileLink('docx'), DOCX);
     createdFiles.push(fileName);
@@ -60,7 +62,13 @@ test.describe('Document editor - editing a stored file', () => {
   });
 
   test('an edit survives closing and reopening the document', async ({ page }) => {
-    test.setTimeout(120_000); // the save callback only fires once the tab closes
+    // The test is long because the save callback only fires once the tab
+    // closes. The budget is sized from the step timeouts inside it rather than
+    // from the ~15 s a healthy run takes: create 45 s + open 45 s + title 30 s
+    // + storage poll 60 s + reopen 45 s + read-back 30 s = 255 s. A tighter
+    // budget would fire first on a loaded server and report a generic "test
+    // timeout" instead of naming the step that was too slow.
+    test.setTimeout(270_000);
     const fileName = await createStoredFile(page, newFileLink('docx'), DOCX);
     createdFiles.push(fileName);
     const { editorPage } = await openStoredEditor(page, fileName, DOCX);
