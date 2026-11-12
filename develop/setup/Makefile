@@ -183,7 +183,7 @@ define build_server
 	@echo "Building $(1) with flags $(CFLAGS)"
 	cd $(1) && \
 	npm install && \
-	pkg . -t linux-x64 --node-options="--max_old_space_size=4096" $(CFLAGS) -o $(2) && \
+	pkg . -t linux-x64 $(CFLAGS) -o $(2) && \
 	supervisorctl restart $(3)
 endef
 
