@@ -7,6 +7,7 @@
 
 import { chromium } from '@playwright/test';
 import type { Browser, Page } from '@playwright/test';
+import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { loadavg } from 'node:os';
 import { basename, join } from 'node:path';
@@ -295,6 +296,8 @@ interface Options {
   dump?: string;
   sdk?: Buffer;
   sdkMin?: Buffer;
+  sdkPath?: string;
+  sdkMinPath?: string;
   profile?: string;
   gapMs: number;
   timeoutMs: number;
@@ -335,6 +338,8 @@ function options(): { opts: Options; inputs: string[] } {
     dump: values.dump,
     sdk: values.sdk ? readFileSync(values.sdk) : undefined,
     sdkMin: values['sdk-min'] ? readFileSync(values['sdk-min']) : undefined,
+    sdkPath: values.sdk,
+    sdkMinPath: values['sdk-min'],
     profile: values.profile,
     gapMs: Number(values.gap) * 1000,
     timeoutMs: Number(values.timeout) * 1000,
@@ -373,6 +378,7 @@ async function upload(url: string, file: string): Promise<string> {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const round = (x: number | undefined) => (x === undefined ? undefined : Math.round(x));
+const sha256 = (buf: Buffer) => createHash('sha256').update(buf).digest('hex');
 
 async function evaluateInFrames<T>(page: Page, fn: (arg: boolean) => T, arg: boolean) {
   for (const frame of page.frames()) {
@@ -406,13 +412,19 @@ async function openOnce(browser: Browser, opts: Options, doc: string, open: stri
     let bin: { start: number; ms: number; encoding?: string } | undefined;
     page.on('requestfinished', async (request) => {
       if (!/\/Editor\.bin(\?|$)/.test(request.url())) return;
-      const timing = request.timing();
-      const response = await request.response();
-      bin = {
-        start: timing.startTime,
-        ms: timing.responseEnd,
-        encoding: response?.headers()['content-encoding'],
-      };
+      try {
+        const timing = request.timing();
+        const response = await request.response();
+        bin = {
+          start: timing.startTime,
+          ms: timing.responseEnd,
+          encoding: response?.headers()['content-encoding'],
+        };
+      } catch {
+        // request.response() can reject ("target closed") if the context closes while this
+        // handler is still awaiting. An unhandled rejection there would crash the process
+        // (Node's default) before stdout flushes; a missed bin timing is not worth that.
+      }
     });
 
     const cdp = opts.profile ? await context.newCDPSession(page) : undefined;
@@ -505,6 +517,14 @@ async function openOnce(browser: Browser, opts: Options, doc: string, open: stri
           : undefined,
       load1: Math.round(load1 * 100) / 100,
       sdk_patched: Boolean(opts.sdk || opts.sdkMin) || undefined,
+      // Pin the exact A/B variable: path and content hash of each served sdkjs bundle.
+      sdk:
+        opts.sdk || opts.sdkMin
+          ? {
+              all: opts.sdk ? { path: opts.sdkPath, sha256: sha256(opts.sdk) } : undefined,
+              min: opts.sdkMin ? { path: opts.sdkMinPath, sha256: sha256(opts.sdkMin) } : undefined,
+            }
+          : undefined,
       profile: profileFile,
       phases: phases
         ? {
@@ -570,5 +590,7 @@ async function main(): Promise<void> {
 
 main().catch((err: unknown) => {
   console.error(err);
-  process.exit(1);
+  // Not process.exit(1): that discards unflushed stdout, truncating the last result line when
+  // ab.ts reads this script over a pipe. Let the event loop drain and set the code instead.
+  process.exitCode = 1;
 });

@@ -128,7 +128,9 @@ Notes:
   `--sdk-min`, and `--sdk` alone leaves it out. The rest of the page comes from the server, so
   build the bundles from a commit close to the server's version. The browser gets these files
   from the harness, not over HTTP from nginx (no network, no gzip), so give every arm of an
-  sdkjs comparison the same options, the baseline arm with the server's own files.
+  sdkjs comparison the same options, the baseline arm with the server's own files. Each result
+  records the path and SHA-256 of every served bundle under `sdk` (`sdk.all`, `sdk.min`), so a
+  number can be traced back to the exact code that produced it.
 - A cold open includes the conversion. For browser-only changes, compare the warm opens.
 - "Warm" means the server reuses its converted Editor.bin. The browser side is a first visit for
   every open: a new context has no HTTP cache and no compiled-code cache, and the editor's service

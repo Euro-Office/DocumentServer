@@ -83,20 +83,30 @@ function runArm(arm: Arm, round: number, reps: number): boolean {
     stdio: ['ignore', 'pipe', 'inherit'],
     maxBuffer: 1 << 30,
   });
-  const rows = (res.stdout ?? '')
-    .split('\n')
-    .filter((line) => line.startsWith('{'))
-    .map((line) => JSON.parse(line) as Row);
+  const rows: Row[] = [];
+  let unparseable = false;
+  for (const line of (res.stdout ?? '').split('\n')) {
+    if (!line.startsWith('{')) continue;
+    try {
+      rows.push(JSON.parse(line) as Row);
+    } catch {
+      // A truncated or garbled result line (e.g. an arm that exited mid-write) must fail the
+      // arm, not throw a SyntaxError that loses every completed round and the --out file.
+      unparseable = true;
+    }
+  }
   arm.rounds.push(rows);
   // No result lines with exit 0 is a failure too, for example a crash piped through `| tee`.
   const failure =
     res.status !== 0
       ? `exit ${res.status ?? res.signal}`
-      : rows.length === 0
-        ? 'no result lines'
-        : rows.some((r) => r.error)
-          ? 'a run reported an error'
-          : '';
+      : unparseable
+        ? 'unparseable output'
+        : rows.length === 0
+          ? 'no result lines'
+          : rows.some((r) => r.error)
+            ? 'a run reported an error'
+            : '';
   const ok = !failure;
   const secs = ((Date.now() - started) / 1000).toFixed(0);
   // The measured part, to spot time lost outside it (upload, browser start, a stalled exit).
