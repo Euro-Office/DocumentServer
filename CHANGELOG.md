@@ -1,5 +1,127 @@
 # Changelog
 
+## v9.3.8
+
+### Features
+
+* DocumentServer: e2e: add eslint, prettier and make.sh tooling for frontend tests by bhumigopaniStarto in [DocumentServer#462](https://github.com/Euro-Office/DocumentServer/pull/462)
+* DocumentServer: docker: ship DB schema in cluster-utils image under /scripts/schema by meisam-ui in [DocumentServer#484](https://github.com/Euro-Office/DocumentServer/pull/484)
+* server: logger: report errors to Sentry when SENTRY_DSN is set by juliusknorr in [server#49](https://github.com/Euro-Office/server/pull/49)
+* server: logger: tag errors with integrator referenceData by juliusknorr in [server#59](https://github.com/Euro-Office/server/pull/59)
+* web-apps: documenteditor: show selection counts in the word count popup by martivilella in [web-apps#289](https://github.com/Euro-Office/web-apps/pull/289)
+* sdkjs: word: add selection statistics API by martivilella in [sdkjs#98](https://github.com/Euro-Office/sdkjs/pull/98)
+* core: Android build by rikled in [core#182](https://github.com/Euro-Office/core/pull/182)
+* core: Move the third-party remote cache to S3 (eo-build-assets) by rikled in [core#178](https://github.com/Euro-Office/core/pull/178)
+* document-server-package: nginx: add a Content-Security-Policy to the editor documents by chrip in [document-server-package#16](https://github.com/Euro-Office/document-server-package/pull/16)
+
+### Bug fixes
+
+* DocumentServer: docker: bind-mount packages instead of copying them by karlivory in [DocumentServer#451](https://github.com/Euro-Office/DocumentServer/pull/451)
+* DocumentServer: docker: refresh OS packages on every daily build by juliusknorr in [DocumentServer#475](https://github.com/Euro-Office/DocumentServer/pull/475)
+* DocumentServer: docker: add clang/llvm/lld and unzip to the develop image by robintel in [DocumentServer#443](https://github.com/Euro-Office/DocumentServer/pull/443)
+* DocumentServer: normalize boolean input in entrypoint scripts by rikled in [DocumentServer#391](https://github.com/Euro-Office/DocumentServer/pull/391)
+* DocumentServer: orchestrated: drop the chmod on FileConverter/bin in the font init by chrip in [DocumentServer#502](https://github.com/Euro-Office/DocumentServer/pull/502)
+* server: server: clean up runtime config watcher on shutdown by nvanlaerebeke in [server#52](https://github.com/Euro-Office/server/pull/52)
+* server: credit Google for the Material Symbols icons by juliusknorr in [server#67](https://github.com/Euro-Office/server/pull/67)
+* server: branding: point installation instructions link at Euro-Office docs by NotAFlightRisk in [server#70](https://github.com/Euro-Office/server/pull/70)
+* web-apps: l10n: a quality review of the Danish translation across all editors by bargib in [web-apps#329](https://github.com/Euro-Office/web-apps/pull/329)
+* web-apps: mobile: don't crash in uk/pl locales due to undefined license warning translation by nykula in [web-apps#185](https://github.com/Euro-Office/web-apps/pull/185)
+* web-apps: de: show the icons in the wrapping style and page number pickers by bargib in [web-apps#320](https://github.com/Euro-Office/web-apps/pull/320)
+* web-apps: tips: drop the "Learn more" links to the ONLYOFFICE blog by bargib in [web-apps#354](https://github.com/Euro-Office/web-apps/pull/354)
+* web-apps: l10n: fix typo in Danish track changes menu by bargib in [web-apps#361](https://github.com/Euro-Office/web-apps/pull/361)
+* web-apps: Adding missing suggest_url to config.json by Aiiaiiio in [web-apps#365](https://github.com/Euro-Office/web-apps/pull/365)
+* web-apps: header: use header icon colour for symbols on light themes by rikled in [web-apps#366](https://github.com/Euro-Office/web-apps/pull/366)
+* sdkjs: use the standard wheel event in all editors (restores PDF scrolling in Chromium) by chrip in [sdkjs#110](https://github.com/Euro-Office/sdkjs/pull/110)
+* sdkjs: word: skip unused built-in table styles equal to the defaults on save by delmarguillen in [sdkjs#112](https://github.com/Euro-Office/sdkjs/pull/112)
+* core: Build amd64 desktop on Rocky Linux 9 (fixes Euro-Office/DesktopEditors#122) by rikled in [core#165](https://github.com/Euro-Office/core/pull/165)
+* core: make zlib a 3rdparty dep by Aiiaiiio in [core#183](https://github.com/Euro-Office/core/pull/183)
+* core: boost: name the MSVC toolset for bootstrap on Visual Studio 2026 by rikled in [core#185](https://github.com/Euro-Office/core/pull/185)
+* core: minizip: disable libbsd for the WASM build by rikled in [core#188](https://github.com/Euro-Office/core/pull/188)
+* core: Fixing minizip-ng build for macOS by Aiiaiiio in [core#192](https://github.com/Euro-Office/core/pull/192)
+* core: libxml2 update by Aiiaiiio in [core#193](https://github.com/Euro-Office/core/pull/193)
+* core: test: pass narrow UTF-8 paths to X2T_Convert in OOXML/test by robintel in [core#166](https://github.com/Euro-Office/core/pull/166)
+* core: csv: drop empty row added for UTF-8 files ending with a line break by robintel in [core#170](https://github.com/Euro-Office/core/pull/170)
+* core: xlsx: preserve pivot cache records on XLSB to XLSX conversion by robintel in [core#169](https://github.com/Euro-Office/core/pull/169)
+* core: vsdx: Fix detection extension for empty vsdx by coffeemakr in [core#197](https://github.com/Euro-Office/core/pull/197)
+* core: officeutils: restore compatible ZIP headers for saved documents by rikled in [core#289](https://github.com/Euro-Office/core/pull/289)
+* document-server-integration: credit Google for the Material Symbols icons by juliusknorr in [document-server-integration#19](https://github.com/Euro-Office/document-server-integration/pull/19)
+* document-server-integration: docker: normalize JWT_ENABLED in example entrypoint by rikled in [document-server-integration#21](https://github.com/Euro-Office/document-server-integration/pull/21)
+* document-server-package: rpm: make msttcore-fonts-installer optional by juliusknorr in [document-server-package#19](https://github.com/Euro-Office/document-server-package/pull/19)
+* document-server-package: package: declare AGPL, CC BY-SA and third-party licences per file class by juliusknorr in [document-server-package#21](https://github.com/Euro-Office/document-server-package/pull/21)
+* document-server-package: packaging: let root own what the root scripts execute by chrip in [document-server-package#24](https://github.com/Euro-Office/document-server-package/pull/24)
+
+### Performance
+
+* web-apps: help: replace GIFs with WebM/MP4 and recompress PNGs by juliusknorr in [web-apps#352](https://github.com/Euro-Office/web-apps/pull/352)
+* sdkjs: word: ⚡ check for table cell content before IsUseInDocument in section updates by moodyjmz in [sdkjs#123](https://github.com/Euro-Office/sdkjs/pull/123)
+* sdkjs: cell: index area listeners to speed up the circular-reference check by MonaAghili in [sdkjs#119](https://github.com/Euro-Office/sdkjs/pull/119)
+* document-server-package: package: hardlink duplicate web-apps files in deb and rpm by juliusknorr in [document-server-package#20](https://github.com/Euro-Office/document-server-package/pull/20)
+
+### Other changes
+
+* DocumentServer: ci: pass third-party cache credentials to the core build by juliusknorr in [DocumentServer#447](https://github.com/Euro-Office/DocumentServer/pull/447)
+* DocumentServer: ci: reuse the registry build cache across commits by juliusknorr in [DocumentServer#446](https://github.com/Euro-Office/DocumentServer/pull/446)
+* DocumentServer: ci: auto-approve and auto-merge non-major renovate updates by juliusknorr in [DocumentServer#454](https://github.com/Euro-Office/DocumentServer/pull/454)
+* DocumentServer: chore(deps): update actions/download-artifact action to v8.0.2 by renovate[bot] in [DocumentServer#445](https://github.com/Euro-Office/DocumentServer/pull/445)
+* DocumentServer: chore(deps): update actions/setup-node action to v6.5.0 by renovate[bot] in [DocumentServer#298](https://github.com/Euro-Office/DocumentServer/pull/298)
+* DocumentServer: chore: update submodules to latest main branch by rikled in [DocumentServer#455](https://github.com/Euro-Office/DocumentServer/pull/455)
+* DocumentServer: chore(deps): update docker/setup-buildx-action action to v4.4.1 by renovate[bot] in [DocumentServer#372](https://github.com/Euro-Office/DocumentServer/pull/372)
+* DocumentServer: chore(deps): update zizmorcore/zizmor-action action to v0.7.1 by renovate[bot] in [DocumentServer#354](https://github.com/Euro-Office/DocumentServer/pull/354)
+* DocumentServer: chore(deps): update actions/upload-artifact action to v7.0.2 by renovate[bot] in [DocumentServer#456](https://github.com/Euro-Office/DocumentServer/pull/456)
+* DocumentServer: chore(deps): update dependency @playwright/test to v1.64.1 by renovate[bot] in [DocumentServer#340](https://github.com/Euro-Office/DocumentServer/pull/340)
+* DocumentServer: chore(deps): update dependency @types/node to v22.20.5 by renovate[bot] in [DocumentServer#164](https://github.com/Euro-Office/DocumentServer/pull/164)
+* DocumentServer: chore(deps): update dependency typescript to v7 by renovate[bot] in [DocumentServer#459](https://github.com/Euro-Office/DocumentServer/pull/459)
+* DocumentServer: chore(deps): update actions/setup-node action to v7 by renovate[bot] in [DocumentServer#379](https://github.com/Euro-Office/DocumentServer/pull/379)
+* DocumentServer: chore(deps): update zizmorcore/zizmor-action action to v0.8.0 by renovate[bot] in [DocumentServer#471](https://github.com/Euro-Office/DocumentServer/pull/471)
+* DocumentServer: chore(deps): update actions/setup-node action to v7 by renovate[bot] in [DocumentServer#472](https://github.com/Euro-Office/DocumentServer/pull/472)
+* DocumentServer: chore(deps): update docker/login-action action to v4.7.0 by renovate[bot] in [DocumentServer#457](https://github.com/Euro-Office/DocumentServer/pull/457)
+* DocumentServer: chore(deps): update dependency node to v26 by renovate[bot] in [DocumentServer#477](https://github.com/Euro-Office/DocumentServer/pull/477)
+* DocumentServer: ci(dev-images): reuse the main build cache and report cache hits by meisam-ui in [DocumentServer#463](https://github.com/Euro-Office/DocumentServer/pull/463)
+* DocumentServer: chore(deps): update docker/bake-action action to v7.5.0 by renovate[bot] in [DocumentServer#460](https://github.com/Euro-Office/DocumentServer/pull/460)
+* DocumentServer: ci: build vX.Y.Z-N tags as stable patch builds by juliusknorr in [DocumentServer#478](https://github.com/Euro-Office/DocumentServer/pull/478)
+* DocumentServer: ci(update-submodules): authenticate the clones of private submodules by rikled in [DocumentServer#487](https://github.com/Euro-Office/DocumentServer/pull/487)
+* DocumentServer: chore(deps): update dependency typescript-eslint to v8.72.1 by renovate[bot] in [DocumentServer#488](https://github.com/Euro-Office/DocumentServer/pull/488)
+* DocumentServer: chore: update submodules to latest main branch by rikled in [DocumentServer#464](https://github.com/Euro-Office/DocumentServer/pull/464)
+* DocumentServer: chore(deps): update dependency @types/node to v26.6.6 by renovate[bot] in [DocumentServer#495](https://github.com/Euro-Office/DocumentServer/pull/495)
+* DocumentServer: build(docker): make BuildKit cache root configurable by nvanlaerebeke in [DocumentServer#403](https://github.com/Euro-Office/DocumentServer/pull/403)
+* DocumentServer: build(docker): make BuildKit cache root configurable by meisam-ui in [DocumentServer#499](https://github.com/Euro-Office/DocumentServer/pull/499)
+* DocumentServer: chore(deps): update dependency eslint to v10.14.0 by renovate[bot] in [DocumentServer#501](https://github.com/Euro-Office/DocumentServer/pull/501)
+* DocumentServer: ci: split build and release, build only the e2e image on pull requests by juliusknorr in [DocumentServer#452](https://github.com/Euro-Office/DocumentServer/pull/452)
+* DocumentServer: chore: update submodules to latest main branch by rikled in [DocumentServer#493](https://github.com/Euro-Office/DocumentServer/pull/493)
+* DocumentServer: chore(release): v9.3.8-rc.1 by eo-robot in [DocumentServer#508](https://github.com/Euro-Office/DocumentServer/pull/508)
+* server: ci: switch S3 storage tests to pgsty/minio by juliusknorr in [server#63](https://github.com/Euro-Office/server/pull/63)
+* server: build: bump Node to 24 LTS by juliusknorr in [server#62](https://github.com/Euro-Office/server/pull/62)
+* web-apps: i18n(fr): add the 40 missing French strings across all editors by SamsGuamejy in [web-apps#334](https://github.com/Euro-Office/web-apps/pull/334)
+* web-apps: chore(deps): update github/codeql-action action to v4.39.1 by renovate[bot] in [web-apps#355](https://github.com/Euro-Office/web-apps/pull/355)
+* web-apps: chore(deps): update actions/setup-python action to v7.1.0 by renovate[bot] in [web-apps#356](https://github.com/Euro-Office/web-apps/pull/356)
+* web-apps: chore(deps): update dependency webpack to v5.112.1 by renovate[bot] in [web-apps#358](https://github.com/Euro-Office/web-apps/pull/358)
+* web-apps: chore(deps): update dependency webpack to v5.112.2 by renovate[bot] in [web-apps#359](https://github.com/Euro-Office/web-apps/pull/359)
+* web-apps: refactor(common): remove unused Switcher.setThumbPosition by juliusknorr in [web-apps#349](https://github.com/Euro-Office/web-apps/pull/349)
+* web-apps: chore(deps): update dependency webpack-cli to v7.3.0 by renovate[bot] in [web-apps#373](https://github.com/Euro-Office/web-apps/pull/373)
+* web-apps: chore(deps): update dependency webpack-cli to v7.3.1 by renovate[bot] in [web-apps#374](https://github.com/Euro-Office/web-apps/pull/374)
+* sdkjs: build: sdkjs for the mobile editors' engine by rikled in [sdkjs#121](https://github.com/Euro-Office/sdkjs/pull/121)
+* sdkjs: ci: auto-approve and auto-merge non-major renovate updates by juliusknorr in [sdkjs#118](https://github.com/Euro-Office/sdkjs/pull/118)
+* sdkjs: chore(deps): pin dependencies by renovate[bot] in [sdkjs#129](https://github.com/Euro-Office/sdkjs/pull/129)
+* sdkjs: chore(deps): update actions/upload-artifact action to v7 by renovate[bot] in [sdkjs#102](https://github.com/Euro-Office/sdkjs/pull/102)
+* core: ci: mount third-party cache credentials in the core stage by juliusknorr in [core#177](https://github.com/Euro-Office/core/pull/177)
+* core: fix(deps): bump brotli to v1.2.1 by juliusknorr in [core#184](https://github.com/Euro-Office/core/pull/184)
+* core: test(odf): verify the TestEnv conversion produces a valid package by robintel in [core#167](https://github.com/Euro-Office/core/pull/167)
+* core: test(rtf): add unit suite for the RTF lexer by robintel in [core#174](https://github.com/Euro-Office/core/pull/174)
+* core: ci: cancel superseded pull request builds by juliusknorr in [core#195](https://github.com/Euro-Office/core/pull/195)
+* core: ci: pull core-base from docker-ci, build it only when missing by juliusknorr in [core#201](https://github.com/Euro-Office/core/pull/201)
+* core: ci: run macOS jobs on macos-15 by juliusknorr in [core#200](https://github.com/Euro-Office/core/pull/200)
+* document-server-integration: fix(deps): build the nodejs example with Node 26 by juliusknorr in [document-server-integration#20](https://github.com/Euro-Office/document-server-integration/pull/20)
+
+### Compare to v9.3.7-1
+
+* DocumentServer: <https://github.com/Euro-Office/DocumentServer/compare/6ba1e1318785...8478a02af143>
+* server: <https://github.com/Euro-Office/server/compare/a924935680de...2e7a2a131061>
+* web-apps: <https://github.com/Euro-Office/web-apps/compare/ce0ba4954581...f8d4506c130d>
+* sdkjs: <https://github.com/Euro-Office/sdkjs/compare/40d9b7780f11...a1b8cac5d1bc>
+* core: <https://github.com/Euro-Office/core/compare/afb3f233704b...749cc177d520>
+* document-server-integration: <https://github.com/Euro-Office/document-server-integration/compare/d88f09562d0f...aedcb528d5f7>
+* document-server-package: <https://github.com/Euro-Office/document-server-package/compare/c695b1b421ee...7be57e6f967d>
+
 ## v9.3.8-rc.1
 
 ### Features
