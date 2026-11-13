@@ -31,7 +31,7 @@ on:
         value: ${{ jobs.build.outputs.e2e_image }}
     secrets:
       EURO_OFFICE_MIRROR_TOKEN:
-        required: true
+        required: false
       NEXTCLOUD_USER:
         required: false
       NEXTCLOUD_PASS:
@@ -149,9 +149,10 @@ jobs:
         with:
           path: .
           submodules: recursive
-          token: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN }}
-          # Keep the mirror token out of .git/config; later steps do not
-          # need it.
+          # The submodules are public; the mirror token is only needed in
+          # private copies of this repo. Fork PRs get no secrets.
+          token: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN || github.token }}
+          # Keep the token out of .git/config; later steps do not need it.
           persist-credentials: false
 
       - name: Checkout nextcloud-office-brand repo
@@ -159,7 +160,7 @@ jobs:
         with:
           repository: Euro-Office/nextcloud-office-brand
           path: build/brands/nextcloud-office-brand
-          token: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN }}
+          token: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN || github.token }}
           persist-credentials: false
 
       - name: Align submodules to requested branches
@@ -227,6 +228,15 @@ jobs:
           IS_NIGHTLY=${{ inputs.nightly }}
           IS_TAG=${{ startsWith(github.ref, 'refs/tags/') }}
 
+          # Fork PRs get a read-only GITHUB_TOKEN: they read the registry
+          # build cache but cannot write it or push the e2e image, so they
+          # only build. ci.yml skips e2e and upgrade for them.
+          IS_FORK=${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          echo "is_fork=${IS_FORK}" >> $GITHUB_OUTPUT
+          if [[ "$IS_FORK" == "true" ]]; then
+            echo "::notice::Fork PR: build only, without cache export, image push or e2e."
+          fi
+
           # Registry build cache: every ref reuses its own previous run and
           # falls back to main. Tags need no per-commit key (7b0fb05): release
           # tags are never moved, a content change gets a new version, and
@@ -272,6 +282,7 @@ jobs:
           # Layer dedup keeps the transfer small. Other arches/brands stay
           # cacheonly. The nightly build tests its pushed nightly-amd64.
           if [[ "$IS_TAG" != "true" && "$IS_NIGHTLY" != "true" \
+                && "$IS_FORK" != "true" \
                 && "$BRAND" == "euro-office" \
                 && "$ARCH" == "amd64" ]]; then
             echo "export_image=true" >> $GITHUB_OUTPUT
@@ -428,8 +439,10 @@ jobs:
           # Pin every target's build context to the repo root (".." from
           # source ./build). Without this override bake resolves the context
           # to ../../../build and every leg fails with "lstat ../../../build:
-          # no such file or directory". (Note: comments must stay outside the
-          # set: block below, which is parsed line by line.)
+          # no such file or directory". The last line clears every cache-to
+          # for fork PRs; bake applies --set in order, so it must stay last.
+          # (Note: comments must stay outside the set: block below, which is
+          # parsed line by line.)
           set: |
             *.context=..
             core.args.CORE_CCACHE=1
@@ -490,6 +503,7 @@ jobs:
             develop.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}develop-buildcache-${{ matrix.arch }},mode=max
             develop.tags=${{ steps.meta.outputs.develop_push == 'true' && format('{0}/{1}:latest-dev-{2}', env.REGISTRY, matrix.brand.image_name, matrix.arch) || '' }}
             develop.output=${{ steps.meta.outputs.develop_push == 'true' && 'type=registry' || 'type=cacheonly' }}
+            ${{ steps.meta.outputs.is_fork == 'true' && '*.cache-to=' || '' }}
         env:
           REGISTRY: ${{ env.REGISTRY }}
           TAG: ${{ steps.meta.outputs.images_tag }}
