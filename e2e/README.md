@@ -21,7 +21,8 @@ e2e/
 │   ├── global-teardown.ts     Removes the container
 │   └── tests/
 │       ├── document/          create-, save-, edit-, delete-document, document-editing
-│       ├── spreadsheet/       create-, save-, edit-, delete-spreadsheet, spreadsheet-formula
+│       ├── spreadsheet/       create-, save-, edit-, delete-spreadsheet, spreadsheet-formula,
+│       │                     table-styles
 │       ├── presentation/      create-, save-, edit-, delete-presentation, presentation-slides
 │       ├── pdf-form/          create-, save-, edit-, delete-pdf-form
 │       ├── mobile/            mobile-editor
