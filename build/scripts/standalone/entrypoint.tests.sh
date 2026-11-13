@@ -434,7 +434,7 @@ for tls in false true; do
       REDIS_SERVER_TLS="$tls" REDIS_SENTINEL_TLS="$sentinel_tls" REDIS_SENTINEL_NODES='sentinel-a:26379')
     assert_config "$sentinel_tls_config" "
       (.services.CoAuthoring.redis.options.socket.tls // false) == $tls and
-      (.services.CoAuthoring.redis.optionsSentinel.nodeClientOptions.socket.tls // false) == $tls and
+      (.services.CoAuthoring.redis.optionsSentinel.nodeClientOptions | has(\"socket\") | not) and
       (.services.CoAuthoring.redis.optionsSentinel.sentinelClientOptions.socket.tls // false) == $sentinel_tls
     "
   done
@@ -450,7 +450,7 @@ expect_failure() {
   printf '%s\n' "$name" >"$TMP_DIR/current-case"
   local case_dir="$TMP_DIR/$name"
   mkdir -p "$case_dir/conf" "$case_dir/data"
-  cp "$DEFAULT_CONFIG" "$case_dir/conf/local.json"
+  cp "${ENTRYPOINT_TEST_CONFIG:-$DEFAULT_CONFIG}" "$case_dir/conf/local.json"
 
   local status=0
   timeout -k 2s 10s env -i \
@@ -476,17 +476,177 @@ expect_failure() {
   fi
 }
 
-expect_failure invalid_redis_tls 'REDIS_SERVER_TLS must be true or false' REDIS_SERVER_TLS=invalid
-expect_failure invalid_sentinel_tls 'REDIS_SENTINEL_TLS must be true or false' REDIS_SENTINEL_TLS=invalid
-expect_failure invalid_sentinel_database 'Redis Sentinel database must be a non-negative integer' \
+expect_failure invalid_redis_tls "REDIS_SERVER_TLS='invalid' is not a recognized boolean" REDIS_SERVER_TLS=invalid
+expect_failure invalid_sentinel_tls "REDIS_SENTINEL_TLS='invalid' is not a recognized boolean" REDIS_SENTINEL_TLS=invalid
+expect_failure invalid_database 'the Redis database must be a non-negative integer' REDIS_SERVER_DB=oops
+expect_failure invalid_sentinel_database 'the Redis database must be a non-negative integer' \
   REDIS_SERVER_DB=oops REDIS_SENTINEL_NODES='sentinel-a:26379'
 expect_failure conflicting_node_config 'Redis Sentinel and Redis Cluster cannot be configured together' \
   NODE_CONFIG='{"services":{"CoAuthoring":{"redis":{"optionsSentinel":{"name":"mymaster"},
     "optionsCluster":{"rootNodes":[{"url":"redis://cluster-a:7000"}]}}}}}'
 
 redis_test_config() { run_entrypoint "$@"; }
+# Writes the fixture with LOCAL_JSON merged in and prints its path.
+redis_test_local_fixture() {
+  local local_json=$1 name=$2
+  jq --argjson settings "$local_json" '. * $settings' "$DEFAULT_CONFIG" >"$TMP_DIR/$name.local.json"
+  printf '%s' "$TMP_DIR/$name.local.json"
+}
+redis_test_local_config() {
+  local fixture
+  fixture=$(redis_test_local_fixture "$1" "$2")
+  shift
+  ENTRYPOINT_TEST_CONFIG="$fixture" run_entrypoint "$@"
+}
+redis_test_local_failure() {
+  local fixture
+  fixture=$(redis_test_local_fixture "$1" "$2")
+  shift
+  ENTRYPOINT_TEST_CONFIG="$fixture" expect_failure "$@"
+}
 REDIS_TEST_PASSWORD_VAR=REDIS_SERVER_PASS
-REDIS_TEST_USER_KEY=username
+REDIS_TEST_LOCAL_SENTINEL_FALLBACK=false
 . "$SCRIPT_DIR/../redis-topology.test-cases.sh"
+
+# Credentials in local.json survive REDIS_SERVER_USER=default without
+# REDIS_SERVER_PASS, for the base options and for Sentinel node clients. The
+# configured username applies, not `default`.
+local_password_fixture="$TMP_DIR/local-password.json"
+jq '.services.CoAuthoring.redis.options += {username: "app", password: "file-pass"}' \
+  "$DEFAULT_CONFIG" >"$local_password_fixture"
+for topology in standalone sentinel; do
+  topology_env=()
+  [[ $topology == sentinel ]] && topology_env=(REDIS_SENTINEL_NODES=sentinel-a:26379)
+  config=$(ENTRYPOINT_TEST_CONFIG="$local_password_fixture" run_entrypoint "local_password_$topology" \
+    REDIS_SERVER_USER=default "${topology_env[@]}")
+  assert_config "$config" '
+    .services.CoAuthoring.redis.options == {username: "app", password: "file-pass"} and
+    (.services.CoAuthoring.redis.options + (.services.CoAuthoring.redis.optionsSentinel // {} |
+      .nodeClientOptions // {})) == {username: "app", password: "file-pass"}
+  '
+done
+
+# A `default` username left in local.json by an older entrypoint stays
+# unauthenticated instead of becoming a username without a password.
+stale_username_fixture="$TMP_DIR/stale-username.json"
+jq '.services.CoAuthoring.redis.options.username = "default"' "$DEFAULT_CONFIG" >"$stale_username_fixture"
+config=$(ENTRYPOINT_TEST_CONFIG="$stale_username_fixture" run_entrypoint stale_username REDIS_SERVER_USER=default)
+assert_config "$config" '.services.CoAuthoring.redis.options == {username: "default", password: ""}'
+
+# The TLS flags also apply to a topology configured in local.json.
+plain_sentinel_fixture="$TMP_DIR/plain-sentinel.json"
+jq 'del(.services.CoAuthoring.redis.optionsSentinel.nodeClientOptions.socket.tls,
+  .services.CoAuthoring.redis.optionsSentinel.sentinelClientOptions.socket.tls)' \
+  "$sentinel_fixture" >"$plain_sentinel_fixture"
+config=$(ENTRYPOINT_TEST_CONFIG="$plain_sentinel_fixture" run_entrypoint local_sentinel_env_tls \
+  REDIS_SERVER_TLS=true REDIS_SENTINEL_TLS=true)
+assert_config "$config" "
+  .services.CoAuthoring.redis.optionsSentinel == $sentinel_options
+"
+plain_cluster_fixture="$TMP_DIR/plain-cluster.json"
+jq '.services.CoAuthoring.redis.optionsCluster.rootNodes = [{url: "redis://saved-cluster:7000"}] |
+  del(.services.CoAuthoring.redis.optionsCluster.defaults.socket.tls)' \
+  "$cluster_fixture" >"$plain_cluster_fixture"
+config=$(ENTRYPOINT_TEST_CONFIG="$plain_cluster_fixture" run_entrypoint local_cluster_env_tls REDIS_SERVER_TLS=true)
+assert_config "$config" "
+  .services.CoAuthoring.redis.optionsCluster == $cluster_options
+"
+
+# One leftover Sentinel variable without a Sentinel address keeps the bundled
+# Redis instead of pointing discovery at it.
+for stray in REDIS_SENTINEL_PASS=stray REDIS_SENTINEL_USERNAME=stray REDIS_SENTINEL_GROUP_NAME=stray; do
+  case_name="stray_${stray%%=*}"
+  config=$(run_entrypoint "$case_name" "$stray")
+  assert_config "$config" '((.services.CoAuthoring.redis.optionsSentinel // {}) | length) == 0'
+  grep -Fq 'ignoring REDIS_SENTINEL_* settings' "$TMP_DIR/$case_name/output" || {
+    echo "$case_name: missing warning" >&2
+    exit 1
+  }
+done
+
+# A leftover Sentinel variable next to REDIS_CLUSTER_NODES is ignored too.
+config=$(run_entrypoint stray_with_cluster REDIS_SENTINEL_GROUP_NAME=stray REDIS_SENTINEL_PASS=stray \
+  REDIS_CLUSTER_NODES=cluster-a:7000)
+assert_config "$config" '
+  .services.CoAuthoring.redis.optionsCluster.rootNodes == [{url: "redis://cluster-a:7000"}] and
+  .services.CoAuthoring.redis.optionsSentinel == null
+'
+grep -Fq 'ignoring REDIS_SENTINEL_* settings' "$TMP_DIR/stray_with_cluster/output" || {
+  echo 'stray_with_cluster: missing warning' >&2
+  exit 1
+}
+
+# Sentinel variables without REDIS_SENTINEL_NODES apply to a Sentinel
+# configured in local.json or NODE_CONFIG, which keeps its addresses.
+for source in local override; do
+  case_name="config_sentinel_env_settings_$source"
+  sentinel_settings=(REDIS_SENTINEL_GROUP_NAME=env-master
+    REDIS_SENTINEL_USER=env-sentinel-user REDIS_SENTINEL_PASS=env-sentinel-pass REDIS_SENTINEL_TLS=true)
+  # NODE_CONFIG overrides the environment, local.json does not.
+  if [[ $source == local ]]; then
+    expected_name=env-master
+    config=$(ENTRYPOINT_TEST_CONFIG="$sentinel_fixture" run_entrypoint "$case_name" "${sentinel_settings[@]}")
+  else
+    expected_name=mymaster
+    config=$(run_entrypoint "$case_name" "${sentinel_settings[@]}" NODE_CONFIG="$node_config_sentinel")
+  fi
+  assert_config "$config" '
+    .services.CoAuthoring.redis.optionsSentinel.name == "'"$expected_name"'" and
+    (.services.CoAuthoring.redis.optionsSentinel.sentinelRootNodes | length) == 1 and
+    .services.CoAuthoring.redis.optionsSentinel.sentinelRootNodes[0].host != "localhost" and
+    (.services.CoAuthoring.redis.optionsSentinel.sentinelClientOptions |
+      .username == "env-sentinel-user" and .password == "env-sentinel-pass" and .socket.tls == true)
+  '
+  if grep -Fq 'ignoring REDIS_SENTINEL_* settings' "$TMP_DIR/$case_name/output"; then
+    echo "$case_name: Sentinel settings were ignored" >&2
+    exit 1
+  fi
+done
+
+# Configuration-only mode without an output file says so.
+config_only_dir="$TMP_DIR/config_only_no_output"
+mkdir -p "$config_only_dir/conf" "$config_only_dir/data"
+cp "$DEFAULT_CONFIG" "$config_only_dir/conf/local.json"
+timeout -k 2s 10s env -i PATH="$TMP_DIR/bin:$PATH" ENTRYPOINT_CALLS="$config_only_dir/calls" \
+  EO_ROOT="$config_only_dir/root" EO_LOG="$config_only_dir/log" EO_LIB="$config_only_dir/lib" \
+  EO_CONF="$config_only_dir/conf" DATA_DIR="$config_only_dir/data" ENTRYPOINT_CONFIG_ONLY=true \
+  JWT_ENABLED=false GENERATE_FONTS=false PLUGINS_ENABLED=false AMQP_URI=amqp://unused \
+  sh "$ENTRYPOINT" >"$config_only_dir/output" 2>&1
+grep -Fq 'set ENTRYPOINT_CONFIG_ONLY_OUTPUT' "$config_only_dir/output" || {
+  echo 'config_only_no_output: missing note' >&2
+  exit 1
+}
+
+# Redis secrets stay off jq command lines and out of the entrypoint output, and
+# the configuration file is private.
+real_jq=$(command -v jq)
+mkdir -p "$TMP_DIR/argv-bin"
+cat >"$TMP_DIR/argv-bin/jq" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >>"\$JQ_ARGV_LOG"
+exec "$real_jq" "\$@"
+EOF
+chmod +x "$TMP_DIR/argv-bin/jq"
+: >"$TMP_DIR/argv.log"
+config=$(run_entrypoint argv PATH="$TMP_DIR/argv-bin:$TMP_DIR/bin:$PATH" JQ_ARGV_LOG="$TMP_DIR/argv.log" \
+  REDIS_SERVER_USER=app REDIS_SERVER_PASS=redis-pass-on-argv \
+  REDIS_SENTINEL_NODES=sentinel-a:26379 REDIS_SENTINEL_USER=sentinel-user-on-argv REDIS_SENTINEL_PASS=sentinel-pass-on-argv \
+  NODE_CONFIG='{"services":{"CoAuthoring":{"redis":{"options":{"socket":{"key":"override-key-on-argv"}}}}}}')
+[[ -s "$TMP_DIR/argv.log" ]] || { echo 'argv: jq wrapper was not used' >&2; exit 1; }
+for secret in redis-pass-on-argv sentinel-user-on-argv sentinel-pass-on-argv override-key-on-argv; do
+  if grep -Fq -- "$secret" "$TMP_DIR/argv.log"; then
+    echo "argv: $secret appeared on a jq command line" >&2
+    exit 1
+  fi
+  if grep -Fq -- "$secret" "$TMP_DIR/argv/output"; then
+    echo "argv: $secret appeared in the entrypoint output" >&2
+    exit 1
+  fi
+  grep -Fq -- "$secret" "$config" || { echo "argv: $secret missing from the configuration" >&2; exit 1; }
+done
+[[ $(stat -c %a "$TMP_DIR/argv/node-config.json") == 600 ]] || {
+  echo 'argv: configuration file is not private' >&2
+  exit 1
+}
 
 echo 'standalone entrypoint Redis configuration: PASS'

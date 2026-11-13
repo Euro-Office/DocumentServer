@@ -60,28 +60,48 @@ REDIS_TOPOLOGY_HELPER="${REDIS_TOPOLOGY_HELPER:-$(dirname "$0")/../redis-topolog
 [ -r "$REDIS_TOPOLOGY_HELPER" ] || REDIS_TOPOLOGY_HELPER=/usr/local/lib/euro-office/redis-topology.sh
 . "$REDIS_TOPOLOGY_HELPER"
 REDIS_SENTINEL_GROUP_NAME_OVERRIDE="${REDIS_SENTINEL_GROUP_NAME:-}"
+# The bundled Redis on localhost is never a Sentinel; see redis_topology_init.
+# REDIS_SENTINEL_* settings without REDIS_SENTINEL_NODES still apply to a
+# Sentinel configured in local.json or NODE_CONFIG. An invalid NODE_CONFIG is
+# reported below.
+REDIS_SENTINEL_LOCAL_FALLBACK=false
+REDIS_SENTINEL_IN_CONFIG=false
+redis_config_override="${NODE_CONFIG:-}"
+[ -n "$redis_config_override" ] || redis_config_override='{}'
+if [ "$(printf '%s\n' "$redis_config_override" |
+  redis_effective_topology "$CONFIG_FILE" 2>/dev/null)" = sentinel ]; then
+  REDIS_SENTINEL_IN_CONFIG=true
+fi
+unset redis_config_override
 redis_topology_init
 
 # Keep environment-derived Redis settings out of local.json. A mounted config
 # may outlive the container, so writing a topology there would make removing or
 # switching REDIS_* variables ineffective on the next start.
-REDIS_SENTINEL_OPTIONS_JSON='{}'
+REDIS_SENTINEL_OPTIONS_JSON=null
 if [ "$REDIS_SENTINEL_REQUESTED" = true ]; then
   if [ -n "$REDIS_SENTINEL_GROUP_NAME_OVERRIDE" ]; then
     sentinel_name="$REDIS_SENTINEL_GROUP_NAME"
   else
-    sentinel_name=$(jq -r '.services.CoAuthoring.redis.optionsSentinel.name // "mymaster"' "$CONFIG_FILE")
+    sentinel_name=$(redis_config_file_json "$CONFIG_FILE" 2>/dev/null |
+      jq -r '.services?.CoAuthoring?.redis?.optionsSentinel?.name? // "mymaster"')
   fi
   REDIS_SENTINEL_OPTIONS_JSON=$(redis_build_sentinel_options \
     "$sentinel_name" "$REDIS_SENTINEL_NODES_JSON" \
     "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PASS:-}" "${REDIS_SERVER_DB:-}" \
     "$REDIS_SENTINEL_USER" "$REDIS_SENTINEL_PASS")
 fi
-REDIS_CLUSTER_OPTIONS_JSON='{}'
+REDIS_CLUSTER_OPTIONS_JSON=null
 if [ -n "${REDIS_CLUSTER_NODES:-}" ]; then
   REDIS_CLUSTER_OPTIONS_JSON=$(redis_build_cluster_options "$REDIS_CLUSTER_NODES_JSON" \
     "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PASS:-}")
 fi
+REDIS_BASE_OPTIONS_JSON=$(redis_build_base_options \
+  "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PASS:-}" "${REDIS_SERVER_DB:-}")
+REDIS_SECTION_JSON=$(printf '%s\n%s\n%s\n' \
+  "$REDIS_BASE_OPTIONS_JSON" "$REDIS_SENTINEL_OPTIONS_JSON" "$REDIS_CLUSTER_OPTIONS_JSON" |
+  redis_build_section "$REDIS_SERVER_HOST" "$REDIS_SERVER_PORT")
+unset REDIS_BASE_OPTIONS_JSON REDIS_SENTINEL_OPTIONS_JSON REDIS_CLUSTER_OPTIONS_JSON
 
 NODE_CONFIG_OVERRIDE="${NODE_CONFIG:-}"
 [ -n "$NODE_CONFIG_OVERRIDE" ] || NODE_CONFIG_OVERRIDE='{}'
@@ -89,53 +109,17 @@ if ! printf '%s\n' "$NODE_CONFIG_OVERRIDE" | jq -es 'length == 1 and (.[0] | typ
   echo 'Supplied NODE_CONFIG must be a valid JSON object.' >&2
   exit 1
 fi
-NODE_CONFIG=$(jq -cn --slurpfile saved "$CONFIG_FILE" \
-  --argjson override "$NODE_CONFIG_OVERRIDE" \
-  --arg host "$REDIS_SERVER_HOST" --arg port "$REDIS_SERVER_PORT" \
-  --arg user "${REDIS_SERVER_USER:-}" --arg pass "${REDIS_SERVER_PASS:-}" \
-  --arg db "${REDIS_SERVER_DB:-}" --arg tls "${REDIS_SERVER_TLS:-false}" \
-  --arg sentinelRequested "$REDIS_SENTINEL_REQUESTED" \
-  --arg clusterNodes "${REDIS_CLUSTER_NODES:-}" \
-  --argjson sentinel "$REDIS_SENTINEL_OPTIONS_JSON" \
-  --argjson cluster "$REDIS_CLUSTER_OPTIONS_JSON" '
-    ({services: {CoAuthoring: {redis: (
-      {host: $host, port: ($port | tonumber? // $port)} |
-      if $user != "" then .options.username = $user else . end |
-      if $pass != "" or $user == "default" then .options.password = $pass else . end |
-      if $db != "" then .options.database = ($db | tonumber? // $db) else . end |
-      if $tls == "true" then .options.socket.tls = true else . end |
-      if $sentinelRequested == "true" then
-        .optionsSentinel = $sentinel | .optionsCluster = null
-      elif $clusterNodes != "" then
-        .optionsCluster = $cluster | .optionsSentinel = null
-      else . end
-    )}}}) as $generated |
-    (if $clusterNodes != "" then
-      ($saved[0] * $generated * $override |
-        .services.CoAuthoring.redis.optionsCluster.defaults.socket.tls == true) as $clusterTLS |
-      $generated | .services.CoAuthoring.redis.optionsCluster.rootNodes |= map(
-        .url |= sub("^rediss?://"; if $clusterTLS then "rediss://" else "redis://" end)
-      )
-    else $generated end) * $override
-  ')
+# The documents go to jq on stdin, never on its command line. See
+# redis_merge_node_config for the Redis-specific steps.
+NODE_CONFIG=$(printf '{"services":{"CoAuthoring":{"redis":%s}}}\n%s\n' \
+  "$REDIS_SECTION_JSON" "$NODE_CONFIG_OVERRIDE" |
+  redis_merge_node_config "$CONFIG_FILE")
 export NODE_CONFIG
-unset NODE_CONFIG_OVERRIDE
+unset NODE_CONFIG_OVERRIDE REDIS_SECTION_JSON
 
-REDIS_TOPOLOGY=$(jq -r --argjson nodeConfig "$NODE_CONFIG" '
-  (. * $nodeConfig).services.CoAuthoring.redis |
-  (((.optionsSentinel // {}) | keys | length) > 0) as $sentinel |
-  (.optionsCluster.rootNodes? |
-    if type == "array" then length > 0 else false end) as $cluster |
-  if $sentinel and $cluster then "both"
-  elif $sentinel or $cluster then "configured"
-  else "standalone" end
-' "$CONFIG_FILE")
-if [ "$REDIS_TOPOLOGY" = both ]; then
-  echo 'ERROR: Redis Sentinel and Redis Cluster cannot be configured together.' >&2
-  exit 1
-fi
+REDIS_TOPOLOGY=$(printf '%s' "$NODE_CONFIG" | redis_effective_topology "$CONFIG_FILE")
 REDIS_TOPOLOGY_CONFIGURED=false
-[ "$REDIS_TOPOLOGY" = configured ] && REDIS_TOPOLOGY_CONFIGURED=true
+[ "$REDIS_TOPOLOGY" != standalone ] && REDIS_TOPOLOGY_CONFIGURED=true
 
 WOPI_ENABLED="${WOPI_ENABLED:-false}"
 PLUGINS_ENABLED="${PLUGINS_ENABLED:-true}"
@@ -410,6 +394,9 @@ mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
 if [ "${ENTRYPOINT_CONFIG_ONLY:-false}" = "true" ]; then
   if [ -n "${ENTRYPOINT_CONFIG_ONLY_OUTPUT:-}" ]; then
     (umask 077; set -C; printf '%s\n' "$NODE_CONFIG" > "$ENTRYPOINT_CONFIG_ONLY_OUTPUT")
+  else
+    echo 'ENTRYPOINT_CONFIG_ONLY: configuration generated but not saved;' \
+      'set ENTRYPOINT_CONFIG_ONLY_OUTPUT to a new file path to keep it.' >&2
   fi
   exit 0
 fi

@@ -9,8 +9,10 @@ export EO_JWT_SECRET
 
 # Redis topology test-stack settings. These are exported so values supplied
 # either from the shell or on the make command line reach Docker Compose.
+# The published latest-dev image cannot run these stacks yet, so the default
+# is the local image that README.md "First-time setup" builds.
 TYPE ?= STANDALONE
-EO_IMAGE ?= ghcr.io/euro-office/documentserver:latest-dev
+EO_IMAGE ?= local/documentserver:redis-topology
 REDIS_IMAGE ?= redis:7-alpine
 REDIS_SERVER_COMMAND ?= redis-server
 REDIS_CLI_COMMAND ?= redis-cli
@@ -34,6 +36,11 @@ redis-up:
 	  standalone|sentinel|cluster) ;; \
 	  *) echo "error: TYPE must be STANDALONE, SENTINEL, or CLUSTER (got '$(TYPE)')" >&2; exit 2 ;; \
 	esac; \
+	if ! docker image inspect "$(EO_IMAGE)" >/dev/null 2>&1; then \
+	  echo "error: image '$(EO_IMAGE)' not found locally; build it as described in README.md (First-time setup)," \
+	    "or for a registry image run: docker pull $(EO_IMAGE)" >&2; \
+	  exit 2; \
+	fi; \
 	sh ./redis-tls.sh && \
 	docker compose -f "$(REDIS_TOPOLOGY_COMPOSE_BASE)" -f "docker-compose.redis-$$topology.yml" up -d
 

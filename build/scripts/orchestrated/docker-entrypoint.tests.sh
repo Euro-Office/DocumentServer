@@ -30,24 +30,43 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Set ORCHESTRATED_TEST_LOCAL_JSON to a JSON document to provide it as the
+# local.json that node-config loads from NODE_CONFIG_DIR.
 run_config() {
   local name=$1
   shift
   printf '%s\n' "$name" >"$TMP_DIR/current-case"
-  mkdir -p "$TMP_DIR/$name"
+  mkdir -p "$TMP_DIR/$name/conf"
+  if [[ -n "${ORCHESTRATED_TEST_LOCAL_JSON:-}" ]]; then
+    printf '%s\n' "$ORCHESTRATED_TEST_LOCAL_JSON" >"$TMP_DIR/$name/conf/local.json"
+  fi
   local status=0
   timeout -k 2s 10s env -i \
     PATH="$PATH" \
     COMPANY_NAME=euro-office \
+    NODE_CONFIG_DIR="$TMP_DIR/$name/conf" \
     JWT_ENABLED=false \
     ENTRYPOINT_CONFIG_ONLY=true \
+    ENTRYPOINT_CONFIG_ONLY_OUTPUT="$TMP_DIR/$name/config.json" \
     "$@" \
     bash "$ENTRYPOINT" docservice >"$TMP_DIR/$name/output" 2>&1 || status=$?
   if (( status != 0 )); then
     echo "$name: entrypoint exited $status" >>"$TMP_DIR/$name/output"
     return "$status"
   fi
-  printf '%s' "$TMP_DIR/$name/output"
+  printf '%s' "$TMP_DIR/$name/config.json"
+}
+
+# What the server uses: local.json under the exported NODE_CONFIG.
+effective_config() {
+  local config=$1
+  local saved="${config%/config.json}/conf/local.json"
+  if [[ -f "$saved" ]]; then
+    jq -s '.[0] * .[1]' "$saved" "$config" >"${config%.json}.effective.json"
+  else
+    cp "$config" "${config%.json}.effective.json"
+  fi
+  printf '%s' "${config%.json}.effective.json"
 }
 
 assert_config() {
@@ -140,7 +159,7 @@ assert_config "$unauthenticated_config" '
     nodeClientOptions: {},
     sentinelClientOptions: {}
   } and
-  .services.CoAuthoring.redis.optionsCluster == {} and
+  .services.CoAuthoring.redis.optionsCluster == null and
   .services.CoAuthoring.server.editorDataStorage == "editorDataRedis" and
   .services.CoAuthoring.server.editorStatStorage == "editorDataRedis"
 '
@@ -184,7 +203,7 @@ for tls in false true; do
       REDIS_SENTINEL_NODES='sentinel-a:26379')
     assert_config "$sentinel_tls_config" "
       (.services.CoAuthoring.redis.options.socket.tls // false) == $tls and
-      (.services.CoAuthoring.redis.optionsSentinel.nodeClientOptions.socket.tls // false) == $tls and
+      (.services.CoAuthoring.redis.optionsSentinel.nodeClientOptions | has(\"socket\") | not) and
       (.services.CoAuthoring.redis.optionsSentinel.sentinelClientOptions.socket.tls // false) == $sentinel_tls
     "
   done
@@ -220,7 +239,7 @@ empty_tls_config=$(run_config empty_tls REDIS_SERVER_TLS= REDIS_SENTINEL_TLS=)
 assert_config "$empty_tls_config" '.services.CoAuthoring.redis.options | has("socket") | not'
 
 for tls_flag in REDIS_SERVER_TLS REDIS_SENTINEL_TLS; do
-  expect_failure "invalid_$tls_flag" "$tls_flag must be true or false" "$tls_flag=invalid"
+  expect_failure "invalid_$tls_flag" "$tls_flag='invalid' is not a recognized boolean" "$tls_flag=invalid"
 done
 
 expect_failure conflicting_topologies 'Redis Sentinel and Redis Cluster cannot be configured together' \
@@ -239,13 +258,24 @@ expect_failure invalid_storage 'EDITOR_DATA_STORAGE must be a plain module name'
   EDITOR_DATA_STORAGE='../not-a-module'
 
 redis_test_config() { run_config "$@"; }
+redis_test_local_config() {
+  local local_json=$1 config
+  shift
+  config=$(ORCHESTRATED_TEST_LOCAL_JSON="$local_json" run_config "$@") || return $?
+  effective_config "$config"
+}
+redis_test_local_failure() {
+  local local_json=$1
+  shift
+  ORCHESTRATED_TEST_LOCAL_JSON="$local_json" expect_failure "$@"
+}
 REDIS_TEST_PASSWORD_VAR=REDIS_SERVER_PWD
-REDIS_TEST_USER_KEY=user
+REDIS_TEST_LOCAL_SENTINEL_FALLBACK=true
 . "$SCRIPT_DIR/../redis-topology.test-cases.sh"
 
 sentinel_db_config=$(run_config sentinel_database REDIS_SERVER_DB_NUM=4 REDIS_SENTINEL_NODES='sentinel-a:26379')
 assert_config "$sentinel_db_config" '.services.CoAuthoring.redis.optionsSentinel.nodeClientOptions.database == 4'
-expect_failure invalid_sentinel_database 'Redis Sentinel database must be a non-negative integer' \
+expect_failure invalid_sentinel_database 'the Redis database must be a non-negative integer' \
   REDIS_SERVER_DB_NUM=oops REDIS_SENTINEL_NODES='sentinel-a:26379'
 
 sentinel_base_db_config=$(run_config sentinel_base_database \
@@ -255,6 +285,171 @@ assert_config "$sentinel_base_db_config" \
   '(.services.CoAuthoring.redis.optionsSentinel.nodeClientOptions.database // .services.CoAuthoring.redis.options.db) == 4'
 
 standalone_db_config=$(run_config standalone_database REDIS_SERVER_DB_NUM=4)
-assert_config "$standalone_db_config" '.services.CoAuthoring.redis.options.db == "4"'
+assert_config "$standalone_db_config" '.services.CoAuthoring.redis.options.database == 4'
+expect_failure invalid_database 'the Redis database must be a non-negative integer' REDIS_SERVER_DB_NUM=oops
+
+# --------------------------------------------------------------------
+# local.json from NODE_CONFIG_DIR (Helm extraConf)
+# --------------------------------------------------------------------
+
+# Credentials in local.json survive the Helm chart's REDIS_SERVER_USER=default
+# with an empty REDIS_SERVER_PWD, for the base options and for Sentinel node
+# clients. The configured username applies, not `default`.
+config=$(ORCHESTRATED_TEST_LOCAL_JSON='{"services":{"CoAuthoring":{"redis":{"options":{"username":"app","password":"file-pass"}}}}}' \
+  run_config local_password REDIS_SERVER_USER=default REDIS_SERVER_PWD= REDIS_SERVER_DB_NUM=0 \
+  REDIS_SENTINEL_NODES=sentinel-a:26379)
+effective=$(effective_config "$config")
+assert_config "$effective" '
+  .services.CoAuthoring.redis.options == {username: "app", password: "file-pass", database: 0} and
+  (.services.CoAuthoring.redis.options + .services.CoAuthoring.redis.optionsSentinel.nodeClientOptions) ==
+    {username: "app", password: "file-pass", database: 0}
+'
+
+# node-config reads local.json as JSON5: comments and trailing commas work.
+config=$(ORCHESTRATED_TEST_LOCAL_JSON='{
+  // Helm extraConf
+  "services": {"CoAuthoring": {
+    "sql": {"dbHost": "db", /* not a comment: "//" */ "dbName": "a//b/*c*/",},
+    "redis": {"options": {"username": "app", "password": "file-pass",},},
+  },},
+}' run_config local_json5 REDIS_SERVER_USER=default REDIS_SERVER_PWD=)
+assert_config "$config" '.services.CoAuthoring.redis.options == {}'
+if grep -Fq 'could not parse' "$TMP_DIR/local_json5/output"; then
+  echo 'local_json5: comments and trailing commas were not accepted' >&2
+  exit 1
+fi
+
+# Environment credentials and database replace those in local.json together.
+config=$(ORCHESTRATED_TEST_LOCAL_JSON='{"services":{"CoAuthoring":{"redis":{"options":{"username":"app","password":"old","database":5}}}}}' \
+  run_config local_credentials REDIS_SERVER_USER=default REDIS_SERVER_PWD=pw REDIS_SERVER_DB_NUM=2)
+effective=$(effective_config "$config")
+assert_config "$effective" '
+  .services.CoAuthoring.redis.options == {username: "default", password: "pw", database: 2}
+'
+
+# Seeds follow TLS enabled in local.json.
+config=$(ORCHESTRATED_TEST_LOCAL_JSON='{"services":{"CoAuthoring":{"redis":{"optionsCluster":{"defaults":{"socket":{"tls":true,"ca":"file-ca"}}}}}}}' \
+  run_config local_cluster_tls REDIS_CLUSTER_NODES=cluster-a:7000)
+effective=$(effective_config "$config")
+assert_config "$effective" '
+  .services.CoAuthoring.redis.optionsCluster.rootNodes == [{url: "rediss://cluster-a:7000"}] and
+  .services.CoAuthoring.redis.optionsCluster.defaults.socket == {tls: true, ca: "file-ca"}
+'
+
+# The TLS flags also apply to a topology configured in local.json.
+config=$(ORCHESTRATED_TEST_LOCAL_JSON='{"services":{"CoAuthoring":{"redis":{"optionsCluster":{
+    "rootNodes":[{"url":"redis://file-cluster:7000"}],"defaults":{"socket":{"ca":"file-ca"}}}}}}}' \
+  run_config local_cluster_env_tls REDIS_SERVER_TLS=yes)
+effective=$(effective_config "$config")
+assert_config "$effective" '
+  .services.CoAuthoring.redis.optionsCluster == {
+    rootNodes: [{url: "rediss://file-cluster:7000"}],
+    defaults: {socket: {ca: "file-ca", tls: true}}
+  }
+'
+config=$(ORCHESTRATED_TEST_LOCAL_JSON='{"services":{"CoAuthoring":{"redis":{"optionsSentinel":{
+    "name":"file-master","sentinelRootNodes":[{"host":"file-sentinel","port":26379}],
+    "nodeClientOptions":{"socket":{"ca":"node-ca"}},"sentinelClientOptions":{"socket":{"ca":"sentinel-ca"}}}}}}}' \
+  run_config local_sentinel_env_tls REDIS_SERVER_TLS=1 REDIS_SENTINEL_TLS=On)
+effective=$(effective_config "$config")
+assert_config "$effective" '
+  .services.CoAuthoring.redis.optionsSentinel.nodeClientOptions.socket == {ca: "node-ca", tls: true} and
+  .services.CoAuthoring.redis.optionsSentinel.sentinelClientOptions.socket == {ca: "sentinel-ca", tls: true}
+'
+config=$(ORCHESTRATED_TEST_LOCAL_JSON='{"services":{"CoAuthoring":{"redis":{"optionsSentinel":{
+    "name":"file-master","sentinelRootNodes":[{"host":"file-sentinel","port":26379}]}}}}}' \
+  run_config local_sentinel_no_tls)
+effective=$(effective_config "$config")
+assert_config "$effective" '
+  .services.CoAuthoring.redis.optionsSentinel ==
+    {name: "file-master", sentinelRootNodes: [{host: "file-sentinel", port: 26379}]}
+'
+
+# An environment topology replaces the other one in local.json (null, not {}).
+config=$(ORCHESTRATED_TEST_LOCAL_JSON='{"services":{"CoAuthoring":{"redis":{"optionsSentinel":{
+    "name":"file-master","sentinelRootNodes":[{"host":"file-sentinel","port":26379}]}}}}}' \
+  run_config local_sentinel_env_cluster REDIS_CLUSTER_NODES=cluster-a:7000)
+effective=$(effective_config "$config")
+assert_config "$effective" '
+  .services.CoAuthoring.redis.optionsSentinel == null and
+  .services.CoAuthoring.redis.optionsCluster.rootNodes == [{url: "redis://cluster-a:7000"}]
+'
+ORCHESTRATED_TEST_LOCAL_JSON='{"services":{"CoAuthoring":{"redis":{"optionsCluster":{"rootNodes":[{"url":"redis://file-cluster:7000"}]}}}}}' \
+  expect_failure local_cluster_override_sentinel 'Redis Sentinel and Redis Cluster cannot be configured together' \
+  NODE_CONFIG='{"services":{"CoAuthoring":{"redis":{"optionsSentinel":{"name":"mymaster","sentinelRootNodes":[{"host":"sentinel-a","port":26379}]}}}}}'
+
+# A local.json that still does not parse is left to the server, which reports
+# it; the entrypoint warns without quoting it.
+config=$(ORCHESTRATED_TEST_LOCAL_JSON="{\"services\":{\"CoAuthoring\":{\"redis\":{\"options\":{\"password\":\"$diagnostic_password\"" \
+  run_config local_invalid DB_PWD="$diagnostic_password")
+grep -Fq 'could not parse' "$TMP_DIR/local_invalid/output" || {
+  echo 'local_invalid: missing warning' >&2
+  exit 1
+}
+assert_private_diagnostic local_invalid
+
+# --------------------------------------------------------------------
+# Mistyped overrides are rejected (see redis-topology.test-cases.sh).
+# --------------------------------------------------------------------
+expect_failure cluster_defaults_string \
+  'services.CoAuthoring.redis.optionsCluster.defaults in NODE_CONFIG must be a JSON object' \
+  REDIS_CLUSTER_NODES=cluster-a:7000 \
+  NODE_CONFIG='{"services":{"CoAuthoring":{"redis":{"optionsCluster":{"defaults":"x"}}}}}'
+
+# --------------------------------------------------------------------
+# Configuration-only mode without an output file says so.
+# --------------------------------------------------------------------
+mkdir -p "$TMP_DIR/config_only_no_output"
+timeout -k 2s 10s env -i PATH="$PATH" COMPANY_NAME=euro-office \
+  NODE_CONFIG_DIR="$TMP_DIR/config_only_no_output" JWT_ENABLED=false ENTRYPOINT_CONFIG_ONLY=true \
+  bash "$ENTRYPOINT" docservice >"$TMP_DIR/config_only_no_output/output" 2>&1
+grep -Fq 'set ENTRYPOINT_CONFIG_ONLY_OUTPUT' "$TMP_DIR/config_only_no_output/output" || {
+  echo 'config_only_no_output: missing note' >&2
+  exit 1
+}
+
+# --------------------------------------------------------------------
+# Secrets stay off jq command lines and out of the container log.
+# --------------------------------------------------------------------
+real_jq=$(command -v jq)
+mkdir -p "$TMP_DIR/argv-bin"
+cat >"$TMP_DIR/argv-bin/jq" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >>"\$JQ_ARGV_LOG"
+exec "$real_jq" "\$@"
+EOF
+chmod +x "$TMP_DIR/argv-bin/jq"
+argv_secrets=(jwt-secret-on-argv-0123456789abcdef db-pass-on-argv amqp-pass-on-argv
+  redis-pass-on-argv sentinel-pass-on-argv wopi-key-on-argv link-secret-on-argv override-secret-on-argv
+  sentinel-user-on-argv)
+for topology in sentinel cluster; do
+  topology_env=(REDIS_SENTINEL_NODES=sentinel-a:26379 REDIS_SENTINEL_USER="${argv_secrets[8]}"
+    REDIS_SENTINEL_PWD="${argv_secrets[4]}")
+  [[ $topology == cluster ]] && topology_env=(REDIS_CLUSTER_NODES=cluster-a:7000)
+  case_name="argv_$topology"
+  : >"$TMP_DIR/argv-$topology.log"
+  config=$(ORCHESTRATED_TEST_LOCAL_JSON='{"services":{"CoAuthoring":{"redis":{"options":{"username":"app"}}}}}' \
+    run_config "$case_name" \
+    PATH="$TMP_DIR/argv-bin:$PATH" JQ_ARGV_LOG="$TMP_DIR/argv-$topology.log" \
+    JWT_ENABLED=true JWT_SECRET="${argv_secrets[0]}" DB_PWD="${argv_secrets[1]}" AMQP_PWD="${argv_secrets[2]}" \
+    REDIS_SERVER_USER=app REDIS_SERVER_PWD="${argv_secrets[3]}" \
+    WOPI_PRIVATE_KEY="${argv_secrets[5]}" SECURE_LINK_SECRET="${argv_secrets[6]}" \
+    NODE_CONFIG="{\"services\":{\"CoAuthoring\":{\"secret\":{\"session\":{\"string\":\"${argv_secrets[7]}\"}}}}}" \
+    "${topology_env[@]}")
+  [[ -s "$TMP_DIR/argv-$topology.log" ]] || { echo "$case_name: jq wrapper was not used" >&2; exit 1; }
+  for secret in "${argv_secrets[@]}"; do
+    [[ $topology == cluster && $secret == sentinel-* ]] && continue
+    if grep -Fq -- "$secret" "$TMP_DIR/argv-$topology.log"; then
+      echo "$case_name: $secret appeared on a jq command line" >&2
+      exit 1
+    fi
+    if grep -Fq -- "$secret" "$TMP_DIR/$case_name/output"; then
+      echo "$case_name: $secret appeared in the entrypoint output" >&2
+      exit 1
+    fi
+    grep -Fq -- "$secret" "$config" || { echo "$case_name: $secret missing from the configuration" >&2; exit 1; }
+  done
+  [[ $(stat -c %a "$config") == 600 ]] || { echo "$case_name: configuration file is not private" >&2; exit 1; }
+done
 
 echo "orchestrated entrypoint Redis and editor-data configuration: PASS"

@@ -219,20 +219,89 @@ different statistics backend is required. Both variables are optional;
 leaving them unset preserves the packaged memory backend. The orchestrated
 image uses `REDIS_SERVER_PWD` and
 `REDIS_SERVER_DB_NUM` for the Redis password and database settings.
+In both images, these environment values override the same settings in the
+`local.json` that node-config loads from `NODE_CONFIG_DIR`. The orchestrated
+entrypoint always sets the Redis host, port and connector name, from
+`REDIS_SERVER_HOST`, `REDIS_SERVER_PORT` and `REDIS_CONNECTOR_NAME` or their
+defaults `localhost`, `6379` and `redis`, so those three override `local.json`
+even when the variables are unset. `REDIS_SERVER_PORT` must be a port number
+from 1 to 65535 in both images.
+
+The entrypoints read Redis settings from `$NODE_CONFIG_DIR/local.json`
+(`/etc/euro-office/documentserver/local.json` by default) to combine them with
+the environment. That is where the Helm chart mounts `extraConf` only while
+`extraConf.filename` keeps its default `local.json` and `NODE_CONFIG_DIR` names
+a single directory; settings in any other file are not combined. Comments and
+trailing commas in `local.json` are fine, as node-config reads it as JSON5. A
+file the entrypoint still cannot parse logs a warning and its Redis settings are
+not combined.
 
 The orchestrated entrypoint deep-merges an operator-supplied `NODE_CONFIG`
 over its generated configuration. Explicit `NODE_CONFIG` values take precedence
 over environment-derived settings; nested options such as
 `services.CoAuthoring.redis.options.socket.tls` are preserved. Arrays are
 replaced, rather than appended. Invalid JSON or a non-object configuration
-stops startup.
+stops startup, in both images, as does a Redis setting that must be an object
+but is not, such as `services.CoAuthoring.redis.options` set to a string in
+`NODE_CONFIG` or `local.json`.
+
+Upgrade note for the orchestrated image: earlier entrypoints discarded a
+`NODE_CONFIG` set in the container environment, and now it applies. Remove
+stale values before upgrading, for example from Helm `extraEnvVars`. A leftover
+`{"services":{"CoAuthoring":{"token":{"enable":{"browser":false}}}}}`, which
+did nothing before, now turns browser JWT off even with `JWT_ENABLED=true`, and
+a malformed value now stops the container.
+
+`REDIS_SENTINEL_NODES` and `REDIS_CLUSTER_NODES` take nodes separated by spaces
+or commas, each as `host:port`, `[IPv6]:port`, `redis://host:port` or
+`rediss://host:port`. `rediss://` requires `REDIS_SENTINEL_TLS=true` for
+Sentinel nodes and `REDIS_SERVER_TLS=true` for Cluster nodes.
+
+`REDIS_SENTINEL_NODES`, `REDIS_SENTINEL_GROUP_NAME`, `REDIS_SENTINEL_USER` and
+`REDIS_SENTINEL_PASS` (or their `REDIS_SENTINEL_USERNAME` and
+`REDIS_SENTINEL_PWD` aliases) select Sentinel; `REDIS_SENTINEL_TLS` alone does
+not. Without `REDIS_SENTINEL_NODES`, the orchestrated image uses
+`REDIS_SERVER_HOST:REDIS_SERVER_PORT` as the Sentinel address; an IPv6 host
+needs no brackets there. The standalone image bundles a plain Redis on
+`localhost`, so without `REDIS_SENTINEL_NODES` it:
+
+* applies these variables to a Sentinel configured in `local.json` or
+  `NODE_CONFIG`, which keeps its own addresses;
+* otherwise uses `REDIS_SERVER_HOST:REDIS_SERVER_PORT`, when `REDIS_SERVER_HOST`
+  is a host other than `localhost`;
+* otherwise ignores them with a warning, also when `REDIS_CLUSTER_NODES` is set.
+
+`REDIS_SERVER_USER=default` without a password connects without
+authentication, unless `local.json` or `NODE_CONFIG` supplies a password. The
+configured credentials then apply as they are: the configured username with its
+password, or the `default` user when the configuration names no username. The
+Helm chart always sets `REDIS_SERVER_USER=default`, so this is how credentials
+from `extraConf` take effect. Where the password counts depends on the topology:
+
+* standalone Redis and Sentinel data nodes: `options.password`, or
+  `optionsSentinel.nodeClientOptions.password` for Sentinel;
+* Redis Cluster: `optionsCluster.defaults.password`. Cluster nodes do not use
+  `options`, so a password only in `options.password` leaves them
+  unauthenticated.
+
+Any other username needs a password. `REDIS_SENTINEL_USER=default` works the
+same way with `optionsSentinel.sentinelClientOptions.password`. A
+`REDIS_SENTINEL_USER` other than `default` stops startup unless
+`REDIS_SENTINEL_PASS` or `optionsSentinel.sentinelClientOptions.password` in
+the configuration provides a password.
 
 Both image entrypoints support `REDIS_SERVER_TLS=true` to enable TLS for
 standalone Redis, Redis nodes discovered through Sentinel, and Cluster seed
-and discovered nodes. Set `REDIS_SENTINEL_TLS=true` separately when the Sentinel
-discovery endpoints also require TLS. These flags accept `true` or `false`;
-unset or empty values behave as `false` and do not inject TLS options or disable
-TLS supplied through custom configuration. Use the TLS ports configured on
+and discovered nodes. Sentinel data nodes get it through `options.socket.tls`,
+so a CA or server name in `options.socket` still applies to them. This includes a Sentinel or Cluster topology configured
+in `local.json` or `NODE_CONFIG` rather than through environment variables.
+Set `REDIS_SENTINEL_TLS=true` separately when the Sentinel discovery endpoints
+also require TLS. These flags accept the
+[boolean values](../build/README.md#boolean-environment-variables) of the other
+settings, and any other value stops startup. Unset, empty or false values do not
+inject TLS options or disable TLS supplied through custom configuration. When
+`optionsCluster.defaults.socket.tls` is set, from either source, the
+entrypoints switch Cluster seed URLs to `rediss://` or `redis://` to match it. Use the TLS ports configured on
 your Redis and Sentinel servers; the flags do not change port numbers.
 Certificate verification remains enabled. For a custom CA, the straightforward
 option is `NODE_EXTRA_CA_CERTS` pointing to a readable CA file mounted inside the
@@ -359,6 +428,15 @@ To include these components, build a local image from a checkout with its
 submodules initialized. Follow the [image build prerequisites](../build/README.md#building-the-image)
 if this is a fresh checkout.
 
+Until [server#46](https://github.com/Euro-Office/server/pull/46) is merged, the
+`server` submodule pin has no Redis editor-data backend (`editorDataRedis`).
+Check out that pull request in `server/` before building:
+
+```sh
+git -C server fetch origin pull/46/head
+git -C server checkout FETCH_HEAD
+```
+
 The overlays provide external dependencies and configure DocumentServer. By
 default they neither build from nor mount the source checkout. PostgreSQL no
 longer bind-mounts the checkout's schema: the standalone entrypoint initializes
@@ -378,13 +456,14 @@ Docker Compose locally:
   docker buildx bake standalone \
     --set standalone.tags=local/documentserver:redis-topology --load
 )
-export EO_IMAGE=local/documentserver:redis-topology
-docker image inspect "$EO_IMAGE" >/dev/null
 make -C develop redis-up TYPE=SENTINEL
 ```
 
-The exported `EO_IMAGE` also applies to the commands below; use
-`TYPE=STANDALONE` or `TYPE=CLUSTER` when testing those topologies. Rebuild the
+`make redis-up` and the Compose files use `local/documentserver:redis-topology`
+unless `EO_IMAGE` is set, and `make redis-up` stops if that image does not
+exist. To test another image, export `EO_IMAGE`; it also applies to the
+commands below. Use `TYPE=STANDALONE` or `TYPE=CLUSTER` when testing those
+topologies. Rebuild the
 image after changing the `server` checkout or the standalone entrypoint; the
 overlays do not mount either source tree into the container.
 
@@ -404,6 +483,9 @@ make -C develop redis-up TYPE=STANDALONE
 make -C develop redis-up TYPE=SENTINEL
 make -C develop redis-up TYPE=CLUSTER
 ```
+
+Once the services are healthy, the example app is at
+<http://localhost:8000/example/>.
 
 Run only one topology at a time. Stop the current one before switching:
 
@@ -447,15 +529,20 @@ for sentinel in redis-sentinel-1 redis-sentinel-2 redis-sentinel-3; do
   scli "$sentinel" SENTINEL replicas mymaster
 done
 
-# Re-run after every promotion; never assume redis-primary is still master.
-MASTER=$(scli redis-sentinel-1 SENTINEL get-master-addr-by-name mymaster | tr -d '\r' | sed -n '1p')
-case "$MASTER" in
-  redis-primary) REPLICA=redis-replica ;;
-  redis-replica) REPLICA=redis-primary ;;
-  *) echo "FAIL: unexpected elected master: $MASTER"; exit 1 ;;
-esac
-rcli "$MASTER" INFO replication
-rcli "$REPLICA" INFO replication
+# Run find_master again after every promotion; never assume redis-primary is
+# still master. It sets MASTER and REPLICA, and fails without closing the shell.
+find_master() {
+  MASTER=$(scli redis-sentinel-1 SENTINEL get-master-addr-by-name mymaster | tr -d '\r' | sed -n '1p')
+  case "$MASTER" in
+    redis-primary) REPLICA=redis-replica ;;
+    redis-replica) REPLICA=redis-primary ;;
+    *) echo "FAIL: unexpected elected master: $MASTER" >&2; return 1 ;;
+  esac
+}
+find_master && {
+  rcli "$MASTER" INFO replication
+  rcli "$REPLICA" INFO replication
+}
 
 # Establish the test key once; SET and WAIT must use the same connection.
 rcli "$MASTER" <<'REDIS'
@@ -489,7 +576,7 @@ For each promotion, poll the election queries above every two seconds for at
 most 180 seconds. Require all three Sentinels to agree on the **other** hostname
 and port 6379. If paused, run `sc unpause "$OLD_MASTER"` as soon as promotion is
 confirmed; also unpause it if the test fails. Recompute `MASTER` and `REPLICA`
-using the commands above, then poll their replication state and Sentinel replica
+with `find_master`, then poll their replication state and Sentinel replica
 entries every two seconds for at most another 180 seconds. Require the same
 healthy roles, links, and hostname identities as the baseline before proceeding.
 These are test deadlines, not guaranteed recovery times. A command timeout,

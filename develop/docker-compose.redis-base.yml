@@ -2,7 +2,7 @@ name: Euro-Office Redis topology development environment
 
 services:
   eo:
-    image: ${EO_IMAGE:-ghcr.io/euro-office/documentserver:latest-dev}
+    image: ${EO_IMAGE:-local/documentserver:redis-topology}
     container_name: eo-test-docserver-compose
     ports:
       - "8000:80"
