@@ -6,7 +6,6 @@ all: web-apps sdkjs core server #core/wasm
 # ARM64 platform accommodations
 IS_ARM64      := $(filter aarch64,$(shell uname -m))
 CC_PLATFORM   ?= $(if $(IS_ARM64),java,$(shell $(EO_DEV)/sdkjs/build/node_modules/google-closure-compiler-linux/compiler --version >/dev/null 2>&1 && echo "native,java" || echo "java"))
-PKG_TARGET    := linux-$(if $(IS_ARM64),arm64,x64)
 CORE_FLAGS    := -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS_DEBUG="-g -O0" -DCMAKE_C_FLAGS_DEBUG="-g -O0"
 SERVER_FLAGS  :=
 SDKJS_FLAGS   :=
@@ -184,7 +183,7 @@ define build_server
 	@echo "Building $(1) with flags $(CFLAGS)"
 	cd $(1) && \
 	npm install && \
-	pkg . -t $(PKG_TARGET) --node-options="--max_old_space_size=4096" $(CFLAGS) -o $(2) && \
+	pkg . -t linux-x64 $(CFLAGS) -o $(2) && \
 	supervisorctl restart $(3)
 endef
 

@@ -63,8 +63,9 @@ FROM ds-base AS ds-service
     WORKDIR /ds
 
     COPY --from=packages / /tmp/
+    COPY build/sandbox/x2t-sandbox.c /tmp/x2t-sandbox.c
 
-    RUN dnf -y install cabextract xorg-x11-font-utils fontconfig && \
+    RUN dnf -y install cabextract xorg-x11-font-utils fontconfig gcc && \
         rpm -ivh --nodigest \
         https://downloads.sourceforge.net/project/mscorefonts2/rpms/msttcore-fonts-installer-2.6-1.noarch.rpm && \
         TARGETARCH=$(echo $TARGETARCH | sed "s/"$TARGETARCH"/"$(uname -m)"/g") && \
@@ -74,7 +75,10 @@ FROM ds-base AS ds-service
             /var/www/$COMPANY_NAME_LOW/documentserver/core-fonts/msttcore \
             /usr/share/fonts/msttcore/*.ttf && \
         chmod a+r /etc/$COMPANY_NAME_LOW/documentserver*/*.json && \
-        chmod a+r /etc/$COMPANY_NAME_LOW/documentserver/log4js/*.json
+        chmod a+r /etc/$COMPANY_NAME_LOW/documentserver/log4js/*.json && \
+        gcc -O2 -o /usr/local/bin/x2t-sandbox /tmp/x2t-sandbox.c && \
+        rm /tmp/x2t-sandbox.c && \
+        dnf remove -y gcc && dnf clean all
     COPY --chown=ds:ds \
         build/configs/orchestrated/nginx/includes/http-common.conf \
         build/configs/orchestrated/nginx/includes/http-upstream.conf \
@@ -119,6 +123,7 @@ FROM ds-base AS docs
         /usr/bin/documentserver-generate-allfonts.sh \
         #/usr/bin/documentserver-pluginsmanager.sh \
         /usr/local/bin/
+    COPY --from=ds-service /usr/local/bin/x2t-sandbox /usr/local/bin/x2t-sandbox
     #COPY --from=ds-service \
     #    /var/www/$COMPANY_NAME_LOW/documentserver/server/dictionaries/update.py \
     #    /var/www/$COMPANY_NAME_LOW/documentserver/server/dictionaries/update.py
@@ -181,14 +186,6 @@ FROM ds-base AS docs
     COPY --chown=ds:ds --from=ds-service \
         /var/www/$COMPANY_NAME_LOW/documentserver/web-apps \
         /var/www/$COMPANY_NAME_LOW/documentserver/web-apps
-    COPY --from=ds-service \
-        /var/www/$COMPANY_NAME_LOW/documentserver/LICENSE* \
-        /var/www/$COMPANY_NAME_LOW/documentserver/NOTICE \
-        /var/www/$COMPANY_NAME_LOW/documentserver/3rd-Party.txt \
-        /var/www/$COMPANY_NAME_LOW/documentserver/
-    COPY --from=ds-service \
-        /var/www/$COMPANY_NAME_LOW/documentserver/license \
-        /var/www/$COMPANY_NAME_LOW/documentserver/license
     COPY --from=ds-service \
         /var/www/$COMPANY_NAME_LOW/documentserver/document-templates/new \
         /var/www/$COMPANY_NAME_LOW/documentserver/document-templates/new

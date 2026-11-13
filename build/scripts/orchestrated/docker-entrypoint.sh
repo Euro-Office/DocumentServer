@@ -221,7 +221,8 @@ export NODE_CONFIG='{
           { "type": "pptx;ppsx;potx;pptm;ppsm;potm", "zip": { "uncompressed": "'${FILECONVERTER_INPUT_LIMIT_UNCOMPRESSED:-500MB}'", "template": "*.xml" } },
           { "type": "vsdx;vstx;vssx;vsdm;vstm;vssm", "zip": { "uncompressed": "'${FILECONVERTER_INPUT_LIMIT_UNCOMPRESSED:-500MB}'", "template": "*.xml" } }
         ],
-        "signingKeyStorePath": "/var/www/'${COMPANY_NAME}'/config/signing-keystore.p12"
+        "signingKeyStorePath": "/var/www/'${COMPANY_NAME}'/config/signing-keystore.p12",
+        "sandboxPath": "/usr/local/bin/x2t-sandbox"
     }
   },
   "storage": {
