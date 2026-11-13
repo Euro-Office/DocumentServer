@@ -164,9 +164,630 @@ A multi-arch `:latest-dev` image (amd64 + arm64) is published to GHCR nightly, b
 
 `docker compose --profile sentry up -d glitchtip glitchtip-db` starts a local [GlitchTip](https://glitchtip.com/) at http://localhost:8083. Register, create an organization and project, then put its DSN with the host replaced by `glitchtip:8000` into `develop/.env` as `EO_SENTRY_DSN=http://<key>@glitchtip:8000/<id>` and run `docker compose up -d eo`. The server reads it as `SENTRY_DSN` (stage 2 of #392); empty means disabled. For Sentry, set the DSN of a [sentry.io](https://sentry.io) Node.js project as `EO_SENTRY_DSN` instead and skip the profile; events then leave your machine.
 
+## Redis and Valkey topology test stacks
+
+These test stacks run DocumentServer with PostgreSQL, RabbitMQ, and one of
+three Redis-compatible topologies:
+
+All dependencies—PostgreSQL, RabbitMQ, and Redis/Valkey—are deliberately run
+in separate containers outside the DocumentServer container. This is
+intentional: the purpose of these stacks is to exercise DocumentServer's
+connections to external services and, specifically, its connection and
+failover behavior against external Redis/Valkey deployments using standalone,
+Sentinel, and Cluster topologies. This differs from the regular development
+image, which bundles these services in one container.
+
+| Type | Services |
+| --- | --- |
+| `STANDALONE` | One Redis server on `redis:6379` |
+| `SENTINEL` | One primary, one replica, and three Sentinel processes |
+| `CLUSTER` | Six Redis nodes: three masters and three replicas |
+
+The Compose files are split into a common base and one topology overlay:
+
+```text
+docker-compose.redis-base.yml
+docker-compose.redis-standalone.yml
+docker-compose.redis-sentinel.yml
+docker-compose.redis-cluster.yml
+```
+
+The published `latest-dev` image uses the standalone entrypoint. The overlays
+use its supported `REDIS_SERVER_PASS` and `REDIS_SERVER_DB` variables for the
+base connection, `REDIS_SENTINEL_*` / `REDIS_CLUSTER_NODES` for discovery, and
+the TLS variables below. `NODE_CONFIG` selects the Redis-backed editor-data
+and statistics stores.
+
+The standalone entrypoint passes Redis settings derived from environment
+variables through `NODE_CONFIG` to its services. It leaves Redis settings in
+`local.json` untouched, so removing or changing topology and TLS variables on
+the next start takes effect without changing a mounted configuration file.
+The standalone Redis host and port always come from `REDIS_SERVER_HOST` and
+`REDIS_SERVER_PORT`, defaulting to `localhost:6379`. These values override the
+host and port in `local.json` even when the environment variables are unset.
+Other settings deliberately supplied in `local.json` still apply when no
+environment override is present. If an earlier entrypoint version wrote
+generated Redis settings into a mounted `local.json`, remove those stale values once, including
+topology, TLS, and credentials; the file cannot distinguish them from
+operator-supplied settings.
+
+For deployments using the orchestrated image, select the Redis-backed
+editor-data store with `EDITOR_DATA_STORAGE=editorDataRedis`. If
+`EDITOR_STAT_STORAGE` is omitted, the orchestrated entrypoint uses the same
+backend for statistics. Set `EDITOR_STAT_STORAGE` explicitly only when a
+different statistics backend is required. Both variables are optional;
+leaving them unset preserves the packaged memory backend. The orchestrated
+image uses `REDIS_SERVER_PWD` and
+`REDIS_SERVER_DB_NUM` for the Redis password and database settings.
+In both images, these environment values override the same settings in the
+`local.json` that node-config loads from `NODE_CONFIG_DIR`. The orchestrated
+entrypoint always sets the Redis host, port and connector name, from
+`REDIS_SERVER_HOST`, `REDIS_SERVER_PORT` and `REDIS_CONNECTOR_NAME` or their
+defaults `localhost`, `6379` and `redis`, so those three override `local.json`
+even when the variables are unset. `REDIS_SERVER_PORT` must be a port number
+from 1 to 65535 in both images.
+
+The entrypoints read Redis settings from `$NODE_CONFIG_DIR/local.json`
+(`/etc/euro-office/documentserver/local.json` by default) to combine them with
+the environment. That is where the Helm chart mounts `extraConf` only while
+`extraConf.filename` keeps its default `local.json` and `NODE_CONFIG_DIR` names
+a single directory; settings in any other file are not combined. Comments and
+trailing commas in `local.json` are fine, as node-config reads it as JSON5. A
+file the entrypoint still cannot parse logs a warning and its Redis settings are
+not combined.
+
+The orchestrated entrypoint deep-merges an operator-supplied `NODE_CONFIG`
+over its generated configuration. Explicit `NODE_CONFIG` values take precedence
+over environment-derived settings; nested options such as
+`services.CoAuthoring.redis.options.socket.tls` are preserved. Arrays are
+replaced, rather than appended. Invalid JSON or a non-object configuration
+stops startup, in both images, as does a Redis setting that must be an object
+but is not, such as `services.CoAuthoring.redis.options` set to a string in
+`NODE_CONFIG` or `local.json`.
+
+Upgrade note for the orchestrated image: earlier entrypoints discarded a
+`NODE_CONFIG` set in the container environment, and now it applies. Remove
+stale values before upgrading, for example from Helm `extraEnvVars`. A leftover
+`{"services":{"CoAuthoring":{"token":{"enable":{"browser":false}}}}}`, which
+did nothing before, now turns browser JWT off even with `JWT_ENABLED=true`, and
+a malformed value now stops the container.
+
+`REDIS_SENTINEL_NODES` and `REDIS_CLUSTER_NODES` take nodes separated by spaces
+or commas, each as `host:port`, `[IPv6]:port`, `redis://host:port` or
+`rediss://host:port`. `rediss://` requires `REDIS_SENTINEL_TLS=true` for
+Sentinel nodes and `REDIS_SERVER_TLS=true` for Cluster nodes.
+
+`REDIS_SENTINEL_NODES`, `REDIS_SENTINEL_GROUP_NAME`, `REDIS_SENTINEL_USER` and
+`REDIS_SENTINEL_PASS` (or their `REDIS_SENTINEL_USERNAME` and
+`REDIS_SENTINEL_PWD` aliases) select Sentinel; `REDIS_SENTINEL_TLS` alone does
+not. Without `REDIS_SENTINEL_NODES`, the orchestrated image uses
+`REDIS_SERVER_HOST:REDIS_SERVER_PORT` as the Sentinel address; an IPv6 host
+needs no brackets there. The standalone image bundles a plain Redis on
+`localhost`, so without `REDIS_SENTINEL_NODES` it:
+
+* applies these variables to a Sentinel configured in `local.json` or
+  `NODE_CONFIG`, which keeps its own addresses;
+* otherwise uses `REDIS_SERVER_HOST:REDIS_SERVER_PORT`, when `REDIS_SERVER_HOST`
+  is a host other than `localhost`;
+* otherwise ignores them with a warning, also when `REDIS_CLUSTER_NODES` is set.
+
+`REDIS_SERVER_USER=default` without a password connects without
+authentication, unless `local.json` or `NODE_CONFIG` supplies a password. The
+configured credentials then apply as they are: the configured username with its
+password, or the `default` user when the configuration names no username. The
+Helm chart always sets `REDIS_SERVER_USER=default`, so this is how credentials
+from `extraConf` take effect. Where the password counts depends on the topology:
+
+* standalone Redis and Sentinel data nodes: `options.password`, or
+  `optionsSentinel.nodeClientOptions.password` for Sentinel;
+* Redis Cluster: `optionsCluster.defaults.password`. Cluster nodes do not use
+  `options`, so a password only in `options.password` leaves them
+  unauthenticated.
+
+Any other username needs a password. `REDIS_SENTINEL_USER=default` works the
+same way with `optionsSentinel.sentinelClientOptions.password`. A
+`REDIS_SENTINEL_USER` other than `default` stops startup unless
+`REDIS_SENTINEL_PASS` or `optionsSentinel.sentinelClientOptions.password` in
+the configuration provides a password.
+
+Both image entrypoints support `REDIS_SERVER_TLS=true` to enable TLS for
+standalone Redis, Redis nodes discovered through Sentinel, and Cluster seed
+and discovered nodes. Sentinel data nodes get it through `options.socket.tls`,
+so a CA or server name in `options.socket` still applies to them. This includes a Sentinel or Cluster topology configured
+in `local.json` or `NODE_CONFIG` rather than through environment variables.
+Set `REDIS_SENTINEL_TLS=true` separately when the Sentinel discovery endpoints
+also require TLS. These flags accept the
+[boolean values](../build/README.md#boolean-environment-variables) of the other
+settings, and any other value stops startup. Unset, empty or false values do not
+inject TLS options or disable TLS supplied through custom configuration. When
+`optionsCluster.defaults.socket.tls` is set, from either source, the
+entrypoints switch Cluster seed URLs to `rediss://` or `redis://` to match it. Use the TLS ports configured on
+your Redis and Sentinel servers; the flags do not change port numbers.
+Certificate verification remains enabled. For a custom CA, the straightforward
+option is `NODE_EXTRA_CA_CERTS` pointing to a readable CA file mounted inside the
+DocumentServer container. Set it before starting the Node.js services; recreate
+the container after changing the environment or CA mount.
+
+For configuration-based CA or client certificate/key options, use these paths
+under `services.CoAuthoring.redis` (certificate values are PEM contents):
+
+| Connection | TLS options location |
+| --- | --- |
+| Standalone | `options.socket` |
+| Sentinel data nodes | `optionsSentinel.nodeClientOptions.socket` |
+| Sentinel discovery endpoints | `optionsSentinel.sentinelClientOptions.socket` |
+| Cluster | `optionsCluster.defaults.socket` |
+
+With the server's Redis implementation, putting a CA only in
+`options.socket.ca` is insufficient for every topology. Sentinel shallow-merges
+base and node-client options: a generated topology-specific `socket` can replace
+the entire base `options.socket`, including its CA. Sentinel discovery has its
+own options, and Cluster uses its own defaults. Include the CA and other needed
+TLS settings in each applicable socket, and keep certificate verification enabled.
+
+For example, with TLS enabled on both Sentinel and its Redis nodes, configure
+the CA in both Sentinel socket options:
+
+```json
+{
+  "services": {
+    "CoAuthoring": {
+      "redis": {
+        "optionsSentinel": {
+          "nodeClientOptions": {
+            "socket": {
+              "tls": true,
+              "ca": "-----BEGIN CERTIFICATE-----\n<Redis CA PEM contents>\n-----END CERTIFICATE-----\n"
+            }
+          },
+          "sentinelClientOptions": {
+            "socket": {
+              "tls": true,
+              "ca": "-----BEGIN CERTIFICATE-----\n<Sentinel CA PEM contents>\n-----END CERTIFICATE-----\n"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Replace the PEM placeholders with the actual CA certificate contents. If Redis
+nodes and Sentinel use the same CA, use the same PEM in both `ca` fields. For
+standalone Redis or Cluster, place the same `tls` and `ca` fields at the socket
+path listed above.
+
+All three Compose topology stacks use TLS-only Redis/Valkey listeners on their
+usual ports (6379, 7000–7005, and 26379 for Sentinel). Replication, Sentinel
+connections, and the Cluster bus also use TLS. Password authentication remains
+enabled; client certificates are not required. Certificate verification stays
+enabled on DocumentServer, which trusts the test CA through `NODE_EXTRA_CA_CERTS`.
+
+`make redis-up` requires OpenSSL on the host and automatically generates a local
+test CA and certificate under `develop/.redis-tls/` (gitignored). The certificate
+covers all Compose Redis/Valkey hostnames and loopback addresses. The same test
+key is shared by these local containers; do not use it outside this test setup.
+The CA private key is discarded after signing. Existing certificates are reused
+until close to expiry. Stop the stack before removing `.redis-tls/` to regenerate
+them, then recreate its containers so all processes load the new CA.
+
+If using Compose directly, generate certificates first:
+
+```sh
+make -C develop redis-tls
+```
+
+CLI checks inside Redis/Valkey containers require
+`--tls --cacert /tls/ca.crt`, as shown in the verification commands below.
+
+The image must contain the updated entrypoint as well as the Redis editor-data
+backend. These stacks exercise the TLS environment variables on the standalone
+image; the orchestrated entrypoint's merge needs separate testing.
+
+To test TLS supplied through `NODE_CONFIG` instead, set both TLS variables to
+`false` in a temporary Compose override and merge the following Redis options
+into the overlay's `NODE_CONFIG` (keep its storage-selection settings). Include
+only the block matching the topology. The discovery and credential environment
+variables can remain set; they are merged with these nested TLS settings:
+
+```json
+{
+  "services": {
+    "CoAuthoring": {
+      "redis": {
+        "options": {"socket": {"tls": true}},
+        "optionsCluster": {
+          "rootNodes": [
+            {"url": "rediss://redis-cluster-1:7000"},
+            {"url": "rediss://redis-cluster-2:7001"},
+            {"url": "rediss://redis-cluster-3:7002"},
+            {"url": "rediss://redis-cluster-4:7003"},
+            {"url": "rediss://redis-cluster-5:7004"},
+            {"url": "rediss://redis-cluster-6:7005"}
+          ],
+          "defaults": {"socket": {"tls": true}}
+        },
+        "optionsSentinel": {
+          "nodeClientOptions": {"socket": {"tls": true}},
+          "sentinelClientOptions": {"socket": {"tls": true}}
+        }
+      }
+    }
+  }
+}
+```
+
+Cluster seed URLs must also use `rediss://`, matching `socket.tls: true`.
+
+### First-time setup
+
+The published `latest-dev` image cannot run these stacks until it includes the
+Redis editor-data backend and standalone entrypoint topology support.
+To include these components, build a local image from a checkout with its
+submodules initialized. Follow the [image build prerequisites](../build/README.md#building-the-image)
+if this is a fresh checkout.
+
+Until [server#46](https://github.com/Euro-Office/server/pull/46) is merged, the
+`server` submodule pin has no Redis editor-data backend (`editorDataRedis`).
+Check out that pull request in `server/` before building:
+
+```sh
+git -C server fetch origin pull/46/head
+git -C server checkout FETCH_HEAD
+```
+
+The overlays provide external dependencies and configure DocumentServer. By
+default they neither build from nor mount the source checkout. PostgreSQL no
+longer bind-mounts the checkout's schema: the standalone entrypoint initializes
+an empty external database from the selected image's packaged
+`/var/www/euro-office/documentserver/server/schema/postgresql/createdb.sql`.
+The image must contain that file and the bootstrap logic; checking out newer
+server sources alone does not update the packaged schema.
+
+Build the standalone image from the repository root. The `standalone` Bake
+target builds the server and its dependencies, packages them, and copies the
+standalone entrypoint into the image. `--load` makes the tagged image available to
+Docker Compose locally:
+
+```sh
+(
+  cd build
+  docker buildx bake standalone \
+    --set standalone.tags=local/documentserver:redis-topology --load
+)
+make -C develop redis-up TYPE=SENTINEL
+```
+
+`make redis-up` and the Compose files use `local/documentserver:redis-topology`
+unless `EO_IMAGE` is set, and `make redis-up` stops if that image does not
+exist. To test another image, export `EO_IMAGE`; it also applies to the
+commands below. Use `TYPE=STANDALONE` or `TYPE=CLUSTER` when testing those
+topologies. Rebuild the
+image after changing the `server` checkout or the standalone entrypoint; the
+overlays do not mount either source tree into the container.
+
+For routine source testing in the regular development stack, run
+`docker compose exec -T eo make server/docservice server/converter` from `develop/`
+using an existing development image. Building within a topology stack also requires
+local mounts for the checkout at `/develop` and `develop/setup/Makefile` at `/Makefile`,
+and the same Compose files used at startup. Server build targets do not install
+entrypoint scripts; test those separately with the entrypoint suites.
+
+### Start and stop a topology
+
+Run these commands from the repository root:
+
+```sh
+make -C develop redis-up TYPE=STANDALONE
+make -C develop redis-up TYPE=SENTINEL
+make -C develop redis-up TYPE=CLUSTER
+```
+
+Once the services are healthy, the example app is at
+<http://localhost:8000/example/>.
+
+Run only one topology at a time. Stop the current one before switching:
+
+```sh
+make -C develop redis-down TYPE=SENTINEL
+make -C develop redis-up TYPE=CLUSTER
+```
+
+To remove the test PostgreSQL volume as well:
+
+```sh
+make -C develop redis-down TYPE=CLUSTER PURGE=1
+```
+
+### Test repeated Sentinel failover
+
+Start the stack with `make -C develop redis-up TYPE=SENTINEL` (select a suitable
+`EO_IMAGE` as described above). Run the following in Bash with GNU `timeout`
+available, from the repository root. These helpers bound each command to ten seconds;
+keep any local Compose override used at startup in `sc` as well:
+
+```sh
+sc() {
+  timeout 10s docker compose -f develop/docker-compose.redis-base.yml \
+    -f develop/docker-compose.redis-sentinel.yml "$@"
+}
+scli() {
+  local host=$1; shift
+  sc exec -T "$host" "${REDIS_CLI_COMMAND:-redis-cli}" --raw --tls --cacert /tls/ca.crt \
+    -h "$host" -p 26379 -a sentinel-test-pass "$@"
+}
+rcli() {
+  local host=$1; shift
+  sc exec -T "$host" "${REDIS_CLI_COMMAND:-redis-cli}" --raw --tls --cacert /tls/ca.crt \
+    -h "$host" -p 6379 -a redis-test-pass "$@"
+}
+
+# All three must return the same service hostname and port 6379.
+for sentinel in redis-sentinel-1 redis-sentinel-2 redis-sentinel-3; do
+  scli "$sentinel" SENTINEL get-master-addr-by-name mymaster
+  scli "$sentinel" SENTINEL replicas mymaster
+done
+
+# Run find_master again after every promotion; never assume redis-primary is
+# still master. It sets MASTER and REPLICA, and fails without closing the shell.
+find_master() {
+  MASTER=$(scli redis-sentinel-1 SENTINEL get-master-addr-by-name mymaster | tr -d '\r' | sed -n '1p')
+  case "$MASTER" in
+    redis-primary) REPLICA=redis-replica ;;
+    redis-replica) REPLICA=redis-primary ;;
+    *) echo "FAIL: unexpected elected master: $MASTER" >&2; return 1 ;;
+  esac
+}
+find_master && {
+  rcli "$MASTER" INFO replication
+  rcli "$REPLICA" INFO replication
+}
+
+# Establish the test key once; SET and WAIT must use the same connection.
+rcli "$MASTER" <<'REDIS'
+SET eo:sentinel-failover-check preserved
+WAIT 1 5000
+REDIS
+rcli "$REPLICA" GET eo:sentinel-failover-check
+```
+
+Before triggering failover, require one `role:master` with
+`connected_slaves:1` and an online replica, and one `role:slave` with
+`master_link_status:up`, `master_sync_in_progress:0`, and `master_host` matching
+`MASTER`. Each Sentinel's replica entry must use the other service hostname
+in its `ip` field, with no `s_down`, `o_down`, or `disconnected` flag. Both the
+elected master and replica must retain hostname identities rather than container
+IPs. `SET` must return `OK`, `WAIT` must return `1`, and the replica must read
+`preserved`. Stop if these baseline checks fail.
+
+Docker DNS must retain both node names during failover. Do not stop the master
+container: removing its DNS record can leave Sentinel resolving the hostname
+instead of completing promotion. Use **one** of these triggers:
+
+```sh
+OLD_MASTER=$MASTER
+sc pause "$OLD_MASTER"             # Keep its Docker DNS record.
+# Alternatively, leave both nodes running and request promotion:
+# scli redis-sentinel-1 SENTINEL FAILOVER mymaster
+```
+
+For each promotion, poll the election queries above every two seconds for at
+most 180 seconds. Require all three Sentinels to agree on the **other** hostname
+and port 6379. If paused, run `sc unpause "$OLD_MASTER"` as soon as promotion is
+confirmed; also unpause it if the test fails. Recompute `MASTER` and `REPLICA`
+with `find_master`, then poll their replication state and Sentinel replica
+entries every two seconds for at most another 180 seconds. Require the same
+healthy roles, links, and hostname identities as the baseline before proceeding.
+These are test deadlines, not guaranteed recovery times. A command timeout,
+Redis error, disagreement or unhealthy state remaining at the deadline fails the test.
+
+After recovery, check data preservation and a new replicated write:
+
+```sh
+rcli "$MASTER" GET eo:sentinel-failover-check    # Must still be preserved; do not reset it.
+rcli "$MASTER" <<REDIS                         # Must return OK, then 1.
+SET eo:sentinel-post-failover $MASTER
+WAIT 1 5000
+REDIS
+rcli "$REPLICA" GET eo:sentinel-post-failover   # Must match MASTER.
+sc exec -T eo curl -fsS http://localhost/healthcheck  # Must return true.
+sc exec -T eo tail -n 100 /var/log/euro-office/documentserver/docservice/out.log
+```
+
+Allow at most 180 seconds for DocumentServer recovery, polling every two seconds.
+Require a successful document open/edit and editor-data traffic on the newly
+elected master using `MONITOR` below. Healthcheck alone does not establish that
+the Redis backend is active. Inspect logs from the failover onward: TLS failures,
+`READONLY` errors, or connection failures that persist after topology recovery
+fail the test; transient reconnect messages alone do not establish failure.
+
+Repeat the trigger and all checks at least once more, targeting the **current**
+elected master each time. Wait for replication recovery and a replicated write
+before the next trigger; both services must be observed being promoted over
+successive rounds. Preserve the original test key across every round.
+
+### Run with Valkey
+
+The same commands work with Valkey. Set the image, server command, and CLI
+command in the shell so the startup and verification commands use the same
+values:
+
+```sh
+export REDIS_IMAGE=valkey/valkey:8-alpine
+export REDIS_SERVER_COMMAND=valkey-server
+export REDIS_CLI_COMMAND=valkey-cli
+make -C develop redis-up TYPE=SENTINEL
+```
+
+Use `TYPE=STANDALONE` or `TYPE=CLUSTER` instead when needed. The verification
+commands below default to `redis-cli`; when using Valkey, keep
+`REDIS_CLI_COMMAND=valkey-cli` exported in the shell.
+
+### Verify the topology and DocumentServer configuration
+
+These are some commands to validate Redis/Valkey is configured and used correctly by the DocumentServer.
+
+Check that all services are healthy (replace the second yml file based on your topology):
+
+```sh
+docker compose \
+  -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-sentinel.yml ps
+```
+
+For standalone Redis, inspect the effective DocService configuration. The
+entrypoint exports its generated `NODE_CONFIG` to supervisord and its services;
+`docker compose exec` starts a separate process and does not inherit that
+generated value, so read it from the running DocService process as the `ds`
+user:
+
+```sh
+docker compose \
+  -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-standalone.yml \
+  exec --user ds eo sh -lc '
+  pid=$(pgrep -u ds -x docservice)
+  jq -Rs --slurpfile saved /etc/euro-office/documentserver/local.json "
+    (split(\"\\u0000\") | map(select(startswith(\"NODE_CONFIG=\"))) |
+      first | ltrimstr(\"NODE_CONFIG=\") | fromjson) as \$runtime |
+    (\$saved[0] * \$runtime) as \$config |
+    {
+      storage: (\$config.services.CoAuthoring.server |
+        {editorDataStorage, editorStatStorage}),
+      host: \$config.services.CoAuthoring.redis.host,
+      port: \$config.services.CoAuthoring.redis.port,
+      options: ((\$config.services.CoAuthoring.redis.options // {}) |
+        .password = (if .password then \"<set>\" else null end)),
+      optionsCluster: (\$config.services.CoAuthoring.redis.optionsCluster // null),
+      optionsSentinel: (\$config.services.CoAuthoring.redis.optionsSentinel // null)
+    }
+  " /proc/"$pid"/environ
+  '
+```
+
+The `storage` output should contain `editorDataRedis`. The effective Redis
+configuration should point to `redis:6379`, contain the configured database
+and credentials, show `options.socket.tls: true`, and show empty
+`optionsCluster` and `optionsSentinel` settings.
+Confirm that the configured endpoint accepts those credentials:
+
+```sh
+docker compose \
+  -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-standalone.yml \
+  exec redis "${REDIS_CLI_COMMAND:-redis-cli}" --tls --cacert /tls/ca.crt -a redis-test-pass PING
+```
+
+Expected output:
+
+```text
+PONG
+```
+
+For Sentinel, confirm that DocumentServer received the Sentinel configuration,
+that DocService is healthy with the Redis-backed editor-data store, and that
+Sentinel elected a master:
+
+```sh
+docker compose \
+  -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-sentinel.yml \
+  exec --user ds eo sh -lc '
+  pid=$(pgrep -u ds -x docservice)
+  jq -eRs --slurpfile saved /etc/euro-office/documentserver/local.json "
+    (split(\"\\u0000\") | map(select(startswith(\"NODE_CONFIG=\"))) |
+      first | ltrimstr(\"NODE_CONFIG=\") | fromjson) as \$runtime |
+    (\$saved[0] * \$runtime).services.CoAuthoring.redis.optionsSentinel.sentinelRootNodes |
+    length > 0
+  " /proc/"$pid"/environ >/dev/null &&
+    echo "DocumentServer optionsSentinel: CONFIGURED" ||
+    { echo "DocumentServer optionsSentinel: MISSING"; exit 1; }
+  '
+
+docker compose \
+  -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-sentinel.yml \
+  exec eo sh -lc '
+  curl -fsS http://localhost/healthcheck | grep -qx true &&
+    echo "DocService healthcheck: PASS" ||
+    { echo "DocService healthcheck: FAIL"; exit 1; }
+  '
+
+docker compose \
+  -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-sentinel.yml \
+  exec redis-sentinel-1 "${REDIS_CLI_COMMAND:-redis-cli}" --tls --cacert /tls/ca.crt \
+  -h redis-sentinel-1 -p 26379 -a sentinel-test-pass \
+  SENTINEL get-master-addr-by-name mymaster
+```
+
+For Cluster, confirm the cluster state and node membership:
+
+```sh
+docker compose \
+  -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-cluster.yml \
+  exec redis-cluster-1 \
+  "${REDIS_CLI_COMMAND:-redis-cli}" --tls --cacert /tls/ca.crt -c -p 7000 -a redis-test-pass cluster info
+
+docker compose \
+  -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-cluster.yml \
+  exec redis-cluster-1 \
+  "${REDIS_CLI_COMMAND:-redis-cli}" --tls --cacert /tls/ca.crt -c -p 7000 -a redis-test-pass cluster nodes
+```
+
+The configuration and health checks above do not by themselves prove that
+DocService is using `editorDataRedis`; the memory backend can also pass them.
+Complete the validation by running the `MONITOR` command below, then create or
+open a document in the example app. The output must contain editor-data Redis
+traffic beyond connection or health-check `PING` commands. For Sentinel,
+monitor the primary returned by `SENTINEL get-master-addr-by-name`; for
+Cluster, monitor each master because commands are distributed across slots.
+
+### Watch DocumentServer Redis traffic live
+
+`MONITOR` prints every command received by a Redis server. Start it in one
+terminal, then create or edit a document in the example app in another:
+
+Standalone:
+
+```sh
+docker compose \
+  -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-standalone.yml \
+  exec redis "${REDIS_CLI_COMMAND:-redis-cli}" --tls --cacert /tls/ca.crt -a redis-test-pass MONITOR
+```
+
+Sentinel: monitor the elected primary (not the Sentinel port). First run
+`SENTINEL get-master-addr-by-name mymaster` from the failover instructions
+above, then replace `<elected-primary>` below with the returned hostname:
+
+```sh
+docker compose \
+  -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-sentinel.yml \
+  exec <elected-primary> "${REDIS_CLI_COMMAND:-redis-cli}" --tls --cacert /tls/ca.crt -a redis-test-pass MONITOR
+```
+
+Cluster: monitor each master because commands are distributed across slots:
+
+```sh
+docker compose \
+  -f develop/docker-compose.redis-base.yml \
+  -f develop/docker-compose.redis-cluster.yml \
+  exec redis-cluster-1 "${REDIS_CLI_COMMAND:-redis-cli}" --tls --cacert /tls/ca.crt -p 7000 -a redis-test-pass MONITOR
+```
+
+Repeat that command for `redis-cluster-2` on port `7001` and
+`redis-cluster-3` on port `7002` if you need to observe all master traffic.
+`MONITOR` can expose document data and credentials, so use it only in this
+local test environment.
+
 ## Parallel test servers (`eo.sh`)
 
-The `make` workflow above runs a single Nextcloud-integrated stack with fixed
+The regular `make local` workflow described earlier runs a single Nextcloud-integrated stack with fixed
 container names and ports — use it for interactive, integration-style testing.
 
 When you instead need **several throwaway document servers at once** — e.g. a coding
