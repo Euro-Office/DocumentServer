@@ -14,7 +14,7 @@ FROM finalubuntu AS develop
     ENV TZ=Etc/UTC
 
     RUN apt-get update && \
-        curl -fsSL https://deb.nodesource.com/setup_26.x | bash - && \
+        curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
         apt-get install -yq --no-install-recommends nodejs openjdk-21-jdk wget zip brotli && \
         npm install -g @yao-pkg/pkg grunt-cli && \
         rm -rf /var/lib/apt/lists/*
@@ -58,6 +58,10 @@ FROM finalubuntu AS develop
         /opt/emsdk/emsdk activate latest && \
         chmod +x /opt/emsdk/emsdk_env.sh && \
         rm -rf emsdk.tar.gz
+
+    COPY server/FileConverter/sandbox/x2t-sandbox.c /tmp/x2t-sandbox.c
+    RUN gcc -O2 -o /usr/local/bin/x2t-sandbox /tmp/x2t-sandbox.c && \
+        rm /tmp/x2t-sandbox.c
 
     ENV PRODUCT_VERSION=${PRODUCT_VERSION}
     ENV EO_DEV=/develop
