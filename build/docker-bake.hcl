@@ -50,6 +50,17 @@ variable "BUILD_ROOT" {
   default = "/package"
 }
 
+# A prebuilt core (fetch-core.sh prints it) instead of building core
+variable "CORE_PREBUILT" {
+  default = ""
+}
+
+# Core's prebuilt WebAssembly modules (fetch-core-wasm.sh prints it) instead of
+# building core-wasm
+variable "CORE_WASM_PREBUILT" {
+  default = ""
+}
+
 variable "PACKAGE_BASE" {
   default = "docsrv-build"
 }
@@ -138,11 +149,6 @@ target "core" {
   dockerfile = "./core/.docker/core.bake.Dockerfile"
   target     = "core"
   tags       = ["${REGISTRY}/core:${TAG}"]
-  # Optional: enables the prebuilt third-party remote cache when set
-  secret = [
-    "id=nextcloud_user,env=NEXTCLOUD_USER",
-    "id=nextcloud_pass,env=NEXTCLOUD_PASS",
-  ]
   cache-from = ["type=local,src=${CACHE_ROOT}/${REGISTRY}/core"]
   cache-to   = ["type=local,dest=${CACHE_ROOT}/${REGISTRY}/core,mode=max"]
 }
@@ -165,7 +171,7 @@ target "sdkjs" {
   cache-from = ["type=local,src=${CACHE_ROOT}/${REGISTRY}/sdkjs"]
   cache-to   = ["type=local,dest=${CACHE_ROOT}/${REGISTRY}/sdkjs,mode=max"]
   contexts = {
-    core-wasm    = "target:core-wasm"
+    core-wasm = CORE_WASM_PREBUILT != "" ? CORE_WASM_PREBUILT : "target:core-wasm"
   }
 }
 
@@ -209,7 +215,7 @@ target "bundle" {
   target     = "bundle"
   tags       = ["${REGISTRY}/bundle:${TAG}"]
   contexts = {
-    core          = "target:core"
+    core = CORE_PREBUILT != "" ? CORE_PREBUILT : "target:core"
     server        = "target:server"
     sdkjs         = "target:sdkjs"
     web-apps      = "target:web-apps"
