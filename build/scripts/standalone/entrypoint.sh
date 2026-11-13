@@ -266,6 +266,8 @@ if [ "$METRICS_ENABLED" = "true" ]; then
   jq_set '.statsd.prefix     = $metricsPrefix'
 fi
 
+jq_set '.FileConverter.converter.sandboxPath = "/usr/local/bin/x2t-sandbox"'
+
 # FileConverter limits (max upload/conversion size).
 # Both are optional overrides; when unset the built-in default.json values apply.
 # maxDownloadBytes: max size in bytes of the file the converter will download.

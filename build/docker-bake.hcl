@@ -254,6 +254,7 @@ target "cluster-docs" {
   tags       = ["${REGISTRY}/cluster-docs:${TAG}"]
   contexts = {
     packages = "target:packages"
+    server   = "target:server"
   }
   cache-from = ["type=local,src=${CACHE_ROOT}/${REGISTRY}/docs"]
   cache-to   = ["type=local,dest=${CACHE_ROOT}/${REGISTRY}/docs,mode=max"]
@@ -265,6 +266,9 @@ target "cluster-example" {
   dockerfile = "./build/.docker/orchestrated.bake.Dockerfile"
   target     = "example"
   tags       = ["${REGISTRY}/cluster-example:${TAG}"]
+  contexts = {
+    server = "target:server"
+  }
   cache-from = ["type=local,src=${CACHE_ROOT}/${REGISTRY}/example"]
   cache-to   = ["type=local,dest=${CACHE_ROOT}/${REGISTRY}/example,mode=max"]
 }
@@ -275,6 +279,9 @@ target "cluster-utils" {
   dockerfile = "./build/.docker/orchestrated.bake.Dockerfile"
   target     = "utils"
   tags       = ["${REGISTRY}/cluster-utils:${TAG}"]
+  contexts = {
+    server = "target:server"
+  }
   cache-from = ["type=local,src=${CACHE_ROOT}/${REGISTRY}/utils"]
   cache-to   = ["type=local,dest=${CACHE_ROOT}/${REGISTRY}/utils,mode=max"]
 }

@@ -63,9 +63,9 @@ FROM ds-base AS ds-service
     WORKDIR /ds
 
     COPY --from=packages / /tmp/
-    COPY build/sandbox/x2t-sandbox.c /tmp/x2t-sandbox.c
+    COPY --from=server /package/x2t-sandbox /usr/local/bin/x2t-sandbox
 
-    RUN dnf -y install cabextract xorg-x11-font-utils fontconfig gcc && \
+    RUN dnf -y install cabextract xorg-x11-font-utils fontconfig && \
         rpm -ivh --nodigest \
         https://downloads.sourceforge.net/project/mscorefonts2/rpms/msttcore-fonts-installer-2.6-1.noarch.rpm && \
         TARGETARCH=$(echo $TARGETARCH | sed "s/"$TARGETARCH"/"$(uname -m)"/g") && \
@@ -75,10 +75,7 @@ FROM ds-base AS ds-service
             /var/www/$COMPANY_NAME_LOW/documentserver/core-fonts/msttcore \
             /usr/share/fonts/msttcore/*.ttf && \
         chmod a+r /etc/$COMPANY_NAME_LOW/documentserver*/*.json && \
-        chmod a+r /etc/$COMPANY_NAME_LOW/documentserver/log4js/*.json && \
-        gcc -O2 -o /usr/local/bin/x2t-sandbox /tmp/x2t-sandbox.c && \
-        rm /tmp/x2t-sandbox.c && \
-        dnf remove -y gcc && dnf clean all
+        chmod a+r /etc/$COMPANY_NAME_LOW/documentserver/log4js/*.json
     COPY --chown=ds:ds \
         build/configs/orchestrated/nginx/includes/http-common.conf \
         build/configs/orchestrated/nginx/includes/http-upstream.conf \

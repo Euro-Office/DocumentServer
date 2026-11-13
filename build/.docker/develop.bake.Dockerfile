@@ -59,6 +59,10 @@ FROM finalubuntu AS develop
         chmod +x /opt/emsdk/emsdk_env.sh && \
         rm -rf emsdk.tar.gz
 
+    COPY server/FileConverter/sandbox/x2t-sandbox.c /tmp/x2t-sandbox.c
+    RUN gcc -O2 -o /usr/local/bin/x2t-sandbox /tmp/x2t-sandbox.c && \
+        rm /tmp/x2t-sandbox.c
+
     ENV PRODUCT_VERSION=${PRODUCT_VERSION}
     ENV EO_DEV=/develop
     ENV THEME=euro-office
