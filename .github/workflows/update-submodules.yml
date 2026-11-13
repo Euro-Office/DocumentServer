@@ -1,5 +1,9 @@
 name: Update submodules to latest main branch
 
+# Opens (or rebases onto main and updates) the submodule bump PR every night.
+# CI on that PR is the nightly build: it publishes :nightly and :latest-dev
+# once e2e passes (see the plan job in ci.yml). Keep the branch name in sync.
+
 on:
   workflow_dispatch:
   schedule:
