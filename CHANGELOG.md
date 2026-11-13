@@ -44,6 +44,7 @@
 * core: xlsx: preserve pivot cache records on XLSB to XLSX conversion by robintel in [core#169](https://github.com/Euro-Office/core/pull/169)
 * core: vsdx: Fix detection extension for empty vsdx by coffeemakr in [core#197](https://github.com/Euro-Office/core/pull/197)
 * core: officeutils: restore compatible ZIP headers for saved documents by rikled in [core#289](https://github.com/Euro-Office/core/pull/289)
+* core: zlib-ng-wasm: build minizip-ng with deflate support by rikled in [core#322](https://github.com/Euro-Office/core/pull/322)
 * document-server-integration: credit Google for the Material Symbols icons by juliusknorr in [document-server-integration#19](https://github.com/Euro-Office/document-server-integration/pull/19)
 * document-server-integration: docker: normalize JWT_ENABLED in example entrypoint by rikled in [document-server-integration#21](https://github.com/Euro-Office/document-server-integration/pull/21)
 * document-server-package: rpm: make msttcore-fonts-installer optional by juliusknorr in [document-server-package#19](https://github.com/Euro-Office/document-server-package/pull/19)
@@ -118,7 +119,7 @@
 * server: <https://github.com/Euro-Office/server/compare/a924935680de...2e7a2a131061>
 * web-apps: <https://github.com/Euro-Office/web-apps/compare/ce0ba4954581...f8d4506c130d>
 * sdkjs: <https://github.com/Euro-Office/sdkjs/compare/40d9b7780f11...a1b8cac5d1bc>
-* core: <https://github.com/Euro-Office/core/compare/afb3f233704b...749cc177d520>
+* core: <https://github.com/Euro-Office/core/compare/afb3f233704b...0c489c97a84c>
 * document-server-integration: <https://github.com/Euro-Office/document-server-integration/compare/d88f09562d0f...aedcb528d5f7>
 * document-server-package: <https://github.com/Euro-Office/document-server-package/compare/c695b1b421ee...7be57e6f967d>
 
