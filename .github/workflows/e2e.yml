@@ -1,17 +1,22 @@
 name: E2E
 
-# Runs the Playwright tests against the image of the calling run: pr-<n> for
-# pull requests, the tag image for tags, :nightly otherwise.
+# Runs the Playwright tests against the image the calling run built: the
+# `image` input (ci.yml), or the tag image (release.yml).
 
 permissions: {}
 
 on:
   workflow_call:
+    inputs:
+      image:
+        description: 'Image to test; defaults to the tag image'
+        required: false
+        default: ''
+        type: string
 
 env:
   REGISTRY: ghcr.io/euro-office
   IMAGE_NAME: documentserver
-  CACHE_IMAGE_NAME: documentserver-build-cache
 
 jobs:
   e2e:
@@ -28,14 +33,10 @@ jobs:
 
       - name: Determine image
         id: image
+        env:
+          IMAGE: ${{ inputs.image }}
         run: |
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            echo "ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
-          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            echo "ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$(echo "$GITHUB_REF_NAME" | tr '/+' '--')" >> $GITHUB_OUTPUT
-          else
-            echo "ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly" >> $GITHUB_OUTPUT
-          fi
+          echo "ref=${IMAGE:-${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:$(echo "$GITHUB_REF_NAME" | tr '/+' '--')}" >> $GITHUB_OUTPUT
 
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0

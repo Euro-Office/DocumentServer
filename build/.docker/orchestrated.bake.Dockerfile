@@ -26,6 +26,7 @@ FROM fedora:43 AS ds-base
                     tar \
                     unzip \
                     libaio \
+                    libatomic \
                     libnsl \
                     nano \
                     gettext \

@@ -6,6 +6,11 @@ export default defineConfig({
   timeout: 60_000,
   expect: { timeout: 15_000 },
   fullyParallel: false,
+  // One document server serves every worker, so the limit is the server, not
+  // the machine. At Playwright's default (half the cores, 7 on the dev box)
+  // tests time out under the load; 4 is clean over repeated full runs.
+  // Override per run with `npm test -- --workers=N`.
+  workers: 4,
   retries: 1,
   outputDir: '../test-results',
   reporter: [['list'], ['html', { open: 'never', outputFolder: '../playwright-report' }]],
