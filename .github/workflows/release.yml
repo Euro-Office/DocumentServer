@@ -53,7 +53,8 @@ jobs:
   # the sanitised tag, plus :latest for stable tags only.
   # ─────────────────────────────────────────────────────────────
   publish-euro-office-images:
-    runs-on: ubuntu-latest
+    if: ${{ github.repository == 'Euro-Office/DocumentServer' }}
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: build
     permissions:
       contents: read
@@ -114,7 +115,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   publish-nextcloud-apt-dnf:
     needs: [build, publish-nextcloud-download-server]
-    if: needs.build.outputs.is_stable == 'true'
+    if: ${{ (needs.build.outputs.is_stable == 'true') && github.repository == 'Euro-Office/DocumentServer' }}
     permissions:
       actions: read
     uses: $/.github/workflows/publish-repo.yml
@@ -136,7 +137,8 @@ jobs:
   # changelog as body and the prerelease/latest flags from the tag.
   # ─────────────────────────────────────────────────────────────
   publish-euro-office-release:
-    runs-on: ubuntu-latest
+    if: ${{ github.repository == 'Euro-Office/DocumentServer' }}
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: build
     permissions:
       actions: read
@@ -187,7 +189,8 @@ jobs:
   # depends on.
   # ─────────────────────────────────────────────────────────────
   publish-nextcloud-download-server:
-    runs-on: ubuntu-latest
+    if: ${{ github.repository == 'Euro-Office/DocumentServer' }}
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: build
     permissions:
       actions: read
@@ -232,7 +235,8 @@ jobs:
   # account, whose login is NEXTCLOUD_RELEASES_USER.
   # ─────────────────────────────────────────────────────────────
   publish-nextcloud-images:
-    runs-on: ubuntu-latest
+    if: ${{ github.repository == 'Euro-Office/DocumentServer' }}
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: [build]
     permissions: {}
     steps:
@@ -268,7 +272,8 @@ jobs:
   # the image job so the release never points at an image that isn't there.
   # ─────────────────────────────────────────────────────────────
   publish-nextcloud-github-release:
-    runs-on: ubuntu-latest
+    if: ${{ github.repository == 'Euro-Office/DocumentServer' }}
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: [build, publish-nextcloud-images]
     permissions:
       actions: read

@@ -36,14 +36,15 @@ on:
 
 env:
   REGISTRY: ghcr.io/euro-office
-  CACHE_IMAGE_NAME: documentserver-build-cache
+  # Copies of this repo keep their build cache and e2e images in their own package.
+  CACHE_IMAGE_NAME: documentserver-build-cache${{ github.repository != 'Euro-Office/DocumentServer' && format('-{0}', github.repository_id) || '' }}
   BUILD_NUMBER: dev.1
   BUILD_ROOT: /package
   NEXTCLOUD_RELEASES_IMAGE: ghcr.io/nextcloud-releases/office-documentserver
 
 jobs:
   scope:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     permissions: {}
     outputs:
       matrix: ${{ steps.scope.outputs.matrix }}
@@ -54,6 +55,7 @@ jobs:
         id: scope
         env:
           FULL: ${{ inputs.full }}
+          PRIVATE: ${{ github.event.repository.private }}
           BRANDS: |
             [
               {
@@ -80,7 +82,8 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "$FULL" == "true" ]]; then
-            arch='["amd64","arm64"]'
+            # Private repos can't use GitHub's arm64 runners.
+            if [[ "$PRIVATE" == "true" ]]; then arch='["amd64"]'; else arch='["amd64","arm64"]'; fi
             brands="$BRANDS"
             targets=packages,standalone,develop,cluster-utils,cluster-example,cluster-docs
           else
@@ -118,7 +121,7 @@ jobs:
       packages: ${{ needs.scope.outputs.core_packages }}
 
   build:
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: [scope, wait-for-core]
     outputs:
       # Identical in every matrix leg (depends on the ref only), so it does
@@ -272,9 +275,9 @@ jobs:
             echo "export_image=false" >> $GITHUB_OUTPUT
           fi
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            echo "e2e_image=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+            echo "e2e_image=${{ env.REGISTRY }}/${CACHE_IMAGE_NAME}:pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
           else
-            echo "e2e_image=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${REF_NAME}" >> $GITHUB_OUTPUT
+            echo "e2e_image=${{ env.REGISTRY }}/${CACHE_IMAGE_NAME}:${REF_NAME}" >> $GITHUB_OUTPUT
           fi
 
           # Stable release tags are vX.Y.Z (e.g. v9.3.4) and its patch builds
@@ -296,6 +299,11 @@ jobs:
             echo "nc_publish=true"  >> "$GITHUB_OUTPUT"
           else
             echo "nc_publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Only the canonical repo publishes release images.
+          if [[ "$GITHUB_REPOSITORY" != "Euro-Office/DocumentServer" ]]; then
+            printf '%s\n' images_push=false develop_push=false nc_publish=false >> "$GITHUB_OUTPUT"
           fi
 
           # Parse PRODUCT_VERSION / BUILD_NUMBER from the git tag.

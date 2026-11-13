@@ -24,7 +24,7 @@ env:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     timeout-minutes: 5
     continue-on-error: true
     outputs:
@@ -42,7 +42,7 @@ jobs:
     needs: check
     if: needs.check.outputs.pending == 'true'
     environment: core-package-wait
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     timeout-minutes: 5
     continue-on-error: true
     outputs:
@@ -60,7 +60,7 @@ jobs:
     needs: wait-1
     if: needs.wait-1.outputs.pending == 'true'
     environment: core-package-wait
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     timeout-minutes: 5
     continue-on-error: true
     outputs:
@@ -78,7 +78,7 @@ jobs:
     needs: wait-2
     if: needs.wait-2.outputs.pending == 'true'
     environment: core-package-wait
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     timeout-minutes: 5
     continue-on-error: true
     outputs:
@@ -96,7 +96,7 @@ jobs:
     needs: wait-3
     if: needs.wait-3.outputs.pending == 'true'
     environment: core-package-wait
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     timeout-minutes: 5
     continue-on-error: true
     outputs:
