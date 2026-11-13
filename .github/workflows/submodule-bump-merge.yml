@@ -31,7 +31,10 @@ jobs:
           BRANCH: chore/nightly-submodule-bump
         run: |
           set -euo pipefail
-          pr=$(gh pr list -R "$GITHUB_REPOSITORY" --head "$BRANCH" --base main --state open --json number,headRefOid --jq '.[0] // empty')
+          # --head also matches branches of that name in forks
+          pr=$(gh pr list -R "$GITHUB_REPOSITORY" --head "$BRANCH" --base main --state open \
+            --json number,headRefOid,isCrossRepository \
+            --jq 'map(select(.isCrossRepository | not)) | .[0] // empty')
           if [[ -z "$pr" ]]; then
             echo "::notice::No open submodule bump PR"
             exit 0
