@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: 2026 Euro-Office contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
+# Lands the week's submodule bump PR (see update-submodules.yml): approves it
+# with the robot account and enables rebase auto-merge, so it merges as soon
+# as the required checks (ci-result) pass. Only PRs that change submodule
+# pointers and nothing else are approved.
+name: Merge submodule bump weekly
+
+on:
+  schedule:
+    - cron: '0 14 * * 5'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Approve and enable auto-merge
+        env:
+          GH_TOKEN: ${{ secrets.EO_ROBOT_GITHUB_TOKEN }}
+          BRANCH: chore/nightly-submodule-bump
+        run: |
+          set -euo pipefail
+          pr=$(gh pr list -R "$GITHUB_REPOSITORY" --head "$BRANCH" --base main --state open --json number,headRefOid --jq '.[0] // empty')
+          if [[ -z "$pr" ]]; then
+            echo "::notice::No open submodule bump PR"
+            exit 0
+          fi
+          number=$(jq -r .number <<<"$pr")
+          sha=$(jq -r .headRefOid <<<"$pr")
+
+          submodules=$(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | awk '{print $2}' | sort)
+          changed=$(gh pr view "$number" -R "$GITHUB_REPOSITORY" --json files --jq '.files[].path' | sort)
+          others=$(comm -13 <(echo "$submodules") <(echo "$changed"))
+          if [[ -n "$others" ]]; then
+            echo "::error::#$number changes more than submodule pointers, not approving:"
+            echo "$others"
+            exit 1
+          fi
+
+          gh pr review "$number" -R "$GITHUB_REPOSITORY" --approve --body "Weekly submodule bump, merges once CI passes."
+          gh pr merge "$number" -R "$GITHUB_REPOSITORY" --auto --rebase --match-head-commit "$sha"
