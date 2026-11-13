@@ -70,12 +70,17 @@ jobs:
   # target, like main and tags.
   # The label is read from the API, so adding it takes effect on the
   # next push or "Re-run all jobs".
+  # The submodule bump PR of update-submodules.yml (all submodules at their
+  # tracking branch heads, rebased onto main every night) is the nightly
+  # build: full matrix, published as :nightly and :latest-dev once e2e and
+  # the upgrade check pass. Pushes to main only build and test.
   plan:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
     outputs:
       full: ${{ steps.plan.outputs.full }}
+      nightly: ${{ steps.plan.outputs.nightly }}
     steps:
       - name: Choose build scope
         id: plan
@@ -83,6 +88,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
           HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
@@ -90,11 +97,15 @@ jobs:
             exit 1
           fi
           full=true
-          if [[ "$GITHUB_EVENT_NAME" == "pull_request" && "$HEAD_REF" != release/* && "$HEAD_REF" != renovate/* ]]; then
+          nightly=false
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" && "$HEAD_REF" == chore/nightly-submodule-bump && "$BASE_REF" == main && "$SAME_REPO" == "true" ]]; then
+            nightly=true
+          elif [[ "$GITHUB_EVENT_NAME" == "pull_request" && "$HEAD_REF" != release/* && "$HEAD_REF" != renovate/* ]]; then
             labels=$(gh pr view "$PR" -R "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')
             grep -qx full-build <<<"$labels" || full=false
           fi
           echo "full=$full" >> "$GITHUB_OUTPUT"
+          echo "nightly=$nightly" >> "$GITHUB_OUTPUT"
 
   build:
     needs: plan
@@ -104,6 +115,7 @@ jobs:
     uses: $/.github/workflows/build.yml
     with:
       full: ${{ needs.plan.outputs.full == 'true' }}
+      nightly: ${{ needs.plan.outputs.nightly == 'true' }}
     secrets:
       EURO_OFFICE_MIRROR_TOKEN: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN }}
       NEXTCLOUD_USER: ${{ secrets.NEXTCLOUD_USER }}
@@ -157,12 +169,18 @@ jobs:
           EOF
           )"
 
-  # Merges the arch-specific images of the default branch into the
-  # multi-arch :nightly and :latest-dev tags.
+  # Merges the arch-specific images of the nightly build into the
+  # multi-arch :nightly and :latest-dev tags, once they passed e2e and the
+  # upgrade check. A failed nightly keeps the previous multi-arch tags; the
+  # nightly-<arch> and latest-dev-<arch> tags are pushed by the build itself.
   publish-nightly-images:
     runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    needs: [plan, build, e2e, upgrade]
+    if: |
+      !cancelled() &&
+      needs.plan.outputs.nightly == 'true' &&
+      needs.e2e.result == 'success' &&
+      needs.upgrade.result == 'success'
     permissions:
       contents: read
       packages: write
@@ -211,21 +229,18 @@ jobs:
           #create_manifest "${REGISTRY}/${{ env.NEXTCLOUD_IMAGE_NAME }}" "latest-dev"
 
   e2e:
-    # publish-nightly-images makes :nightly on main; it is skipped on
-    # pull_request, so don't require it there.
-    needs: [build, publish-nightly-images]
+    needs: build
     if: |
       !cancelled() &&
       needs.build.result == 'success' &&
       (github.event_name != 'pull_request' ||
-       github.event.pull_request.head.repo.full_name == github.repository) &&
-      (github.event_name == 'pull_request' ||
-       (github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-        && needs.publish-nightly-images.result == 'success'))
+       github.event.pull_request.head.repo.full_name == github.repository)
     permissions:
       contents: read
       packages: read
     uses: $/.github/workflows/e2e.yml
+    with:
+      image: ${{ needs.build.outputs.e2e_image }}
 
   # Upgrade path: boot the last released image against persistent volumes, then
   # boot the image built here on those same volumes. The e2e job only ever sees
@@ -238,13 +253,12 @@ jobs:
   # upgrade from. PR and main builds are where :latest is genuinely the previous release.
   upgrade:
     runs-on: self-hosted
-    needs: [build, publish-nightly-images]
+    needs: build
     if: |
       !cancelled() &&
       needs.build.result == 'success' &&
       (github.event_name != 'pull_request' ||
-       github.event.pull_request.head.repo.full_name == github.repository) &&
-      (github.event_name == 'pull_request' || needs.publish-nightly-images.result == 'success')
+       github.event.pull_request.head.repo.full_name == github.repository)
     permissions:
       contents: read
       packages: read
@@ -263,15 +277,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Determine image
-        id: image
-        run: |
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            echo "ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
-          else
-            echo "ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly" >> $GITHUB_OUTPUT
-          fi
-
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
@@ -282,7 +287,7 @@ jobs:
       - name: Pull images
         id: pull
         env:
-          IMAGE_REF: ${{ steps.image.outputs.ref }}
+          IMAGE_REF: ${{ needs.build.outputs.e2e_image }}
         run: |
           docker pull "$IMAGE_REF"
           # No published release to upgrade from (new brand, pruned tag): report
@@ -315,7 +320,7 @@ jobs:
       - name: Boot the built image on the same volumes
         if: steps.pull.outputs.have_from == 'true'
         env:
-          IMAGE_REF: ${{ steps.image.outputs.ref }}
+          IMAGE_REF: ${{ needs.build.outputs.e2e_image }}
         run: |
           set -euo pipefail
           . .github/scripts/upgrade-lib.sh

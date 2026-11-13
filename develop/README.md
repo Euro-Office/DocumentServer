@@ -14,7 +14,7 @@ Before starting, make sure Docker and your build user are set up: [Build Requisi
 - Follow the repo cloning steps in the build readme
 - In DocumentServer/develop, start the containers and get into eo bash. The
   recommended path on all architectures is to **pull the prebuilt dev image** — a
-  multi-arch `:latest-dev` (amd64 **and** arm64) is published on every merge to `main`,
+  multi-arch `:latest-dev` (amd64 **and** arm64) is published nightly from `main` with all submodules at their latest commit (on days a submodule moved),
   so no local image build is needed, including on Apple Silicon:
   - `make pull` to pull the latest dev image from GitHub and start (recommended first step)
   - `make` to use the image already available locally
@@ -158,7 +158,7 @@ The Docker image and dev Makefile handle ARM64 automatically:
 - **web-apps**: Skips imagemin on arm64 (native binaries are x86_64-only)
 - **server**: `pkg` builds native arm64 binaries
 
-A multi-arch `:latest-dev` image (amd64 + arm64) is published to GHCR on every merge to `main`, so ARM64 users can `make pull` like everyone else — `make build` is only needed for offline work or to rebuild the image itself.
+A multi-arch `:latest-dev` image (amd64 + arm64) is published to GHCR nightly, built from `main` with all submodules at their latest commit, so ARM64 users can `make pull` like everyone else — `make build` is only needed for offline work or to rebuild the image itself.
 
 #### Error reporting (GlitchTip or Sentry)
 

@@ -15,23 +15,39 @@ Browser-level end-to-end tests for Euro-Office DocumentServer, built on [Playwri
 ```
 e2e/
 ├── frontend/
-│   ├── playwright.config.ts   Playwright configuration (single `chromium` project)
+│   ├── playwright.config.ts   Playwright configuration (single `chromium` project, 4 workers)
 │   ├── constants.ts           Host port, container name, default base URL
 │   ├── global-setup.ts        Starts the Docker container, waits for readiness
 │   ├── global-teardown.ts     Removes the container
 │   └── tests/
-│       ├── document/          create-document, save-document, document-editing
-│       ├── spreadsheet/       create-spreadsheet, save-spreadsheet, spreadsheet-formula
-│       ├── presentation/      create-presentation, save-presentation, presentation-slides
-│       ├── pdf-form/          create-pdf-form, save-pdf-form
+│       ├── document/          create-, save-, edit-, delete-document, document-editing
+│       ├── spreadsheet/       create-, save-, edit-, delete-spreadsheet, spreadsheet-formula
+│       ├── presentation/      create-, save-, edit-, delete-presentation, presentation-slides
+│       ├── pdf-form/          create-, save-, edit-, delete-pdf-form
 │       ├── mobile/            mobile-editor
 │       ├── example-page.spec.ts
-│       └── helpers.ts         Shared openNewEditor, editorApi, downloadStoredFile, saveAndReopen
+│       ├── stored-file-delete.suite.ts  The deletion scenario the four delete-* specs share
+│       └── helpers.ts         Shared openNewEditor, editorApi, downloadStoredFile, saveAndReopen,
+│                              and the stored-file helpers openStoredEditor, createStoredFile,
+│                              uploadStoredFile, uniqueFileName, deleteStoredFile, cleanUpStoredFiles
 ├── eslint.config.mjs          ESLint rules (typescript-eslint + Playwright plugin)
 ├── .prettierrc.json           Prettier rules
 ├── .editorconfig              Indentation and line endings
 └── .gitignore                 Also read by Prettier, which ignores the generated folders
 ```
+
+The `create-*` and `save-*` specs cover the create-new route (`?fileExt=`); the
+`edit-*` and `delete-*` specs cover a file that is already on the server
+(`?fileName=`), reached by clicking it in "Your documents".
+
+The file store is server-side and shared by every spec (it is keyed by client
+IP) while spec files run in parallel workers, so a spec may only assert on rows
+it created itself, never on the list as a whole. The create-new route hands out
+the lowest free name, so a name freed by a delete can be handed straight to
+another worker: the delete specs therefore upload under a generated unique name
+(`uniqueFileName`), and cleanup waits for a file to stop changing before
+removing it. Each spec deletes what it created in `afterAll`, which matters
+when running against a long-lived server via `E2E_BASE_URL`.
 
 ## Prerequisites
 

@@ -14,13 +14,18 @@ on:
         description: The packages this repository needs, as <platform>/<product>
         required: true
         type: string
+      nightly:
+        description: The run is the nightly build
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 env:
-  # As build.yml: releases and main take only packages of core's main and stable branches
-  EO_CORE_CHANNELS: ${{ (startsWith(github.ref, 'refs/tags/') || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) && 'main' || '' }}
+  # As build.yml: releases, main and nightly take only packages of core's main and stable branches
+  EO_CORE_CHANNELS: ${{ (startsWith(github.ref, 'refs/tags/') || inputs.nightly || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) && 'main' || '' }}
 
 jobs:
   check:
