@@ -54,6 +54,11 @@ RUN apt-get update && \
         postgresql postgresql-client redis-server rabbitmq-server \
         nginx sudo gdb nginx-extras supervisor jq util-linux \
         netcat-openbsd xxd openssl tini && \
+    apt-get install -yq \
+        adduser ca-certificates certbot coreutils curl libasound2t64 \
+        libcairo2 libcurl4t64 libcurl3t64-gnutls libgtk-3-0t64 libstdc++6 \
+        libxml2 libxss1 libxtst6 logrotate ttf-mscorefonts-installer xvfb \
+        zlib1g && \
     rm -rf /var/lib/apt/lists/*
 
 # Create the 'ds' user that is required by OnlyOffice scripts
@@ -83,9 +88,12 @@ RUN apt-get update && \
 # The packages are bind-mounted rather than copied in. The packages context
 # holds both the .deb and the .rpm (~1.2 GB together), and a COPY commits them
 # to a layer of their own that a later `rm` cannot shrink (#76).
+#
+# The package's Ubuntu dependencies come from the daily-cached layer above, so
+# this per-commit layer normally needs no apt mirror. apt-get update only runs
+# when that list falls behind document-server-package/deb/template/control.m4.
 ARG TARGETARCH
 RUN --mount=type=bind,from=packages,target=/mnt/packages \
-    apt-get update && \
     (pg_createcluster 16 main || true) && \
     service postgresql start && \
     runuser -u rabbitmq -- rabbitmq-server -detached && \
@@ -100,7 +108,10 @@ RUN --mount=type=bind,from=packages,target=/mnt/packages \
     echo "${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW} ds/db-user string eurooffice" | debconf-set-selections && \
     echo "${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW} ds/db-pwd password eurooffice" | debconf-set-selections && \
     echo "${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW} ds/db-name string eurooffice" | debconf-set-selections && \
-    DS_DOCKER_INSTALLATION=true apt-get install -yq /mnt/packages/${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW}_${PRODUCT_VERSION}-${BUILD_NUMBER}_${TARGETARCH}.deb && \
+    DEB=/mnt/packages/${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW}_${PRODUCT_VERSION}-${BUILD_NUMBER}_${TARGETARCH}.deb && \
+    (DS_DOCKER_INSTALLATION=true apt-get install -yq "$DEB" || \
+     (echo "WARNING: .deb dependencies missing from the cached layer, see control.m4" >&2 && \
+      apt-get update && DS_DOCKER_INSTALLATION=true apt-get install -yq "$DEB")) && \
     (runuser -u rabbitmq -- rabbitmqctl shutdown || true) && \
     service postgresql stop && \
     rm -rf /var/lib/rabbitmq/mnesia /var/lib/apt/lists/* /tmp/*
