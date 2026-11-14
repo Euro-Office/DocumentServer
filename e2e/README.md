@@ -20,7 +20,7 @@ e2e/
 │   ├── global-setup.ts        Starts the Docker container, waits for readiness
 │   ├── global-teardown.ts     Removes the container
 │   └── tests/
-│       ├── document/          create-, save-, edit-, delete-document, document-editing
+│       ├── document/          create-, save-, edit-, delete-document, document-editing, save-copy-as
 │       ├── spreadsheet/       create-, save-, edit-, delete-spreadsheet, spreadsheet-formula
 │       ├── presentation/      create-, save-, edit-, delete-presentation, presentation-slides
 │       ├── pdf-form/          create-, save-, edit-, delete-pdf-form
