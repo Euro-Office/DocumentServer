@@ -3,19 +3,20 @@ import { test, expect } from '@playwright/test';
 const EXAMPLE_PATH = '/example/';
 
 const EDITOR_TYPES = [
-  { label: 'Document', selector: 'a.try-editor.word', fileExt: 'docx' },
-  { label: 'Spreadsheet', selector: 'a.try-editor.cell', fileExt: 'xlsx' },
-  { label: 'Presentation', selector: 'a.try-editor.slide', fileExt: 'pptx' },
+  { label: 'Document', selector: 'a.try-editor.word', fileExt: 'docx', tag: '@document' },
+  { label: 'Spreadsheet', selector: 'a.try-editor.cell', fileExt: 'xlsx', tag: '@spreadsheet' },
+  { label: 'Presentation', selector: 'a.try-editor.slide', fileExt: 'pptx', tag: '@presentation' },
 ] as const;
 
-test.describe('Example page - Create new', () => {
+test.describe('Example page - Create new', { tag: '@regression' }, () => {
   test.beforeEach(async ({ page }) => {
     await page.goto(EXAMPLE_PATH);
     await expect(page).toHaveTitle(/ONLYOFFICE|euro-office/i);
   });
 
   for (const editor of EDITOR_TYPES) {
-    test(`Create new ${editor.label}`, async ({ page }) => {
+    // eslint-disable-next-line playwright/valid-test-tags -- tag comes from the table above
+    test(`Create new ${editor.label}`, { tag: editor.tag }, async ({ page }) => {
       // Register the new-tab handler BEFORE clicking so the event is not missed
       const newPagePromise = page.context().waitForEvent('page');
 

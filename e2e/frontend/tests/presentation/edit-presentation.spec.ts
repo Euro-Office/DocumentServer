@@ -72,64 +72,68 @@ async function readShape(editorPage: Page, shapeNumber: number) {
   return selectedText(editorPage);
 }
 
-test.describe('Presentation editor - editing a stored file', () => {
-  test.afterAll(({ browser }) => cleanUpStoredFiles(browser, createdFiles));
+test.describe(
+  'Presentation editor - editing a stored file',
+  { tag: ['@presentation', '@regression'] },
+  () => {
+    test.afterAll(({ browser }) => cleanUpStoredFiles(browser, createdFiles));
 
-  // Editor state only; persistence is the next test. See edit-document.spec.ts.
-  test('type a title into a presentation reopened from the file list', async ({ page }) => {
-    const fileName = await createStoredFile(page, newFileLink('pptx'), PPTX);
-    createdFiles.push(fileName);
-    const { editorPage, frame } = await openStoredEditor(page, fileName, PPTX);
+    // Editor state only; persistence is the next test. See edit-document.spec.ts.
+    test('type a title into a presentation reopened from the file list', async ({ page }) => {
+      const fileName = await createStoredFile(page, newFileLink('pptx'), PPTX);
+      createdFiles.push(fileName);
+      const { editorPage, frame } = await openStoredEditor(page, fileName, PPTX);
 
-    await test.step('the editor opened our stored file', async () => {
-      expect(new URL(editorPage.url()).searchParams.get('fileName')).toBe(fileName);
-      // A newly created deck is one empty Title slide.
-      await expect.poll(() => editorApi(editorPage, (api) => api.getCountPages())).toBe(1);
-      expect(await readShape(editorPage, 1)).toBe('');
+      await test.step('the editor opened our stored file', async () => {
+        expect(new URL(editorPage.url()).searchParams.get('fileName')).toBe(fileName);
+        // A newly created deck is one empty Title slide.
+        await expect.poll(() => editorApi(editorPage, (api) => api.getCountPages())).toBe(1);
+        expect(await readShape(editorPage, 1)).toBe('');
+      });
+
+      await test.step('the title placeholder holds the typed text', async () => {
+        await typeIntoShape(editorPage, 1, TITLE);
+        // Select once, then poll the read: polling the navigation too would press
+        // keys on every retry and change the state it is reading.
+        await selectShapeText(editorPage, 1);
+        await expect.poll(() => selectedText(editorPage)).toBe(TITLE);
+        await expect(undoButton(frame)).not.toHaveClass(/disabled/);
+      });
     });
 
-    await test.step('the title placeholder holds the typed text', async () => {
-      await typeIntoShape(editorPage, 1, TITLE);
-      // Select once, then poll the read: polling the navigation too would press
-      // keys on every retry and change the state it is reading.
-      await selectShapeText(editorPage, 1);
-      await expect.poll(() => selectedText(editorPage)).toBe(TITLE);
-      await expect(undoButton(frame)).not.toHaveClass(/disabled/);
+    test('an edit survives closing and reopening the presentation', async ({ page }) => {
+      // Sized from the step timeouts inside, not the run time; see
+      // edit-document.spec.ts.
+      test.setTimeout(270_000);
+      const fileName = await createStoredFile(page, newFileLink('pptx'), PPTX);
+      createdFiles.push(fileName);
+      const { editorPage } = await openStoredEditor(page, fileName, PPTX);
+      const before = await downloadStoredFile(page, editorPage.url());
+
+      const saved = await test.step('edit the stored presentation and close it', async () => {
+        await typeIntoShape(editorPage, 1, TITLE);
+        await selectShapeText(editorPage, 1);
+        await expect.poll(() => selectedText(editorPage)).toBe(TITLE);
+        await editorPage.keyboard.press('Escape');
+        await editorPage.keyboard.press('Escape');
+
+        await editorPage.keyboard.press('Control+s');
+        // The title loses its "*" when the editor finishes its own save step.
+        // That is a browser-side flag, not a server acknowledgement, so it is a
+        // step along the way and never the assertion.
+        await expect(editorPage).not.toHaveTitle(/^\*/, { timeout: 30_000 });
+        return saveAndReopen(page, editorPage, before);
+      });
+
+      await test.step('reopening shows the edited content', async () => {
+        // toPass, not expect.poll: the editor can rebuild its iframe shortly
+        // after opening, so click, select and read are retried together as one
+        // unit rather than the read alone.
+        await expect(async () => {
+          await saved.frame.locator('#editor_sdk').click();
+          expect(await readShape(saved.editorPage, 1)).toBe(TITLE);
+        }).toPass({ timeout: 30_000 });
+      });
     });
-  });
-
-  test('an edit survives closing and reopening the presentation', async ({ page }) => {
-    // Sized from the step timeouts inside, not the run time; see
-    // edit-document.spec.ts.
-    test.setTimeout(270_000);
-    const fileName = await createStoredFile(page, newFileLink('pptx'), PPTX);
-    createdFiles.push(fileName);
-    const { editorPage } = await openStoredEditor(page, fileName, PPTX);
-    const before = await downloadStoredFile(page, editorPage.url());
-
-    const saved = await test.step('edit the stored presentation and close it', async () => {
-      await typeIntoShape(editorPage, 1, TITLE);
-      await selectShapeText(editorPage, 1);
-      await expect.poll(() => selectedText(editorPage)).toBe(TITLE);
-      await editorPage.keyboard.press('Escape');
-      await editorPage.keyboard.press('Escape');
-
-      await editorPage.keyboard.press('Control+s');
-      // The title loses its "*" when the editor finishes its own save step.
-      // That is a browser-side flag, not a server acknowledgement, so it is a
-      // step along the way and never the assertion.
-      await expect(editorPage).not.toHaveTitle(/^\*/, { timeout: 30_000 });
-      return saveAndReopen(page, editorPage, before);
-    });
-
-    await test.step('reopening shows the edited content', async () => {
-      // toPass, not expect.poll: the editor can rebuild its iframe shortly
-      // after opening, so click, select and read are retried together as one
-      // unit rather than the read alone.
-      await expect(async () => {
-        await saved.frame.locator('#editor_sdk').click();
-        expect(await readShape(saved.editorPage, 1)).toBe(TITLE);
-      }).toPass({ timeout: 30_000 });
-    });
-  });
-});
+  },
+);

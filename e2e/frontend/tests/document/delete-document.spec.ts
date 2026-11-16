@@ -16,33 +16,38 @@ describeStoredFileDeletion({
   noun: 'document',
   ext: 'docx',
   rowClass: 'word',
+  tag: '@document',
 });
 
 // Files this test uploaded. It keeps one on purpose, so cleanup is not
 // redundant here. See stored-file-delete.suite.ts for the rest of the remit.
 const uploadedFiles: string[] = [];
 
-test.describe('Document - deleting one of several stored files', () => {
-  test.afterAll(({ browser }) => cleanUpStoredFiles(browser, uploadedFiles));
+test.describe(
+  'Document - deleting one of several stored files',
+  { tag: ['@document', '@regression'] },
+  () => {
+    test.afterAll(({ browser }) => cleanUpStoredFiles(browser, uploadedFiles));
 
-  test('deleting one document leaves the others in place', async ({ page }) => {
-    await page.goto('/example/');
-    const keptFile = await uploadStoredFile(page, uniqueFileName('keep', 'docx'));
-    const deletedFile = await uploadStoredFile(page, uniqueFileName('remove', 'docx'));
-    uploadedFiles.push(keptFile, deletedFile);
+    test('deleting one document leaves the others in place', async ({ page }) => {
+      await page.goto('/example/');
+      const keptFile = await uploadStoredFile(page, uniqueFileName('keep', 'docx'));
+      const deletedFile = await uploadStoredFile(page, uniqueFileName('remove', 'docx'));
+      uploadedFiles.push(keptFile, deletedFile);
 
-    await page.goto('/example/');
-    await expect(storedFileRow(page, keptFile)).toHaveCount(1);
-    await expect(storedFileRow(page, deletedFile)).toHaveCount(1);
+      await page.goto('/example/');
+      await expect(storedFileRow(page, keptFile)).toHaveCount(1);
+      await expect(storedFileRow(page, deletedFile)).toHaveCount(1);
 
-    await storedFileDeleteButton(page, deletedFile).click();
+      await storedFileDeleteButton(page, deletedFile).click();
 
-    // Only the targeted row goes. Without this, a delete that wiped the whole
-    // store would still pass the single-file test.
-    await expect(storedFileRow(page, deletedFile)).toHaveCount(0);
-    await expect(storedFileRow(page, keptFile)).toHaveCount(1);
+      // Only the targeted row goes. Without this, a delete that wiped the whole
+      // store would still pass the single-file test.
+      await expect(storedFileRow(page, deletedFile)).toHaveCount(0);
+      await expect(storedFileRow(page, keptFile)).toHaveCount(1);
 
-    await page.reload();
-    await expect(storedFileRow(page, keptFile)).toHaveCount(1);
-  });
-});
+      await page.reload();
+      await expect(storedFileRow(page, keptFile)).toHaveCount(1);
+    });
+  },
+);

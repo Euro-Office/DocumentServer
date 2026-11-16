@@ -10,4 +10,5 @@ describeStoredFileDeletion({
   noun: 'PDF form',
   ext: 'pdf',
   rowClass: 'pdf',
+  tag: '@pdf',
 });

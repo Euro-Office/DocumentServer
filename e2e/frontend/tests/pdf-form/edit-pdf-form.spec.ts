@@ -28,7 +28,7 @@ const TEXT = 'Euro-Office e2e edit test';
 // See edit-document.spec.ts.
 const createdFiles: string[] = [];
 
-test.describe('PDF form editor - editing a stored file', () => {
+test.describe('PDF form editor - editing a stored file', { tag: ['@pdf', '@regression'] }, () => {
   test.afterAll(({ browser }) => cleanUpStoredFiles(browser, createdFiles));
 
   // Editor state only; persistence is the next test. See edit-document.spec.ts.
