@@ -119,6 +119,7 @@ test.describe('Document - create new document', { tag: ['@document', '@smoke', '
 | `@mobile`                                            | Extra tag on the mobile-editor tests, next to their area tag |
 | `@smoke`                                             | The fast sanity set, see below                               |
 | `@regression`                                        | The full suite, see below                                    |
+| `@ignore`                                            | Temporarily excluded from every run, see below               |
 
 ### Rules
 
@@ -133,6 +134,12 @@ test.describe('Document - create new document', { tag: ['@document', '@smoke', '
 
 **`@regression`** is the full suite, which checks that existing behaviour has not broken. It includes every test, smoke tests too. Run it before a release, after larger changes, and in CI.
 
+**`@ignore`** marks a test that is temporarily excluded from every run, local and CI, for example because it is flaky or obsolete and waiting for a fix or removal.
+
+- Add it next to the test's other tags, which stay in place so the test is easy to restore, and put a comment above it with the reason and a Jira key, for example `// flaky on slow CI, see EUOFFICE-xxx`.
+- It is a temporary state: fix the test or delete it.
+- `playwright.config.ts` skips these tests by default (`grepInvert`). Set `E2E_INCLUDE_IGNORED=1` to run them, for example to check whether a flaky test is fixed.
+
 ### Selecting tests by tag
 
 A combined pattern is matched against the tags in the order they are written on the test, which is area first, then `@smoke`, then `@regression`.
@@ -143,6 +150,10 @@ npm test -- --grep "@document.*@smoke"     # smoke tests for one area (area tag 
 npm test -- --grep @spreadsheet            # one area
 npm test -- --grep-invert @mobile          # everything except the mobile tests
 npm test -- --list --grep @smoke           # list what would run, without running it
+```
+
+```sh
+E2E_INCLUDE_IGNORED=1 npm test -- --grep @ignore   # run only the ignored tests
 ```
 
 ## Code quality

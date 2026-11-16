@@ -12,6 +12,8 @@ export default defineConfig({
   // Override per run with `npm test -- --workers=N`.
   workers: 4,
   retries: 1,
+  // Tests tagged @ignore are skipped everywhere. Set E2E_INCLUDE_IGNORED=1 to run them.
+  grepInvert: process.env.E2E_INCLUDE_IGNORED ? undefined : /@ignore/,
   outputDir: '../test-results',
   reporter: [['list'], ['html', { open: 'never', outputFolder: '../playwright-report' }]],
   globalSetup: require.resolve('./global-setup'),
