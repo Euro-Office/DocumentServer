@@ -15,7 +15,7 @@ const cellText = (editorPage: Page) =>
     return info && info.asc_getText ? info.asc_getText() : null;
   }).catch((e: Error) => `error: ${e.message}`);
 
-test.describe('Spreadsheet - add data and save', () => {
+test.describe('Spreadsheet - add data and save', { tag: ['@spreadsheet', '@regression'] }, () => {
   test('entered cells are saved and survive closing and reopening', async ({ page }) => {
     // Reloading can need several attempts, so allow more than the default 60s.
     test.setTimeout(120_000);

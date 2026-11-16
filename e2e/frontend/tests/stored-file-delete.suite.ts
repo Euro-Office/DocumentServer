@@ -38,16 +38,19 @@ export function describeStoredFileDeletion(type: {
   ext: string;
   /** Row class the file list marks this type with: word, cell, slide, pdf. */
   rowClass: string;
+  /** Area tag for this editor: @document, @spreadsheet, @presentation or @pdf. */
+  tag: string;
 }) {
   // Files the test uploaded, removed once the spec is done so a run against a
   // long-lived server (E2E_BASE_URL) does not accumulate them. Normally the
   // test has already deleted it; this covers a run that failed midway.
   const uploadedFiles: string[] = [];
 
-  test.describe(`${type.label} - deleting a stored file`, () => {
+  test.describe(`${type.label} - deleting a stored file`, { tag: ['@regression'] }, () => {
     test.afterAll(({ browser }) => cleanUpStoredFiles(browser, uploadedFiles));
 
-    test(`delete a ${type.noun} from the file list`, async ({ page }) => {
+    // eslint-disable-next-line playwright/valid-test-tags -- tag is passed in by each caller
+    test(`delete a ${type.noun} from the file list`, { tag: type.tag }, async ({ page }) => {
       await page.goto('/example/');
       const fileName = await uploadStoredFile(page, uniqueFileName('delete', type.ext));
       uploadedFiles.push(fileName);

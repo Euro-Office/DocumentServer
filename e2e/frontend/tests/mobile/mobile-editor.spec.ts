@@ -7,9 +7,9 @@ import { test, expect } from '@playwright/test';
 // Visio excluded: create-new has no blank vsdx template (fileExt=vsdx 500s). The build-time
 // verify-deploy.mjs check still gates the visio mobile bundle.
 const MOBILE_EDITOR_TYPES = [
-  { label: 'Document', fileExt: 'docx', canvasSelector: '#id_viewer' },
-  { label: 'Spreadsheet', fileExt: 'xlsx', canvasSelector: '#ws-canvas' },
-  { label: 'Presentation', fileExt: 'pptx', canvasSelector: '#id_viewer' },
+  { label: 'Document', fileExt: 'docx', canvasSelector: '#id_viewer', tag: '@document' },
+  { label: 'Spreadsheet', fileExt: 'xlsx', canvasSelector: '#ws-canvas', tag: '@spreadsheet' },
+  { label: 'Presentation', fileExt: 'pptx', canvasSelector: '#id_viewer', tag: '@presentation' },
 ] as const;
 
 // Fatal errors surface as an f7 dialog or, for LoadingScriptError, a notification — check both.
@@ -19,11 +19,12 @@ const ERROR_SURFACE_SELECTOR = '.dialog.modal-in, .notification.modal-in';
 // Remit: verify the mobile build is present and actually renders a document (the #258 class of
 // failure). Infra faults such as an unresponsive docservice channel are out of scope — the app
 // can go false-ready over a dead channel, which this smoke test deliberately does not catch.
-test.describe('Mobile editor smoke', () => {
+test.describe('Mobile editor smoke', { tag: ['@mobile', '@regression'] }, () => {
   test.use({ viewport: { width: 414, height: 896 } });
 
   for (const editor of MOBILE_EDITOR_TYPES) {
-    test(`${editor.label} mobile editor loads`, async ({ page }) => {
+    // eslint-disable-next-line playwright/valid-test-tags -- tag comes from the table above
+    test(`${editor.label} mobile editor loads`, { tag: editor.tag }, async ({ page }) => {
       // Catches a JS exception thrown after the shell paints (placeholder gone, canvas
       // visible) — exactly the "deploys but breaks at runtime" (#258) class the other
       // assertions below can't see, since they only check DOM state, not JS health.

@@ -19,21 +19,25 @@ const MENU_BAR_TABS = [
   { id: 'view', label: 'View' },
 ] as const;
 
-test.describe('Spreadsheet - create new spreadsheet', () => {
-  test('opens a new spreadsheet with the full menu bar visible', async ({ page }) => {
-    // Opens <baseURL>/example/, clicks the "Spreadsheet" link (matched by the file
-    // type it creates, not by wording or styling) and waits for the editor to load.
-    const { editorPage, frame } = await openNewEditor(page, 'a[href*="fileExt=xlsx"]', /\.xlsx/);
+test.describe(
+  'Spreadsheet - create new spreadsheet',
+  { tag: ['@spreadsheet', '@smoke', '@regression'] },
+  () => {
+    test('opens a new spreadsheet with the full menu bar visible', async ({ page }) => {
+      // Opens <baseURL>/example/, clicks the "Spreadsheet" link (matched by the file
+      // type it creates, not by wording or styling) and waits for the editor to load.
+      const { editorPage, frame } = await openNewEditor(page, 'a[href*="fileExt=xlsx"]', /\.xlsx/);
 
-    // The editor iframe points at the spreadsheet editor app.
-    await expect(editorPage.locator(EDITOR_IFRAME)).toHaveAttribute('src', /spreadsheeteditor/);
+      // The editor iframe points at the spreadsheet editor app.
+      await expect(editorPage.locator(EDITOR_IFRAME)).toHaveAttribute('src', /spreadsheeteditor/);
 
-    // Every expected menu bar tab is visible and shows its label. Each tab
-    // is <a role="tab" id="..."> inside the ribbon tab list.
-    for (const tab of MENU_BAR_TABS) {
-      const menuTab = frame.locator(`a[role="tab"]#${tab.id}`);
-      await expect(menuTab).toBeVisible();
-      await expect(menuTab).toHaveText(tab.label);
-    }
-  });
-});
+      // Every expected menu bar tab is visible and shows its label. Each tab
+      // is <a role="tab" id="..."> inside the ribbon tab list.
+      for (const tab of MENU_BAR_TABS) {
+        const menuTab = frame.locator(`a[role="tab"]#${tab.id}`);
+        await expect(menuTab).toBeVisible();
+        await expect(menuTab).toHaveText(tab.label);
+      }
+    });
+  },
+);

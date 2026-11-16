@@ -9,7 +9,7 @@ const documentText = (editorPage: Page) =>
     .then((text) => String(text).trim())
     .catch((e: Error) => `error: ${e.message}`);
 
-test.describe('PDF form editor - add data and save', () => {
+test.describe('PDF form editor - add data and save', { tag: ['@pdf', '@regression'] }, () => {
   test('typed text is saved and survives closing and reopening', async ({ page }) => {
     test.setTimeout(120_000);
 
