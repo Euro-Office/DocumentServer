@@ -8,6 +8,7 @@ Browser-level end-to-end tests for Euro-Office DocumentServer, built on [Playwri
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Running the tests](#running-the-tests)
+- [Test tags](#test-tags)
 - [Code quality](#code-quality)
 
 ## Repository layout
@@ -102,6 +103,46 @@ $env:E2E_BASE_URL = 'http://localhost:8080'; npm test           # PowerShell
 
 ```sh
 E2E_IMAGE=ghcr.io/euro-office/documentserver:dev E2E_HOST_PORT=9000 npm test
+```
+
+## Test tags
+
+Every test carries tags, so a subset can be selected with `--grep` instead of by file path. Tags are set with Playwright's `tag` option, usually on the `test.describe` (its tests inherit them):
+
+```ts
+test.describe('Document - create new document', { tag: ['@document', '@smoke', '@regression'] }, () => {
+```
+
+| Tag                                                  | Meaning                                                      |
+| ---------------------------------------------------- | ------------------------------------------------------------ |
+| `@document`, `@spreadsheet`, `@presentation`, `@pdf` | Area: the editor the test exercises. Exactly one per test.   |
+| `@mobile`                                            | Extra tag on the mobile-editor tests, next to their area tag |
+| `@smoke`                                             | The fast sanity set, see below                               |
+| `@regression`                                        | The full suite, see below                                    |
+
+### Rules
+
+- Every test has exactly one area tag and `@regression`. Tests that also qualify for the smoke set add `@smoke`.
+- Tag every new test when you write it. Keep to the area names above: do not introduce a second spelling such as `@sheet` or `@pdf-form`.
+
+**`@smoke`** is a fast check that the basics work on a new build or image, run before the full suite.
+
+- Qualifies: a test that opens an editor and confirms it loads, or covers the one core action of an area, such as create-new.
+- Keep it small: at most one or two smoke tests per area. A smoke test must be quick and stable, with no known flakiness and no long multi-step flow.
+- Run it on every build, image or deploy.
+
+**`@regression`** is the full suite, which checks that existing behaviour has not broken. It includes every test, smoke tests too. Run it before a release, after larger changes, and in CI.
+
+### Selecting tests by tag
+
+A combined pattern is matched against the tags in the order they are written on the test, which is area first, then `@smoke`, then `@regression`.
+
+```sh
+npm test -- --grep @smoke                  # quick sanity check
+npm test -- --grep "@document.*@smoke"     # smoke tests for one area (area tag first)
+npm test -- --grep @spreadsheet            # one area
+npm test -- --grep-invert @mobile          # everything except the mobile tests
+npm test -- --list --grep @smoke           # list what would run, without running it
 ```
 
 ## Code quality
