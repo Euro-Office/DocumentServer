@@ -26,6 +26,7 @@ SUPERVISOR_CONF_DIR="/etc/supervisor/conf.d"
 # not recognized falls back to the variable's own default.
 # --------------------------------------------------------------------
 . /usr/local/lib/euro-office/bool.sh
+. /usr/local/lib/euro-office/log-dirs.sh
 require_bool JWT_ENABLED JWT_ENABLED_INBOX JWT_ENABLED_OUTBOX
 normalize_bool JWT_IN_BODY \
   WOPI_ENABLED PLUGINS_ENABLED METRICS_ENABLED GENERATE_FONTS \
@@ -522,6 +523,7 @@ ensure_owner() {
 
 [ "$DB_HOST"   = "localhost" ] && ensure_owner postgres /var/lib/postgresql
 [ "$AMQP_HOST" = "localhost" ] && [ -z "${AMQP_URI:-}" ] && ensure_owner rabbitmq /var/lib/rabbitmq
+ensure_log_dirs "$SUPERVISOR_CONF_DIR"
 ensure_owner ds "$DATA_DIR" "$EO_LOG" "$EO_LIB"
 
 # $DATA_DIR holds the persisted secrets and the repair above is recursive, so
