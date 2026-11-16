@@ -46,15 +46,41 @@ jobs:
       NEXTCLOUD_RELEASES_USER: ${{ secrets.NEXTCLOUD_RELEASES_USER }}
       NEXTCLOUD_RELEASES_TOKEN: ${{ secrets.NEXTCLOUD_RELEASES_TOKEN }}
 
+  # Only the highest stable tag moves :latest and the GitHub "latest"
+  # flag, so a 9.3.x patch tagged after 9.4.0 still publishes but does
+  # not take them over (Euro-Office/release#14).
+  release-info:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      is_latest: ${{ steps.check.outputs.is_latest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/scripts/is-latest.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          is_latest=$(gh api --paginate "repos/$REPO/git/matching-refs/tags/v" --jq '.[].ref | ltrimstr("refs/tags/")' \
+            | .github/scripts/is-latest.sh "$GITHUB_REF_NAME")
+          echo "is_latest=$is_latest" | tee -a "$GITHUB_OUTPUT"
+
   # ─────────────────────────────────────────────────────────────
   # PUBLISH-EURO-OFFICE-IMAGES
   #
   # Merges the arch-specific images into multi-arch manifests:
-  # the sanitised tag, plus :latest for stable tags only.
+  # the sanitised tag, plus :latest for the latest stable tag only.
   # ─────────────────────────────────────────────────────────────
   publish-euro-office-images:
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, release-info]
     permissions:
       contents: read
       packages: write
@@ -72,7 +98,7 @@ jobs:
 
       - name: Create and push multi-arch manifests
         env:
-          IS_STABLE: ${{ needs.build.outputs.is_stable }}
+          IS_LATEST: ${{ needs.release-info.outputs.is_latest }}
           REF: ${{ needs.build.outputs.ref_name }}
         run: |
           REGISTRY="${{ env.REGISTRY }}"
@@ -100,7 +126,7 @@ jobs:
 
           for repo in "${REPOS[@]}"; do
             create_manifest "$repo" "${REF}"
-            if [[ "$IS_STABLE" == "true" ]]; then
+            if [[ "$IS_LATEST" == "true" ]]; then
               create_manifest "$repo" "latest" "${REF}"
             fi
           done
@@ -137,7 +163,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   publish-euro-office-release:
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, release-info]
     permissions:
       actions: read
       contents: write
@@ -166,7 +192,7 @@ jobs:
           REPO: ${{ github.repository }}
           TITLE: Euro-Office Document Server ${{ github.ref_name }}
           PRERELEASE: ${{ needs.build.outputs.is_stable != 'true' }}
-          LATEST: ${{ needs.build.outputs.is_stable == 'true' }}
+          LATEST: ${{ needs.release-info.outputs.is_latest == 'true' }}
         run: |
           set -euo pipefail
           flags=(--title "$TITLE" --notes-file notes.md --prerelease="$PRERELEASE" --latest="$LATEST")
@@ -224,7 +250,7 @@ jobs:
   # PUBLISH - nextcloud-office image to ghcr.io/nextcloud-releases
   #
   # Merges the per-arch images the build legs pushed into one multi-arch
-  # tag (<tag>), and moves :latest on stable tags only.
+  # tag (<tag>), and moves :latest on the latest stable tag only.
   #
   # GITHUB_TOKEN cannot write to another org, and GHCR accepts no GitHub
   # App tokens, hence the classic PAT NEXTCLOUD_RELEASES_TOKEN
@@ -233,7 +259,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   publish-nextcloud-images:
     runs-on: ubuntu-latest
-    needs: [build]
+    needs: [build, release-info]
     permissions: {}
     steps:
       - name: Set up Docker Buildx
@@ -250,11 +276,11 @@ jobs:
         env:
           IMAGE:     ${{ env.NEXTCLOUD_RELEASES_IMAGE }}
           TAG:       ${{ needs.build.outputs.ref_name }}
-          IS_STABLE: ${{ needs.build.outputs.is_stable }}
+          IS_LATEST: ${{ needs.release-info.outputs.is_latest }}
         run: |
           set -euo pipefail
           tags=(-t "$IMAGE:$TAG")
-          if [[ "$IS_STABLE" == "true" ]]; then
+          if [[ "$IS_LATEST" == "true" ]]; then
             tags+=(-t "$IMAGE:latest")
           fi
           docker buildx imagetools create "${tags[@]}" \
@@ -269,7 +295,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   publish-nextcloud-github-release:
     runs-on: ubuntu-latest
-    needs: [build, publish-nextcloud-images]
+    needs: [build, release-info, publish-nextcloud-images]
     permissions:
       actions: read
     steps:
@@ -307,7 +333,7 @@ jobs:
           REPO: ${{ env.NEXTCLOUD_RELEASES_REPO }}
           TITLE: Nextcloud Office Document Server ${{ github.ref_name }}
           PRERELEASE: ${{ needs.build.outputs.is_stable != 'true' }}
-          LATEST: ${{ needs.build.outputs.is_stable == 'true' }}
+          LATEST: ${{ needs.release-info.outputs.is_latest == 'true' }}
         run: |
           set -euo pipefail
           flags=(--title "$TITLE" --notes-file notes.md --prerelease="$PRERELEASE" --latest="$LATEST")
