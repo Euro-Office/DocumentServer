@@ -52,7 +52,7 @@ RUN apt-get update && \
     apt-get upgrade -yq && \
     ACCEPT_EULA=Y apt-get install -yq --no-install-recommends \
         postgresql postgresql-client redis-server rabbitmq-server \
-        nginx sudo gdb nginx-extras supervisor jq util-linux \
+        nginx sudo nginx-extras supervisor jq util-linux \
         netcat-openbsd xxd openssl tini && \
     apt-get install -yq \
         adduser ca-certificates certbot coreutils curl libasound2t64 \
