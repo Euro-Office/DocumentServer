@@ -192,8 +192,20 @@ fi
 #
 # Booleans are coerced via string comparison ($var == "true") so malformed
 # input degrades to false rather than crashing jq.
+#
+# Secrets come in through jq's environment ($ENV), not through --arg: the
+# arguments of a process can be read by other users of the host and end up
+# in process audit logs, its environment can't and doesn't.
 # --------------------------------------------------------------------
-jq_filter='.'
+jq_filter='$ENV.EO_JQ_JWT_SECRET as $jwtSecret
+  | $ENV.EO_JQ_JWT_SECRET_INBOX as $jwtSecretInbox
+  | $ENV.EO_JQ_JWT_SECRET_OUTBOX as $jwtSecretOutbox
+  | $ENV.EO_JQ_DB_PASS as $dbPass
+  | $ENV.EO_JQ_REDIS_PASS as $redisPass
+  | $ENV.EO_JQ_AMQP_URI as $amqpUri
+  | $ENV.EO_JQ_WOPI_PRIV as $wopiPriv
+  | $ENV.EO_JQ_SECURE_LINK_SECRET as $secureLinkSecret
+  | .'
 
 jq_set() { jq_filter="$jq_filter | $*"; }
 
@@ -247,6 +259,10 @@ if [ "$WOPI_ENABLED" = "true" ]; then
   jq_set '.wopi.exponentOld   = ($wopiExp | tonumber? // $wopiExp)'
 fi
 
+# Secret of the signed links to cached files. Replaces the whole storage
+# block, as documentserver-update-securelink.sh did.
+jq_set '.storage = { "fs": { "secretString": $secureLinkSecret } }'
+
 # Request filtering
 [ "$USE_UNAUTHORIZED_STORAGE" = "true" ] && \
   jq_set '.services.CoAuthoring.requestDefaults.rejectUnauthorized = false'
@@ -296,14 +312,19 @@ case "$AMQP_VHOST_PATH" in
 esac
 AMQP_URI_VALUE="${AMQP_URI:-amqp://${AMQP_USER:-guest}:${AMQP_PWD:-guest}@${AMQP_HOST}:${AMQP_PORT}${AMQP_VHOST_PATH}}"
 
+EO_JQ_JWT_SECRET="$JWT_SECRET" \
+EO_JQ_JWT_SECRET_INBOX="$JWT_SECRET_INBOX" \
+EO_JQ_JWT_SECRET_OUTBOX="$JWT_SECRET_OUTBOX" \
+EO_JQ_DB_PASS="${DB_PWD:-}" \
+EO_JQ_REDIS_PASS="${REDIS_SERVER_PASS:-}" \
+EO_JQ_AMQP_URI="$AMQP_URI_VALUE" \
+EO_JQ_WOPI_PRIV="$WOPI_PRIVATE_KEY_DATA" \
+EO_JQ_SECURE_LINK_SECRET="$SECURE_LINK_SECRET" \
 jq \
   --arg jwtEnabled       "$JWT_ENABLED" \
   --arg jwtEnabledInbox  "$JWT_ENABLED_INBOX" \
   --arg jwtEnabledOutbox "$JWT_ENABLED_OUTBOX" \
   --arg jwtInBody        "$JWT_IN_BODY" \
-  --arg jwtSecret        "$JWT_SECRET" \
-  --arg jwtSecretInbox   "$JWT_SECRET_INBOX" \
-  --arg jwtSecretOutbox  "$JWT_SECRET_OUTBOX" \
   --arg jwtHeaderInbox   "$JWT_HEADER_INBOX" \
   --arg jwtHeaderOutbox  "$JWT_HEADER_OUTBOX" \
   --arg dbType           "$DB_TYPE" \
@@ -311,15 +332,11 @@ jq \
   --arg dbPort           "$DB_PORT" \
   --arg dbName           "$DB_NAME" \
   --arg dbUser           "$DB_USER" \
-  --arg dbPass           "${DB_PWD:-}" \
   --arg redisHost        "$REDIS_SERVER_HOST" \
   --arg redisPort        "$REDIS_SERVER_PORT" \
   --arg redisUser        "${REDIS_SERVER_USER:-}" \
-  --arg redisPass        "${REDIS_SERVER_PASS:-}" \
   --arg redisDb          "${REDIS_SERVER_DB:-}" \
-  --arg amqpUri          "$AMQP_URI_VALUE" \
   --arg wopiEnabled      "$WOPI_ENABLED" \
-  --arg wopiPriv         "$WOPI_PRIVATE_KEY_DATA" \
   --arg wopiPub          "$WOPI_PUBLIC_KEY_DATA" \
   --arg wopiMod          "$WOPI_MODULUS" \
   --arg wopiExp          "${WOPI_EXPONENT:-65537}" \
@@ -332,6 +349,8 @@ jq \
   "$jq_filter" \
   "$CONFIG_FILE" > "${CONFIG_FILE}.tmp"
 mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+# The services read this file as ds (documentserver-update-securelink.sh used to do this).
+chown ds:ds "$CONFIG_FILE" 2>/dev/null || true
 
 # --------------------------------------------------------------------
 # log4js level
@@ -388,9 +407,13 @@ if [ ! -f /proc/net/if_inet6 ] && [ -f "$NGINX_DS_CONF" ]; then
   sed -i '/listen[[:space:]]\+\[::[0-9]*\].\+/d' "$NGINX_DS_CONF"
 fi
 
-# Apply SECURE_LINK_SECRET via the bundled helper (also patches nginx ds.conf)
-if command -v documentserver-update-securelink.sh >/dev/null 2>&1; then
-  documentserver-update-securelink.sh -s "$SECURE_LINK_SECRET" -r false || true
+# Give nginx the secret of the signed links; $CONFIG_FILE got it above.
+# documentserver-update-securelink.sh is not used here because it takes the
+# secret as an argument. sed reads its script from stdin for the same reason
+# (printf is a shell builtin, so the secret is in no argument list).
+if [ -f "$NGINX_DS_CONF" ]; then
+  printf '%s\n' "s,\(set \+\$secure_link_secret\).*,\1 ${SECURE_LINK_SECRET};," \
+    | sed -i -f /dev/stdin "$NGINX_DS_CONF" || true
 fi
 
 # --------------------------------------------------------------------
@@ -417,8 +440,7 @@ enable_supervisor_program() {
 # JWT_ENABLED=false also disables signing in the example.
 # --------------------------------------------------------------------
 if [ -d "$EXAMPLE_CONF_DIR" ]; then
-  jq -n \
-    --arg secret      "$JWT_SECRET" \
+  EO_JQ_JWT_SECRET="$JWT_SECRET" jq -n \
     --arg header      "$JWT_HEADER" \
     --arg jwtEnabled  "$JWT_ENABLED" \
     --arg maxFileSize "$MAX_FILE_SIZE" \
@@ -429,7 +451,7 @@ if [ -d "$EXAMPLE_CONF_DIR" ]; then
         "maxFileSize": ($maxFileSize | tonumber? // $maxFileSize),
         "token": {
           "enable": ($jwtEnabled == "true"),
-          "secret": $secret,
+          "secret": $ENV.EO_JQ_JWT_SECRET,
           "authorizationHeader": $header
         }
       }

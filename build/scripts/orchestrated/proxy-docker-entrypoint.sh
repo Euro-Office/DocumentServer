@@ -19,7 +19,10 @@ fi
 
 envsubst < /tmp/proxy_nginx/includes/http-upstream.conf > /tmp/http-upstream.conf
 envsubst < /etc/nginx/includes/ds-common.conf | tee /tmp/proxy_nginx/includes/ds-common.conf > /dev/null
-sed "s,\(set \+\$secure_link_secret\).*,\1 "${SECURE_LINK_SECRET:-verysecretstring}";," -i /tmp/proxy_nginx/conf.d/ds.conf
+# sed and htpasswd get secrets on stdin, not as arguments: the arguments of a
+# process can be read by other users of the host and end up in audit logs.
+printf '%s\n' "s,\(set \+\$secure_link_secret\).*,\1 ${SECURE_LINK_SECRET:-verysecretstring};," \
+  | sed -f /dev/stdin -i /tmp/proxy_nginx/conf.d/ds.conf
 sed "s/\(client_max_body_size\).*/\1 $NGINX_CLIENT_MAX_BODY_SIZE;/" -i /tmp/proxy_nginx/includes/ds-common.conf
 
 if [[ ! -f "/proc/net/if_inet6" ]]; then
@@ -53,7 +56,7 @@ if [[ -n "$INFO_ALLOWED_IP" ]]; then
 fi
 
 if [[ -n "$INFO_ALLOWED_USER" ]]; then
-  htpasswd -c -b /tmp/auth "${INFO_ALLOWED_USER}" "${INFO_ALLOWED_PASSWORD:-password}"
+  printf '%s\n' "${INFO_ALLOWED_PASSWORD:-password}" | htpasswd -c -i /tmp/auth "${INFO_ALLOWED_USER}"
   sed -i '/(info)/a\  auth_basic \"Authentication Required\"\;' /tmp/proxy_nginx/includes/ds-docservice.conf
   sed -i '/auth_basic/a\  auth_basic_user_file \/tmp\/auth\;' /tmp/proxy_nginx/includes/ds-docservice.conf
 fi
