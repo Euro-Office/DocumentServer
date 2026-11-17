@@ -142,12 +142,11 @@ export async function uploadStoredFile(page: Page, fileName: string): Promise<st
 }
 
 /**
- * The known text each fixture document under `frontend/fixtures/` holds — the
- * whole of its content, so a test can compare the editor against it exactly
- * rather than looking for a substring.
+ * The whole of the text each `frontend/fixtures/` document holds, so a test can
+ * compare the editor against it exactly rather than by substring.
  *
  * Kept in step with FIXTURE_TEXT in `frontend/fixtures/make-fixtures.py`, which
- * writes those files. Changing a string here means rebuilding the fixtures.
+ * writes those files. Change a string here and you must rebuild them.
  */
 export const FIXTURE_TEXT = {
   docx: 'Euro-Office e2e fixture paragraph',
@@ -161,16 +160,9 @@ export type FixtureExt = keyof typeof FIXTURE_TEXT;
  * Upload one of this repo's fixture documents under a name of the caller's
  * choosing, and return the name it was stored as.
  *
- * Unlike uploadStoredFile, which copies a sample the server already ships, this
- * sends a file whose entire content we know — which is what lets the open-*
- * specs assert that what the editor shows *is* the fixture, not merely that
- * something opened. The fixtures are written from raw OOXML rather than saved
- * out of an editor, so a fault in our own writer cannot hide inside the oracle.
- *
- * Reads from disk rather than over HTTP: these files are in the repo, not on
- * the server. The upload itself goes over page.request for the same reason
- * uploadStoredFile does — this is fixture setup, and driving the `#fileupload`
- * input would make the test fail for reasons unrelated to opening a file.
+ * uploadStoredFile copies a sample the server already ships; this sends a file
+ * whose entire content we know, which is what lets the open-* specs assert the
+ * editor shows the fixture rather than merely that something opened.
  */
 export async function uploadFixtureFile(
   page: Page,
@@ -181,9 +173,9 @@ export async function uploadFixtureFile(
   return postUpload(page, fileName, SAMPLE_MIME[ext], buffer);
 }
 
-/** POST a file to the example app's upload endpoint and return the name it
- * stored it under — which is the one the file list is keyed by, and need not be
- * the name we asked for. */
+/** POST a file to the upload endpoint. Returns the name the app stored it
+ * under, which is what the file list is keyed by and need not be the one asked
+ * for. */
 async function postUpload(
   page: Page,
   fileName: string,

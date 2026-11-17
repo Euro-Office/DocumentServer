@@ -12,11 +12,9 @@ The packages are written from raw XML rather than saved out of the editor on
 purpose. These files are the oracle the open-* specs compare the editor against,
 so a fault in our own writer must not be able to bake itself into them.
 
-Not to be confused with `e2e/perf/gen-workbooks.ts`, which also writes xlsx from
-raw XML. That one builds large synthetic workbooks to time the open path; this
-one builds the smallest possible file of each of three types to check content is
-read back correctly. The only real overlap is the zip container, which is
-stdlib here (`zipfile`) and hand-rolled there because Node has no zip writer.
+Not `e2e/perf/gen-workbooks.ts`, which also writes xlsx from raw XML: that one
+builds large workbooks to time the open path. The only overlap is the zip
+container.
 
 Run after changing any of the XML here, then re-run the open-* specs:
 

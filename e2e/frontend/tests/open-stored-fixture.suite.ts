@@ -12,33 +12,20 @@ import {
   uploadFixtureFile,
 } from './helpers';
 
-// Defined here rather than imported, as in the three create-* specs: the
-// iframe is the thing under test in the "right editor" assertion below, so it
-// stays visible in the file that asserts on it.
 const EDITOR_IFRAME = 'iframe[name="frameEditor"]';
 
 /**
  * The P1 "open an existing file" scenario, shared by the three open-*.spec.ts
- * files: a file that arrived on the server from outside is listed, opens in the
- * editor that matches its type, and shows the content it was uploaded with.
+ * files: an uploaded file is listed under its type, opens in the matching
+ * editor, and shows the content it was uploaded with.
  *
- * This is the other half of the stored-file route (`?fileName=`) from
- * edit-*.spec.ts. Those create an *empty* file through the app's own create-new
- * route and then type into it, so they never exercise reading real content off
- * a file the app did not write. Here the file comes from
- * `frontend/fixtures/fixture.{docx,xlsx,pptx}` — raw OOXML built by
- * `make-fixtures.py`, holding one known string each — so the content the editor
- * shows can be compared against a value no part of the server produced. A fault
- * that corrupted every save would leave the edit-* specs green and fail these.
+ * The fixture is the point. Every other spec reads back content the app itself
+ * wrote, so a fault that mangled content consistently would sit on both sides
+ * of the comparison and stay invisible. These compare against
+ * `frontend/fixtures/fixture.{docx,xlsx,pptx}`, which the server never touched.
  *
  * Out of scope (P2/P3): formatting, images, multi-page and multi-sheet
- * fixtures, malformed files, and the PDF form editor — the acceptance criteria
- * name docx, xlsx and pptx.
- *
- * Uploads under a generated unique name rather than using the create-new route,
- * which hands out the lowest free name and can therefore collide with a spec in
- * a parallel worker. Nothing here asserts on the list as a whole, only on the
- * row it created: the store is server-side and shared by every spec.
+ * fixtures, malformed files, and the PDF form editor.
  */
 export function describeOpeningStoredFixture(type: {
   /** Editor name for the describe title, e.g. `Spreadsheet editor`. */
@@ -49,36 +36,30 @@ export function describeOpeningStoredFixture(type: {
   ext: FixtureExt;
   /** Row class the file list marks this type with: word, cell, slide. */
   rowClass: string;
-  /** Area tag for this editor: @document, @spreadsheet or @presentation. */
+  /** Area tag: @document, @spreadsheet or @presentation. */
   tag: string;
-  /** Matches the editor tab's URL, confirming the file kept its type. */
+  /** Matches the editor tab's URL. */
   urlExt: RegExp;
   /** Matches the editor iframe's src: the app that actually loaded. */
   editorApp: RegExp;
-  /**
-   * Read back the whole of the fixture's content, as that editor exposes it.
-   * Called once the editor is ready; may press keys. Polled by the caller, so
-   * it must tolerate being run more than once.
-   */
+  /** Read the whole of the fixture's content. Polled, so it must be repeatable. */
   readContent: (editorPage: Page, frame: FrameLocator) => Promise<string>;
 }) {
-  // Files the test uploaded, removed once the spec is done so a run against a
-  // long-lived server (E2E_BASE_URL) does not accumulate one per run. afterAll
-  // rather than afterEach — see cleanUpStoredFiles.
+  // Removed once the spec is done, so a run against a long-lived server
+  // (E2E_BASE_URL) does not accumulate one per run. afterAll, not afterEach —
+  // see cleanUpStoredFiles.
   const uploadedFiles: string[] = [];
 
-  test.describe(`${type.label} - opening an existing file`, { tag: ['@regression'] }, () => {
-    test.afterAll(({ browser }) => cleanUpStoredFiles(browser, uploadedFiles));
+  // Area tag first, then @regression, as the README's --grep examples assume.
+  test.describe(
+    `${type.label} - opening an existing file`,
+    { tag: [type.tag, '@regression'] },
+    () => {
+      test.afterAll(({ browser }) => cleanUpStoredFiles(browser, uploadedFiles));
 
-    // Not @smoke: the smoke set is capped at one or two tests per area and the
-    // create-new tests already hold those slots, and this is a multi-step flow
-    // (upload, list, open, read) rather than the quick load check smoke wants.
-    // eslint-disable-next-line playwright/valid-test-tags -- tag is passed in by each caller
-    test(
-      `open an uploaded ${type.noun} and read its content`,
-      { tag: type.tag },
-      async ({ page }) => {
+      test(`open an uploaded ${type.noun} and read its content`, async ({ page }) => {
         await page.goto('/example/');
+        // A name we chose ourselves, so no parallel worker can be handed it.
         const fileName = await uploadFixtureFile(page, type.ext, uniqueFileName('open', type.ext));
         uploadedFiles.push(fileName);
 
@@ -86,32 +67,29 @@ export function describeOpeningStoredFixture(type: {
           await page.goto('/example/');
           const row = storedFileRow(page, fileName);
           await expect(row).toHaveCount(1);
-          // The row class is how the list reports the type it detected, so this
-          // is the server's own reading of the file we sent.
+          // The row class is the server's own reading of the type.
           await expect(row.locator(`a.stored-edit.${type.rowClass}`)).toHaveCount(1);
         });
 
         const { editorPage, frame } = await openStoredEditor(page, fileName, type.urlExt);
 
         await test.step(`it opens in the ${type.noun} editor`, async () => {
-          // Compared as a parsed parameter rather than a URL pattern: generated
-          // names contain regex metacharacters.
+          // Parsed, not matched as a URL pattern: generated names contain regex
+          // metacharacters.
           expect(new URL(editorPage.url()).searchParams.get('fileName')).toBe(fileName);
-          // The URL extension alone would not catch the wrong editor being
-          // handed the file; the iframe src is the app that actually loaded.
+          // The URL extension would not catch the wrong editor being handed the
+          // file; the iframe src is the app that actually loaded.
           await expect(editorPage.locator(EDITOR_IFRAME)).toHaveAttribute('src', type.editorApp);
         });
 
         await test.step('the content is what the fixture holds', async () => {
-          // toPass, not a bare assertion: the editor can rebuild its iframe
-          // shortly after opening, so the focus-select-read sequence is retried
-          // as a unit. Equality, not a substring — the fixture's string is the
-          // whole of its content, so a truncated or padded read must fail.
+          // toPass: the editor can rebuild its iframe shortly after opening, so
+          // focus, select and read are retried as a unit.
           await expect(async () => {
             expect(await type.readContent(editorPage, frame)).toBe(FIXTURE_TEXT[type.ext]);
           }).toPass({ timeout: 30_000 });
         });
-      },
-    );
-  });
+      });
+    },
+  );
 }

@@ -30,12 +30,8 @@ e2e/
 │       ├── example-page.spec.ts
 │       ├── stored-file-delete.suite.ts   The deletion scenario the four delete-* specs share
 │       ├── open-stored-fixture.suite.ts  The scenario the three open-* specs share
-│       └── helpers.ts         Shared openNewEditor, editorApi, downloadStoredFile, saveAndReopen;
-│                              the stored-file helpers openStoredEditor, createStoredFile,
-│                              uploadStoredFile, uploadFixtureFile, uniqueFileName,
-│                              deleteStoredFile, cleanUpStoredFiles; and the per-editor content
-│                              readers readDocumentText, selectCell/selectedCellText,
-│                              focusShape/selectShapeText/readShape
+│       └── helpers.ts         Shared editor, stored-file, fixture-upload and content-reading
+│                              helpers used by every spec
 ├── eslint.config.mjs          ESLint rules (typescript-eslint + Playwright plugin)
 ├── .prettierrc.json           Prettier rules
 ├── .editorconfig              Indentation and line endings
@@ -48,14 +44,12 @@ server (`?fileName=`), reached by clicking it in "Your documents".
 
 ### Fixtures
 
-The `open-*` specs upload a file from `frontend/fixtures/` and then check that
-the editor shows exactly what is in it. Each fixture is the smallest valid
-OOXML package of its type holding one known string, and
-`frontend/fixtures/make-fixtures.py` writes it from raw XML rather than saving
-it out of an editor — these files are the oracle, so a fault in our own writer
-must not be able to bake itself into them. The expected strings are duplicated,
-deliberately, in `FIXTURE_TEXT` in both that script and `tests/helpers.ts`;
-change one and you must change the other and rebuild:
+The `open-*` specs upload a file from `frontend/fixtures/` and check the editor
+shows exactly what is in it. Each fixture is the smallest valid OOXML package of
+its type holding one known string. `make-fixtures.py` writes them from raw XML
+rather than saving them out of an editor, so a fault in our own writer cannot
+bake itself into the oracle. The strings live in `FIXTURE_TEXT` in both that
+script and `tests/helpers.ts`; change one, change the other, then rebuild:
 
 ```sh
 python3 -I frontend/fixtures/make-fixtures.py
