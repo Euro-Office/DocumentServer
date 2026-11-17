@@ -7,8 +7,11 @@ set -e
 EO_ROOT="${EO_ROOT:-/var/www/euro-office/documentserver}"
 EO_LOG="${EO_LOG:-/var/log/euro-office/documentserver}"
 EO_CONF="${EO_CONF:-/etc/euro-office/documentserver}"
-EO_LIB="${EO_LIB:-/var/lib/euro-office/documentserver}"
-DATA_DIR="/var/www/euro-office/Data"
+# A branded image (e.g. nextcloud-office) installs under its own name and
+# sets COMPANY_NAME_LOW, so derive the paths it does not set itself.
+EO_LIB="${EO_LIB:-/var/lib/${COMPANY_NAME_LOW:-euro-office}/documentserver}"
+DATA_DIR="/var/www/${COMPANY_NAME_LOW:-euro-office}/Data"
+LEGACY_DATA_DIR="/var/www/euro-office/Data"
 PRIVATE_DIR="${DATA_DIR}/.private"
 CONFIG_FILE="${EO_CONF}/local.json"
 LOG4JS_CONFIG="${EO_CONF}/log4js/production.json"
@@ -26,6 +29,7 @@ SUPERVISOR_CONF_DIR="/etc/supervisor/conf.d"
 # not recognized falls back to the variable's own default.
 # --------------------------------------------------------------------
 . /usr/local/lib/euro-office/bool.sh
+. /usr/local/lib/euro-office/log-dirs.sh
 require_bool JWT_ENABLED JWT_ENABLED_INBOX JWT_ENABLED_OUTBOX
 normalize_bool JWT_IN_BODY \
   WOPI_ENABLED PLUGINS_ENABLED METRICS_ENABLED GENERATE_FONTS \
@@ -106,6 +110,9 @@ deprecated_var DB_PASSWORD DB_PWD
 # --------------------------------------------------------------------
 # Persisted secrets under $DATA_DIR/.private (volume-mountable).
 # --------------------------------------------------------------------
+if [ "$DATA_DIR" != "$LEGACY_DATA_DIR" ] && [ -d "${LEGACY_DATA_DIR}/.private" ]; then
+  echo "WARNING: ${LEGACY_DATA_DIR} is no longer read by this image. Mount that volume at ${DATA_DIR} instead, or generated secrets are regenerated." >&2
+fi
 mkdir -p "$PRIVATE_DIR"
 chmod 700 "$PRIVATE_DIR" 2>/dev/null || true
 
@@ -522,6 +529,7 @@ ensure_owner() {
 
 [ "$DB_HOST"   = "localhost" ] && ensure_owner postgres /var/lib/postgresql
 [ "$AMQP_HOST" = "localhost" ] && [ -z "${AMQP_URI:-}" ] && ensure_owner rabbitmq /var/lib/rabbitmq
+ensure_log_dirs "$SUPERVISOR_CONF_DIR"
 ensure_owner ds "$DATA_DIR" "$EO_LOG" "$EO_LIB"
 
 # $DATA_DIR holds the persisted secrets and the repair above is recursive, so
