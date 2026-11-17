@@ -47,7 +47,6 @@ dnf install -y \
   redis rabbitmq-server \
   nginx supervisor \
   curl sudo ca-certificates \
-  xorg-x11-server-Xvfb \
   liberation-mono-fonts \
   logrotate openssl cabextract xdg-utils
 
