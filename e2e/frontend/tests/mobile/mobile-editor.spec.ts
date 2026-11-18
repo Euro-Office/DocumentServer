@@ -4,8 +4,8 @@ import { test, expect } from '@playwright/test';
 // PDF excluded: with ?type=mobile, api.js coerces appType to 'word', so a .pdf loads the same
 // documenteditor/mobile bundle as docx — there is no PDF-specific mobile path to smoke, and PDF
 // was not in the #258 regression set. The Document case already covers that bundle.
-// Visio excluded: create-new has no blank vsdx template (fileExt=vsdx 500s). The build-time
-// verify-deploy.mjs check still gates the visio mobile bundle.
+// Visio excluded: create-new has no blank vsdx template (fileExt=vsdx 500s). visio/open-visio.spec.ts
+// covers the visio mobile bundle by uploading a fixture instead.
 const MOBILE_EDITOR_TYPES = [
   { label: 'Document', fileExt: 'docx', canvasSelector: '#id_viewer', tag: '@document' },
   { label: 'Spreadsheet', fileExt: 'xlsx', canvasSelector: '#ws-canvas', tag: '@spreadsheet' },
