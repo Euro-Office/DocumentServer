@@ -61,7 +61,7 @@ test.describe(
     test('an edit survives closing and reopening the spreadsheet', async ({ page }) => {
       // Sized from the step timeouts inside, not the run time; see
       // edit-document.spec.ts.
-      test.setTimeout(270_000);
+      test.setTimeout(360_000);
       const fileName = await createStoredFile(page, newFileLink('xlsx'), XLSX);
       createdFiles.push(fileName);
       const { editorPage, frame } = await openStoredEditor(page, fileName, XLSX);

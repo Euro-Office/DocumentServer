@@ -19,8 +19,12 @@ async function waitForEditorReady(editorPage: Page, urlExt: RegExp) {
   const editorIframe = editorPage.locator(EDITOR_IFRAME);
   await expect(editorIframe).toBeAttached({ timeout: 15_000 });
 
+  // 60 s, not 30 s: the iframe attaches quickly, but the document behind it has
+  // to be converted and loaded, and the first opens of a run pay for a cold
+  // editor bundle while three other workers do the same. 30 s expired on CI for
+  // tests that then passed in seconds later in the same run.
   const frame = editorPage.frameLocator(EDITOR_IFRAME);
-  await expect(frame.locator('#loading-mask')).toBeHidden({ timeout: 30_000 });
+  await expect(frame.locator('#loading-mask')).toBeHidden({ timeout: 60_000 });
 
   await frame.locator('#editor_sdk').click();
   return frame;
@@ -396,7 +400,8 @@ export async function saveAndReopen(page: Page, editorPage: Page, before: Buffer
   await reopened.goto(editorUrl);
   await expect(reopened.locator(EDITOR_IFRAME)).toBeAttached({ timeout: 15_000 });
   const frame = reopened.frameLocator(EDITOR_IFRAME);
-  await expect(frame.locator('#loading-mask')).toBeHidden({ timeout: 30_000 });
+  // Same budget as waitForEditorReady, for the same reason.
+  await expect(frame.locator('#loading-mask')).toBeHidden({ timeout: 60_000 });
   return { editorPage: reopened, frame };
 }
 

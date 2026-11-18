@@ -67,11 +67,11 @@ test.describe(
     test('an edit survives closing and reopening the document', async ({ page }) => {
       // The test is long because the save callback only fires once the tab
       // closes. The budget is sized from the step timeouts inside it rather than
-      // from the ~15 s a healthy run takes: create 45 s + open 45 s + title 30 s
-      // + storage poll 60 s + reopen 45 s + read-back 30 s = 255 s. A tighter
+      // from the ~15 s a healthy run takes: create 75 s + open 75 s + title 30 s
+      // + storage poll 60 s + reopen 75 s + read-back 30 s = 345 s. A tighter
       // budget would fire first on a loaded server and report a generic "test
       // timeout" instead of naming the step that was too slow.
-      test.setTimeout(270_000);
+      test.setTimeout(360_000);
       const fileName = await createStoredFile(page, newFileLink('docx'), DOCX);
       createdFiles.push(fileName);
       const { editorPage } = await openStoredEditor(page, fileName, DOCX);
