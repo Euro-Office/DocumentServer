@@ -142,6 +142,15 @@ if [ -z "${SECURE_LINK_SECRET:-}" ]; then
     chmod 600 "$SECURE_LINK_SECRET_FILE"
   fi
 fi
+# The secret ends up in nginx's "set $secure_link_secret ...;" line through sed.
+# A backslash, comma, &, ;, #, $, quote, brace or whitespace there breaks that
+# line, so every download fails while /healthcheck still reports OK.
+case "$SECURE_LINK_SECRET" in
+  *[!A-Za-z0-9._~+=/:@%!*^-]*)
+    echo "ERROR: SECURE_LINK_SECRET may only contain letters, digits and . _ ~ + = / : @ % ! * ^ -" >&2
+    exit 1
+    ;;
+esac
 
 # --------------------------------------------------------------------
 # WOPI keypair (only generate/read when WOPI_ENABLED=true).

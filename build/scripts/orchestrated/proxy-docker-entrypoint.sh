@@ -19,6 +19,14 @@ fi
 
 envsubst < /tmp/proxy_nginx/includes/http-upstream.conf > /tmp/http-upstream.conf
 envsubst < /etc/nginx/includes/ds-common.conf | tee /tmp/proxy_nginx/includes/ds-common.conf > /dev/null
+# The secret ends up in nginx's "set $secure_link_secret ...;" line through sed;
+# characters such as a backslash, comma, ; or whitespace would break that line.
+case "${SECURE_LINK_SECRET:-}" in
+  *[!A-Za-z0-9._~+=/:@%!*^-]*)
+    echo "ERROR: SECURE_LINK_SECRET may only contain letters, digits and . _ ~ + = / : @ % ! * ^ -" >&2
+    exit 1
+    ;;
+esac
 # sed and htpasswd get secrets on stdin, not as arguments: the arguments of a
 # process can be read by other users of the host and end up in audit logs.
 printf '%s\n' "s,\(set \+\$secure_link_secret\).*,\1 ${SECURE_LINK_SECRET:-verysecretstring};," \
