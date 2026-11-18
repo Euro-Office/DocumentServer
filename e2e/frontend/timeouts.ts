@@ -31,6 +31,16 @@ export const STORED_FILE_SAVED = 60_000;
 const TEST_SLACK = 30_000;
 export const TEST_TIMEOUT = 2 * (EDITOR_IFRAME_ATTACH + EDITOR_LOAD) + TEST_SLACK;
 
+// A users-menu test opens two editors (one each for two co-authors), then
+// retries the setup of the co-edit, the click and a check of the result while
+// the co-author's cursor reaches the other editor.
+export const USERS_MENU_RETRY = 30_000;
+export const USERS_MENU_TEST_TIMEOUT =
+  2 * (EDITOR_IFRAME_ATTACH + EDITOR_LOAD) + 3 * USERS_MENU_RETRY + TEST_SLACK;
+// The late-join test opens three editors and retries five steps.
+export const USERS_MENU_JOIN_TEST_TIMEOUT =
+  3 * (EDITOR_IFRAME_ATTACH + EDITOR_LOAD) + 5 * USERS_MENU_RETRY + TEST_SLACK;
+
 // How often a stored file is read while checking that it does not change.
 export const STORED_FILE_POLL_INTERVAL = 1_000;
 
