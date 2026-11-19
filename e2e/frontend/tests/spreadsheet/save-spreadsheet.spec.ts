@@ -17,8 +17,9 @@ const cellText = (editorPage: Page) =>
 
 test.describe('Spreadsheet - add data and save', { tag: ['@spreadsheet', '@regression'] }, () => {
   test('entered cells are saved and survive closing and reopening', async ({ page }) => {
-    // Reloading can need several attempts, so allow more than the default 60s.
-    test.setTimeout(120_000);
+    // One editor open (75 s) plus the save round trip: storage poll 60 s and a
+    // reopen at 75 s. See edit-document.spec.ts for how these are sized.
+    test.setTimeout(270_000);
 
     // 1. Open the example page, click "Spreadsheet" (it has no id, so it is
     //    found by its title) and wait until the new .xlsx editor has finished

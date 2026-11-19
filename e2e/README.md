@@ -20,17 +20,18 @@ e2e/
 │   ├── constants.ts           Host port, container name, default base URL
 │   ├── global-setup.ts        Starts the Docker container, waits for readiness
 │   ├── global-teardown.ts     Removes the container
+│   ├── fixtures/              fixture.docx/.xlsx/.pptx, and make-fixtures.py which writes them
 │   └── tests/
-│       ├── document/          create-, save-, edit-, delete-document, document-editing
-│       ├── spreadsheet/       create-, save-, edit-, delete-spreadsheet, spreadsheet-formula
-│       ├── presentation/      create-, save-, edit-, delete-presentation, presentation-slides
+│       ├── document/          create-, save-, edit-, open-, delete-document, document-editing
+│       ├── spreadsheet/       create-, save-, edit-, open-, delete-spreadsheet, spreadsheet-formula
+│       ├── presentation/      create-, save-, edit-, open-, delete-presentation, presentation-slides
 │       ├── pdf-form/          create-, save-, edit-, delete-pdf-form
 │       ├── mobile/            mobile-editor
 │       ├── example-page.spec.ts
-│       ├── stored-file-delete.suite.ts  The deletion scenario the four delete-* specs share
-│       └── helpers.ts         Shared openNewEditor, editorApi, downloadStoredFile, saveAndReopen,
-│                              and the stored-file helpers openStoredEditor, createStoredFile,
-│                              uploadStoredFile, uniqueFileName, deleteStoredFile, cleanUpStoredFiles
+│       ├── stored-file-delete.suite.ts   The deletion scenario the four delete-* specs share
+│       ├── open-stored-fixture.suite.ts  The scenario the three open-* specs share
+│       └── helpers.ts         Shared editor, stored-file, fixture-upload and content-reading
+│                              helpers used by every spec
 ├── eslint.config.mjs          ESLint rules (typescript-eslint + Playwright plugin)
 ├── .prettierrc.json           Prettier rules
 ├── .editorconfig              Indentation and line endings
@@ -38,8 +39,26 @@ e2e/
 ```
 
 The `create-*` and `save-*` specs cover the create-new route (`?fileExt=`); the
-`edit-*` and `delete-*` specs cover a file that is already on the server
-(`?fileName=`), reached by clicking it in "Your documents".
+`edit-*`, `open-*` and `delete-*` specs cover a file that is already on the
+server (`?fileName=`), reached by clicking it in "Your documents".
+
+### Fixtures
+
+The `open-*` specs upload a file from `frontend/fixtures/` and check the editor
+shows exactly what is in it. Each fixture is the smallest valid OOXML package of
+its type holding one known string. `make-fixtures.py` writes them from raw XML
+rather than saving them out of an editor, so a fault in our own writer cannot
+bake itself into the oracle. The strings live in `FIXTURE_TEXT` in both that
+script and `tests/helpers.ts`; change one, change the other, then rebuild:
+
+```sh
+python3 -I frontend/fixtures/make-fixtures.py
+```
+
+`uploadFixtureFile` checks each fixture holds its `FIXTURE_TEXT` string before
+uploading it, so drifted strings or a fixture left unrebuilt fail as that,
+rather than as an editor content mismatch. The packages are stored uncompressed
+to keep that check a plain byte search; they are a few KB either way.
 
 The file store is server-side and shared by every spec (it is keyed by client
 IP) while spec files run in parallel workers, so a spec may only assert on rows

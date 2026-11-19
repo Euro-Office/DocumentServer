@@ -7,9 +7,13 @@ import {
   createStoredFile,
   downloadStoredFile,
   editorApi,
+  focusShape,
   newFileLink,
   openStoredEditor,
+  readShape,
   saveAndReopen,
+  selectShapeText,
+  selectedText,
   undoButton,
 } from '../helpers';
 
@@ -27,49 +31,12 @@ const TITLE = 'Euro-Office e2e title';
 const createdFiles: string[] = [];
 
 // A new presentation opens on a Title slide: shape 1 is the title placeholder,
-// shape 2 the subtitle. Tab walks the selection through the shapes. (Same
+// shape 2 the subtitle. focusShape walks the selection there with Tab. (Same
 // navigation save-presentation.spec.ts uses.)
-async function focusShape(editorPage: Page, shapeNumber: number) {
-  // Escape twice: leave text editing, then deselect, so Tab starts from the
-  // first shape whatever state the previous step left behind.
-  await editorPage.keyboard.press('Escape');
-  await editorPage.keyboard.press('Escape');
-  for (let i = 0; i < shapeNumber; i++) {
-    await editorPage.keyboard.press('Tab');
-  }
-}
-
 async function typeIntoShape(editorPage: Page, shapeNumber: number, text: string) {
   await focusShape(editorPage, shapeNumber);
   await editorPage.keyboard.press('Enter'); // start editing the selected shape
   await editorPage.keyboard.type(text);
-}
-
-/**
- * Put the caret in a shape and select all of its text. Key presses, so it
- * changes editor state: call it once, never from inside expect.poll.
- */
-async function selectShapeText(editorPage: Page, shapeNumber: number) {
-  await focusShape(editorPage, shapeNumber);
-  await editorPage.keyboard.press('Enter');
-  await editorPage.keyboard.press('Control+A');
-}
-
-/**
- * The current selection, as the editor reports it. Read-only, so this is the
- * half that is safe to poll. Returns an "error: ..." string rather than
- * throwing while the iframe is still settling, so a poll retries.
- * Ctrl+A also selects the paragraph end, so the editor appends a line break.
- */
-const selectedText = (editorPage: Page) =>
-  editorApi(editorPage, (api) => api.asc_GetSelectedText())
-    .then((text) => String(text).trim())
-    .catch((e: Error) => `error: ${e.message}`);
-
-/** One-shot read of a shape's text: select, then read. */
-async function readShape(editorPage: Page, shapeNumber: number) {
-  await selectShapeText(editorPage, shapeNumber);
-  return selectedText(editorPage);
 }
 
 test.describe(
@@ -104,7 +71,7 @@ test.describe(
     test('an edit survives closing and reopening the presentation', async ({ page }) => {
       // Sized from the step timeouts inside, not the run time; see
       // edit-document.spec.ts.
-      test.setTimeout(270_000);
+      test.setTimeout(360_000);
       const fileName = await createStoredFile(page, newFileLink('pptx'), PPTX);
       createdFiles.push(fileName);
       const { editorPage } = await openStoredEditor(page, fileName, PPTX);

@@ -1,15 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Euro-Office contributors
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { test, expect, type FrameLocator, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import {
   cleanUpStoredFiles,
   createStoredFile,
   downloadStoredFile,
-  editorApi,
   newFileLink,
   openStoredEditor,
   saveAndReopen,
+  selectCell,
+  selectedCellText,
   undoButton,
 } from '../helpers';
 
@@ -24,28 +25,6 @@ const VALUE = 'Euro-Office e2e';
 // Files these tests created, removed once the spec is done.
 // See edit-document.spec.ts.
 const createdFiles: string[] = [];
-
-/**
- * The cell the grid currently has selected, as the editor reports it.
- * Returns an "error: ..." string instead of throwing while the iframe is still
- * settling, so expect.poll retries rather than failing on the first read.
- */
-const selectedCellText = (editorPage: Page) =>
-  editorApi(editorPage, (api) => {
-    const info = api.asc_getCellInfo();
-    return info && info.asc_getText ? info.asc_getText() : null;
-  }).catch((e: Error) => `error: ${e.message}`);
-
-/**
- * Move the selection using the name box. It has an id, so it is the stable
- * handle — but it also takes keyboard focus, which is why every caller that
- * types or undoes afterwards presses Ctrl+Home first to get back to the grid.
- */
-const selectCell = async (frame: FrameLocator, cell: string) => {
-  const nameBox = frame.locator('#ce-cell-name');
-  await nameBox.fill(cell);
-  await nameBox.press('Enter');
-};
 
 test.describe(
   'Spreadsheet editor - editing a stored file',
@@ -82,7 +61,7 @@ test.describe(
     test('an edit survives closing and reopening the spreadsheet', async ({ page }) => {
       // Sized from the step timeouts inside, not the run time; see
       // edit-document.spec.ts.
-      test.setTimeout(270_000);
+      test.setTimeout(360_000);
       const fileName = await createStoredFile(page, newFileLink('xlsx'), XLSX);
       createdFiles.push(fileName);
       const { editorPage, frame } = await openStoredEditor(page, fileName, XLSX);
