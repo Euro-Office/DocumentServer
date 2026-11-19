@@ -149,6 +149,7 @@ jobs:
     needs: build
     if: |
       github.event_name == 'pull_request' &&
+      !github.event.repository.private &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       startsWith(github.head_ref, 'release/')
     permissions:
@@ -179,6 +180,7 @@ jobs:
     needs: [plan, build, e2e, upgrade]
     if: |
       !cancelled() &&
+      !github.event.repository.private &&
       needs.plan.outputs.nightly == 'true' &&
       needs.e2e.result == 'success' &&
       needs.upgrade.result == 'success'
@@ -234,6 +236,7 @@ jobs:
     if: |
       !cancelled() &&
       needs.build.result == 'success' &&
+      !github.event.repository.private &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
     permissions:
@@ -258,6 +261,7 @@ jobs:
     if: |
       !cancelled() &&
       needs.build.result == 'success' &&
+      !github.event.repository.private &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
     permissions:

@@ -21,7 +21,8 @@ env:
 jobs:
   cleanup:
     name: Delete images of the branch
-    if: ${{ github.event.ref_type == 'branch' && startsWith(github.event.ref, 'dev/') }}
+    # A private copy has pushed nothing, and its branch names may match ours.
+    if: ${{ github.event.ref_type == 'branch' && startsWith(github.event.ref, 'dev/') && !github.event.repository.private }}
     runs-on: ubuntu-24.04
     permissions:
       contents: read    # checkout

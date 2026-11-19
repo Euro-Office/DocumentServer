@@ -231,11 +231,18 @@ jobs:
           # Fork PRs get a read-only GITHUB_TOKEN: they read the registry
           # build cache but cannot write it or push the e2e image, so they
           # only build. ci.yml skips e2e and upgrade for them.
+          # A private copy of this repository only builds as well: nothing it
+          # builds may reach the shared registry, where image and tag names
+          # are visible to everyone.
+          IS_PRIVATE=${{ github.event.repository.private == true }}
           IS_FORK=${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
-          echo "is_fork=${IS_FORK}" >> $GITHUB_OUTPUT
-          if [[ "$IS_FORK" == "true" ]]; then
-            echo "::notice::Fork PR: build only, without cache export, image push or e2e."
+          if [[ "$IS_FORK" == "true" || "$IS_PRIVATE" == "true" ]]; then
+            BUILD_ONLY=true
+            echo "::notice::Fork PR or private repository: build only, without cache export, image push or e2e."
+          else
+            BUILD_ONLY=false
           fi
+          echo "build_only=${BUILD_ONLY}" >> $GITHUB_OUTPUT
 
           # Registry build cache: every ref reuses its own previous run and
           # falls back to main. Tags need no per-commit key (7b0fb05): release
@@ -270,7 +277,7 @@ jobs:
           # on tags its standalone image goes to ghcr.io/nextcloud-releases
           # instead (see nc_publish). Override the
           # flags for that brand (last write to $GITHUB_OUTPUT wins).
-          if [[ "$BRAND" == "nextcloud-office" ]]; then
+          if [[ "$BRAND" == "nextcloud-office" || "$IS_PRIVATE" == "true" ]]; then
             echo "images_push=false"  >> $GITHUB_OUTPUT
             echo "develop_push=false" >> $GITHUB_OUTPUT
           fi
@@ -282,7 +289,7 @@ jobs:
           # Layer dedup keeps the transfer small. Other arches/brands stay
           # cacheonly. The nightly build tests its pushed nightly-amd64.
           if [[ "$IS_TAG" != "true" && "$IS_NIGHTLY" != "true" \
-                && "$IS_FORK" != "true" \
+                && "$BUILD_ONLY" != "true" \
                 && "$BRAND" == "euro-office" \
                 && "$ARCH" == "amd64" ]]; then
             echo "export_image=true" >> $GITHUB_OUTPUT
@@ -312,7 +319,7 @@ jobs:
           # nextcloud-office release image: on tags the standalone image is
           # exported as an OCI archive and pushed to ghcr.io/nextcloud-releases
           # by a later step, with its own credential (see there).
-          if [[ "$IS_TAG" == "true" && "$BRAND" == "nextcloud-office" ]]; then
+          if [[ "$IS_TAG" == "true" && "$BRAND" == "nextcloud-office" && "$IS_PRIVATE" != "true" ]]; then
             echo "nc_publish=true"  >> "$GITHUB_OUTPUT"
           else
             echo "nc_publish=false" >> "$GITHUB_OUTPUT"
@@ -503,7 +510,7 @@ jobs:
             develop.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}develop-buildcache-${{ matrix.arch }},mode=max
             develop.tags=${{ steps.meta.outputs.develop_push == 'true' && format('{0}/{1}:latest-dev-{2}', env.REGISTRY, matrix.brand.image_name, matrix.arch) || '' }}
             develop.output=${{ steps.meta.outputs.develop_push == 'true' && 'type=registry' || 'type=cacheonly' }}
-            ${{ steps.meta.outputs.is_fork == 'true' && '*.cache-to=' || '' }}
+            ${{ steps.meta.outputs.build_only == 'true' && '*.cache-to=' || '' }}
         env:
           REGISTRY: ${{ env.REGISTRY }}
           TAG: ${{ steps.meta.outputs.images_tag }}

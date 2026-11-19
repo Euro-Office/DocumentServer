@@ -12,6 +12,8 @@ on:
 
 jobs:
   update-submodules:
+    # Only this repository gets the bump PR, not a fork or a private copy.
+    if: github.repository == 'Euro-Office/DocumentServer'
     runs-on: self-hosted
     permissions:
       contents: write
