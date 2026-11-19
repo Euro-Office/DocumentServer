@@ -11,6 +11,7 @@ import {
   uniqueFileName,
   uploadFixtureFile,
 } from './helpers';
+import { EDITOR_CONTENT_READ } from '../timeouts';
 
 const EDITOR_IFRAME = 'iframe[name="frameEditor"]';
 
@@ -87,7 +88,7 @@ export function describeOpeningStoredFixture(type: {
           // focus, select and read are retried as a unit.
           await expect(async () => {
             expect(await type.readContent(editorPage, frame)).toBe(FIXTURE_TEXT[type.ext]);
-          }).toPass({ timeout: 30_000 });
+          }).toPass({ timeout: EDITOR_CONTENT_READ });
         });
       });
     },

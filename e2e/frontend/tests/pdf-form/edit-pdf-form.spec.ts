@@ -12,6 +12,7 @@ import {
   saveAndReopen,
   undoButton,
 } from '../helpers';
+import { DOCUMENT_SAVED, EDITOR_CONTENT_READ } from '../../timeouts';
 
 const PDF = /\.pdf/;
 const TEXT = 'Euro-Office e2e edit test';
@@ -66,7 +67,7 @@ test.describe('PDF form editor - editing a stored file', { tag: ['@pdf', '@regre
       // The title loses its "*" when the editor finishes its own save step.
       // That is a browser-side flag, not a server acknowledgement, so it is a
       // step along the way and never the assertion.
-      await expect(editorPage).not.toHaveTitle(/^\*/, { timeout: 30_000 });
+      await expect(editorPage).not.toHaveTitle(/^\*/, { timeout: DOCUMENT_SAVED });
       return saveAndReopen(page, editorPage, before);
     });
 
@@ -74,7 +75,7 @@ test.describe('PDF form editor - editing a stored file', { tag: ['@pdf', '@regre
       await expect(async () => {
         await saved.frame.locator('#editor_sdk').click();
         expect(await readDocumentText(saved.editorPage)).toBe(TEXT);
-      }).toPass({ timeout: 30_000 });
+      }).toPass({ timeout: EDITOR_CONTENT_READ });
     });
   });
 });

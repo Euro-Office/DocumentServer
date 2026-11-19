@@ -20,6 +20,7 @@ e2e/
 │   ├── constants.ts           Host port, container name, default base URL
 │   ├── global-setup.ts        Starts the Docker container, waits for readiness
 │   ├── global-teardown.ts     Saves the server logs, then removes the container
+│   ├── timeouts.ts            The editor wait timeouts and the per-test timeout derived from them
 │   ├── fixtures/              fixture.docx/.xlsx/.pptx, and make-fixtures.py which writes them
 │   └── tests/
 │       ├── document/          create-, save-, edit-, open-, delete-document, document-editing
