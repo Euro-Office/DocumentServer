@@ -111,7 +111,7 @@ FROM ds-base AS docs
         ADMINPANEL_HOST_PORT=localhost:9000 \
         EXAMPLE_HOST_PORT=localhost:3000 \
         NGINX_ACCESS_LOG=off \
-        NGINX_GZIP_PROXIED=off \
+        NGINX_GZIP_PROXIED=any \
         NGINX_CLIENT_MAX_BODY_SIZE=100m \
         NGINX_WORKER_CONNECTIONS=4096 \
         NGINX_WORKER_PROCESSES=1
@@ -208,6 +208,7 @@ FROM ds-base AS docs
             -i /etc/nginx/conf.d/ds.conf && \
         sed '/access_log.*/d' -i /etc/nginx/includes/ds-common.conf && \
         sed '/error_log.*/d' -i /etc/nginx/includes/ds-common.conf && \
+        sed '/^\s*gzip_proxied\b/d' -i /etc/nginx/includes/ds-common.conf && \
         echo -e "\ngzip_proxied \$NGINX_GZIP_PROXIED;\n" >> /etc/nginx/includes/ds-common.conf && \
         sed 's/#*\s*\(gzip_static\).*/\1 on;/g' -i /etc/nginx/includes/ds-docservice.conf && \
         sed -i 's/etc\/nginx/tmp\/proxy_nginx/g' /etc/nginx/nginx.conf && \

@@ -11,6 +11,8 @@ on:
       - build/scripts/lib/**
       - build/configs/standalone/supervisor/**
       - build/docker-bake.hcl
+      - build/.docker/orchestrated.bake.Dockerfile
+      - document-server-package
       - .github/workflows/scripts-test.yml
   push:
     branches: ['dev/**']
@@ -34,6 +36,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Check out the package submodule
+        # nginx-gzip-proxied.test.sh renders its nginx config template
+        run: git submodule update --init --depth 1 document-server-package
 
       - name: Shellcheck
         # shellcheck is preinstalled on the runner image; any finding fails the step
