@@ -12,6 +12,12 @@
 # ==============================================================================
 
 
+# Plugin runtime helpers (v1/) and the bundled plugins from the plugins submodule
+FROM alpine AS plugins
+    RUN apk add --no-cache bash
+    RUN --mount=type=bind,source=plugins,target=/src \
+        bash /src/scripts/bundle.sh /out
+
 FROM alpine AS bundle
     ARG BUILD_ROOT=/package
     ARG PRODUCT_NAME_LOW
@@ -38,6 +44,7 @@ FROM alpine AS bundle
     # --- Build stage outputs (change with code) ---
     COPY --from=sdkjs ${BUILD_ROOT} /build/documentserver/
     COPY --from=web-apps ${BUILD_ROOT} /build/documentserver/
+    COPY --from=plugins /out/ /build/documentserver/sdkjs-plugins/
 
     COPY --from=core ${BUILD_ROOT}/bin/ /build/documentserver/server/FileConverter/bin/
     COPY --from=core ${BUILD_ROOT}/tools/ /build/documentserver/server/tools/

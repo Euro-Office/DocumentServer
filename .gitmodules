@@ -34,3 +34,7 @@
 	path = document-formats
 	url = https://github.com/Euro-Office/document-formats.git
 	branch = main
+[submodule "plugins"]
+	path = plugins
+	url = https://github.com/Euro-Office/plugins.git
+	branch = main
