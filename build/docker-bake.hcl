@@ -77,6 +77,12 @@ variable "NUGET_SOURCE_PATH" {
   default = "/nuget-cache"
 }
 
+# Builds x2t for WebAssembly into /x2t/ (client-only editor sessions).
+# Needs a core with EO_WASM_X2T; older cores ignore the build argument.
+variable "EO_WASM_X2T" {
+  default = "ON"
+}
+
 variable "CACHE_BUST" {
   default = "2"
 }
@@ -157,6 +163,9 @@ target "core-wasm" {
   inherits   = ["_common"]
   context    = ".."
   dockerfile = "./core/.docker/core-wasm.bake.Dockerfile"
+  args = {
+    EO_WASM_X2T = "${EO_WASM_X2T}"
+  }
   tags       = ["${REGISTRY}/core-wasm:${TAG}"]
   cache-from = ["type=local,src=${CACHE_ROOT}/${REGISTRY}/core-wasm"]
   cache-to   = ["type=local,dest=${CACHE_ROOT}/${REGISTRY}/core-wasm,mode=max"]
@@ -216,6 +225,7 @@ target "bundle" {
   tags       = ["${REGISTRY}/bundle:${TAG}"]
   contexts = {
     core          = CORE_PREBUILT != "" ? CORE_PREBUILT : "target:core"
+    core-wasm     = "target:core-wasm"
     server        = "target:server"
     sdkjs         = "target:sdkjs"
     web-apps      = "target:web-apps"
