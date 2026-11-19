@@ -3,23 +3,24 @@ import { test, expect } from '@playwright/test';
 const EXAMPLE_PATH = '/example/';
 
 const EDITOR_TYPES = [
-  { label: 'Document',     selector: 'a.try-editor.word',  fileExt: 'docx' },
-  { label: 'Spreadsheet',  selector: 'a.try-editor.cell',  fileExt: 'xlsx' },
-  { label: 'Presentation', selector: 'a.try-editor.slide', fileExt: 'pptx' },
+  { label: 'Document', selector: 'a.try-editor.word', fileExt: 'docx', tag: '@document' },
+  { label: 'Spreadsheet', selector: 'a.try-editor.cell', fileExt: 'xlsx', tag: '@spreadsheet' },
+  { label: 'Presentation', selector: 'a.try-editor.slide', fileExt: 'pptx', tag: '@presentation' },
 ] as const;
 
-test.describe('Example page - Create new', () => {
+test.describe('Example page - Create new', { tag: '@regression' }, () => {
   test.beforeEach(async ({ page }) => {
     await page.goto(EXAMPLE_PATH);
     await expect(page).toHaveTitle(/ONLYOFFICE|euro-office/i);
   });
 
   for (const editor of EDITOR_TYPES) {
-    test(`Create new ${editor.label}`, async ({ page }) => {
+    // eslint-disable-next-line playwright/valid-test-tags -- tag comes from the table above
+    test(`Create new ${editor.label}`, { tag: editor.tag }, async ({ page }) => {
       // Register the new-tab handler BEFORE clicking so the event is not missed
       const newPagePromise = page.context().waitForEvent('page');
 
-      await page.click(editor.selector);
+      await page.locator(editor.selector).click();
 
       const editorPage = await newPagePromise;
 
@@ -35,7 +36,10 @@ test.describe('Example page - Create new', () => {
       //    Assert that iframe is present and its src points to the document editor app.
       const editorIframe = editorPage.locator('iframe[name="frameEditor"]');
       await expect(editorIframe).toBeAttached({ timeout: 15_000 });
-      await expect(editorIframe).toHaveAttribute('src', /documenteditor|spreadsheeteditor|presentationeditor/);
+      await expect(editorIframe).toHaveAttribute(
+        'src',
+        /documenteditor|spreadsheeteditor|presentationeditor/,
+      );
 
       // 3. Wait for the file to finish loading inside the editor iframe.
       //    The loading mask (#loading-mask) is removed from the DOM once ready.
@@ -58,7 +62,9 @@ test.describe('Example page - Create new', () => {
       await frame.locator('a[data-tab="home"]').click();
       await frame.locator('#editor_sdk').click();
       await editorPage.keyboard.type('Hello');
-      await expect(frame.locator('#slot-btn-undo button').first()).not.toHaveClass(/disabled/, { timeout: 5_000 });
+      await expect(frame.locator('#slot-btn-undo button').first()).not.toHaveClass(/disabled/, {
+        timeout: 5_000,
+      });
     });
   }
 });

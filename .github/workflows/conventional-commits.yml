@@ -1,0 +1,51 @@
+# This workflow is provided via the organization template repository
+#
+# https://github.com/Euro-Office/.github
+# https://docs.github.com/en/actions/learn-github-actions/sharing-workflows-with-your-organization
+#
+# SPDX-FileCopyrightText: Nextcloud GmbH and Nextcloud contributors
+# SPDX-License-Identifier: MIT
+
+name: Conventional commits
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: conventional-commits-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  conventional-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check PR title and commit subjects
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          COMMITS_URL: ${{ github.event.pull_request.commits_url }}
+        run: |
+          pattern='^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([^)]+\))?!?: [^ ].*'
+          failed=0
+          check() {
+            if [[ "$2" =~ $pattern ]]; then
+              echo "ok    $1: $2"
+            else
+              echo "::error::$1 is not a conventional commit: $2"
+              failed=1
+            fi
+          }
+          check "PR title" "$PR_TITLE"
+          while IFS= read -r subject; do
+            [[ "$subject" == Merge\ * ]] && continue
+            check "Commit" "$subject"
+          done < <(gh api --paginate "$COMMITS_URL" --jq '.[].commit.message | split("\n")[0]')
+          if (( failed )); then
+            echo "See https://www.conventionalcommits.org/ (types: build chore ci docs feat fix perf refactor revert style test)"
+            exit 1
+          fi

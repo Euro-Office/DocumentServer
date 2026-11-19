@@ -1,87 +1,167 @@
-name: Build and Push Docker Image
+name: Build
+
+# Builds the Docker images and packages per arch × brand. Called by ci.yml
+# (pull requests, main, manual runs) and release.yml (tags). Which targets
+# are pushed, and under which tags, follows the caller's event and ref.
+
+permissions: {}
 
 on:
-  push:
-    branches:
-      - main
-    tags:
-      - '**'
-  # PRs are expected from same-repo branches only. A fork PR gets a read-only
-  # GITHUB_TOKEN and no secrets, so the clone job's EURO_OFFICE_MIRROR_TOKEN
-  # (required to fetch private submodules + the brand repo) is empty and the
-  # build hard-fails before reaching the GHCR push. External contributions are
-  # not supported by this mirror; pull_request_target is deliberately avoided
-  # to keep secrets away from untrusted code.
-  pull_request:
-  workflow_dispatch:
+  workflow_call:
     inputs:
-      core_branch:
-        description: 'Branch core'
-        required: false
-        default: ''
-        type: string
-      sdkjs_branch:
-        description: 'Branch for sdkjs'
-        required: false
-        default: ''
-        type: string
-      web_apps_branch:
-        description: 'Branch for web-apps'
-        required: false
-        default: ''
-        type: string
-      server_branch:
-        description: 'Branch for server'
-        required: false
-        default: ''
-        type: string
-      no_cache:
-        description: 'Rebuild every layer cold (ignore registry build cache)'
+      full:
+        description: 'Build every arch, brand and target; otherwise only the amd64 euro-office standalone image'
+        required: true
+        type: boolean
+      nightly:
+        description: 'Push the images as nightly-<arch> and latest-dev-<arch> (submodule bump PR only)'
         required: false
         default: false
         type: boolean
-
-# Serialise runs per ref so a re-pushed PR cancels its in-flight run instead of
-# racing the previous one on the single self-hosted e2e runner (shared host
-# port + container name). Cross-PR collisions are still possible if two PRs run
-# at once; the e2e job assumes a single runner.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+    outputs:
+      is_stable:
+        value: ${{ jobs.build.outputs.is_stable }}
+      ref_name:
+        value: ${{ jobs.build.outputs.ref_name }}
+      product_version:
+        value: ${{ jobs.build.outputs.product_version }}
+      build_number:
+        value: ${{ jobs.build.outputs.build_number }}
+      e2e_image:
+        value: ${{ jobs.build.outputs.e2e_image }}
+    secrets:
+      EURO_OFFICE_MIRROR_TOKEN:
+        required: false
+      NEXTCLOUD_USER:
+        required: false
+      NEXTCLOUD_PASS:
+        required: false
+      NEXTCLOUD_RELEASES_USER:
+        required: false
+      NEXTCLOUD_RELEASES_TOKEN:
+        required: false
 
 env:
   REGISTRY: ghcr.io/euro-office
-  IMAGE_NAME: documentserver
-  CLUSTER_IMG_DOCS: cluster-docs
-  CLUSTER_IMG_EXAMPLE: cluster-example
-  CLUSTER_IMG_UTILS: cluster-utils
   CACHE_IMAGE_NAME: documentserver-build-cache
-  PRODUCT_VERSION: 9.3.1
   BUILD_NUMBER: dev.1
   BUILD_ROOT: /package
-  # Branded image names (nextcloud-office)
-  NEXTCLOUD_IMAGE_NAME: nextcloud-office-documentserver
-  NEXTCLOUD_CLUSTER_IMG_DOCS: nextcloud-office-cluster-docs
-  NEXTCLOUD_CLUSTER_IMG_EXAMPLE: nextcloud-office-cluster-example
-  NEXTCLOUD_CLUSTER_IMG_UTILS: nextcloud-office-cluster-utils
+  NEXTCLOUD_RELEASES_IMAGE: ghcr.io/nextcloud-releases/office-documentserver
 
 jobs:
-  clone:
+  scope:
     runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      matrix: ${{ steps.scope.outputs.matrix }}
+      targets: ${{ steps.scope.outputs.targets }}
+      core_packages: ${{ steps.scope.outputs.core_packages }}
+    steps:
+      - name: Choose matrix and targets
+        id: scope
+        env:
+          FULL: ${{ inputs.full }}
+          BRANDS: |
+            [
+              {
+                "name": "euro-office",
+                "image_name": "documentserver",
+                "cluster_docs": "cluster-docs",
+                "cluster_example": "cluster-example",
+                "cluster_utils": "cluster-utils",
+                "extra_bake_files": "",
+                "extra_targets": "",
+                "cache_prefix": ""
+              },
+              {
+                "name": "nextcloud-office",
+                "image_name": "nextcloud-office-documentserver",
+                "cluster_docs": "nextcloud-office-cluster-docs",
+                "cluster_example": "nextcloud-office-cluster-example",
+                "cluster_utils": "nextcloud-office-cluster-utils",
+                "extra_bake_files": "./brands/nextcloud-office-brand/brand-server.hcl",
+                "extra_targets": "brand-icons,",
+                "cache_prefix": "nextcloud-office-"
+              }
+            ]
+        run: |
+          set -euo pipefail
+          if [[ "$FULL" == "true" ]]; then
+            arch='["amd64","arm64"]'
+            brands="$BRANDS"
+            targets=packages,standalone,develop,cluster-utils,cluster-example,cluster-docs
+          else
+            echo "::notice::e2e-only build (amd64, euro-office, standalone). Add the full-build label and re-run for the full matrix."
+            arch='["amd64"]'
+            brands=$(jq '[.[] | select(.name == "euro-office")]' <<<"$BRANDS")
+            targets=standalone
+          fi
+          echo "matrix=$(jq -nc --argjson arch "$arch" --argjson brand "$brands" '{arch: $arch, brand: $brand}')" >> "$GITHUB_OUTPUT"
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+          echo "core_packages=$(jq -r 'map("linux-\(.)/server") + ["wasm/engine"] | join(" ")' <<<"$arch")" >> "$GITHUB_OUTPUT"
+
+  # ─────────────────────────────────────────────────────────────
+  # BUILD
+  #
+  # Single job that builds the target graph in one bake invocation
+  # per arch × brand (scope chosen by the caller). Because develop depends
+  # on docker which depends on packages, bake resolves the shared
+  # graph and never rebuilds a layer twice.
+  #
+  # Pushing per target:
+  #   docker   → pushed for the submodule bump PR (:nightly) and git tags (:latest)
+  #   develop  → pushed for the submodule bump PR only (:latest-dev)
+  #   packages → never pushed; exported to local filesystem for release upload
+  #              (euro-office → GitHub Release, nextcloud-office → artifact for
+  #              the publish-nextcloud-* jobs)
+  # ─────────────────────────────────────────────────────────────
+  # Without a package of the pinned core yet, wait for core's CI instead of building core
+  wait-for-core:
+    needs: scope
+    uses: $/.github/workflows/wait-for-core.yml
+    permissions:
+      contents: read
+    with:
+      packages: ${{ needs.scope.outputs.core_packages }}
+      nightly: ${{ inputs.nightly }}
+
+  build:
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    needs: [scope, wait-for-core]
+    outputs:
+      # Identical in every matrix leg (depends on the ref only), so it does
+      # not matter which leg writes it last.
+      is_stable: ${{ steps.meta.outputs.is_stable }}
+      ref_name: ${{ steps.meta.outputs.ref_name }}
+      product_version: ${{ steps.meta.outputs.product_version }}
+      build_number: ${{ steps.meta.outputs.build_number }}
+      e2e_image: ${{ steps.meta.outputs.e2e_image }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.scope.outputs.matrix) }}
+
     steps:
       - name: Checkout fork repository (with submodules)
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: .
           submodules: recursive
-          token: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN }}
+          # The submodules are public; the mirror token is only needed in
+          # private copies of this repo. Fork PRs get no secrets.
+          token: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN || github.token }}
+          # Keep the token out of .git/config; later steps do not need it.
+          persist-credentials: false
 
       - name: Checkout nextcloud-office-brand repo
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: Euro-Office/nextcloud-office-brand
           path: build/brands/nextcloud-office-brand
-          token: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN }}
+          token: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN || github.token }}
+          persist-credentials: false
 
       - name: Align submodules to requested branches
         shell: bash
@@ -108,74 +188,15 @@ jobs:
           [ -n "$WEBAPPS_BRANCH" ] && checkout_submodule web-apps  "$WEBAPPS_BRANCH"
           [ -n "$SERVER_BRANCH" ]  && checkout_submodule server    "$SERVER_BRANCH"
 
-          checkout_submodule dictionaries       "main"
-          checkout_submodule document-templates "main"
-
           echo "--- Submodule state after alignment ---"
           git submodule status
 
-      - name: Cache clones
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: "${{ github.workspace }}"
-          key: ${{ runner.os }}-build-${{ github.sha }}
-
-  # ─────────────────────────────────────────────────────────────
-  # BUILD
-  #
-  # Single job that builds the full target graph in one bake
-  # invocation per arch × brand. Because develop depends on
-  # docker which depends on packages, bake resolves the shared
-  # graph and never rebuilds a layer twice.
-  #
-  # Pushing per target:
-  #   docker   → pushed on default branch (:nightly) and git tags (:latest)
-  #   develop  → pushed on default branch only (:latest-dev)
-  #   packages → never pushed; exported to local filesystem for release upload
-  #              (euro-office → GitHub Release, nextcloud-office → SSH)
-  # ─────────────────────────────────────────────────────────────
-  build:
-    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
-    needs: clone
-    permissions:
-      contents: write
-      packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        arch:
-          - amd64
-          - arm64
-        brand:
-          - name: euro-office
-            image_name: documentserver
-            cluster_docs: cluster-docs
-            cluster_example: cluster-example
-            cluster_utils: cluster-utils
-            extra_bake_files: ""
-            extra_targets: ""
-            cache_prefix: ""
-          - name: nextcloud-office
-            image_name: nextcloud-office-documentserver
-            cluster_docs: nextcloud-office-cluster-docs
-            cluster_example: nextcloud-office-cluster-example
-            cluster_utils: nextcloud-office-cluster-utils
-            extra_bake_files: "./brands/nextcloud-office-brand/brand-server.hcl"
-            extra_targets: "brand-icons,"
-            cache_prefix: "nextcloud-office-"
-
-    steps:
-      - name: Restore cache
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: "${{ github.workspace }}"
-          key: ${{ runner.os }}-build-${{ github.sha }}
-
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        id: buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -183,79 +204,223 @@ jobs:
 
       - name: Compute tags and push flags
         id: meta
+        env:
+          NO_CACHE_INPUT: ${{ github.event.inputs.no_cache }}
+          ARCH: ${{ matrix.arch }}
+          BRAND: ${{ matrix.brand.name }}
         run: |
-          REF_NAME=$(echo '${{ github.ref_name }}' | tr '/' '-')
+          REF_NAME=$(echo "$GITHUB_REF_NAME" | tr '/+' '--')
           echo "ref_name=${REF_NAME}" >> $GITHUB_OUTPUT
+          echo "os_update_stamp=$(date -u +%Y-%m-%d)" >> $GITHUB_OUTPUT
+          echo "build_commits=DocumentServer=$(git rev-parse HEAD) $(git submodule foreach --quiet 'echo $name=$(git rev-parse HEAD)' | tr '\n' ' ')" >> $GITHUB_OUTPUT
 
           # Cold rebuild when explicitly requested via workflow_dispatch or when
           # the PR title carries a [no-cache] marker. Lets a PR re-run ignore
           # the registry build cache (e.g. to discard a poisoned layer) while
           # still exercising the e2e job against the freshly built image.
-          if [[ "${{ github.event.inputs.no_cache }}" == "true" \
+          if [[ "$NO_CACHE_INPUT" == "true" \
                 || "${{ contains(github.event.pull_request.title, '[no-cache]') }}" == "true" ]]; then
             echo "no_cache=true"  >> $GITHUB_OUTPUT
           else
             echo "no_cache=false" >> $GITHUB_OUTPUT
           fi
 
-          IS_DEFAULT=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+          IS_NIGHTLY=${{ inputs.nightly }}
           IS_TAG=${{ startsWith(github.ref, 'refs/tags/') }}
 
-          # docker target: push on default branch and git tags
-          if [[ "$IS_DEFAULT" == "true" ]]; then
-            echo "images_tag=nightly-${{ matrix.arch }}"  >> $GITHUB_OUTPUT
+          # Fork PRs get a read-only GITHUB_TOKEN: they read the registry
+          # build cache but cannot write it or push the e2e image, so they
+          # only build. ci.yml skips e2e and upgrade for them.
+          IS_FORK=${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+          echo "is_fork=${IS_FORK}" >> $GITHUB_OUTPUT
+          if [[ "$IS_FORK" == "true" ]]; then
+            echo "::notice::Fork PR: build only, without cache export, image push or e2e."
+          fi
+
+          # Registry build cache: every ref reuses its own previous run and
+          # falls back to main. Tags need no per-commit key (7b0fb05): release
+          # tags are never moved, a content change gets a new version, and
+          # layers are keyed by content anyway.
+          echo "cache_ref=${REF_NAME}" >> $GITHUB_OUTPUT
+          echo "cache_fallback=main"   >> $GITHUB_OUTPUT
+
+          # docker target: push for the submodule bump PR and git tags. Tags
+          # push <tag>-<arch>; publish-euro-office-images only moves :latest
+          # for stable tags, publish-nightly-images moves :nightly once e2e
+          # passed.
+          if [[ "$IS_NIGHTLY" == "true" ]]; then
+            echo "images_tag=nightly-${ARCH}"  >> $GITHUB_OUTPUT
             echo "images_push=true"                       >> $GITHUB_OUTPUT
           elif [[ "$IS_TAG" == "true" ]]; then
-            echo "images_tag=latest-${{ matrix.arch }}"   >> $GITHUB_OUTPUT
-            echo "images_push=true"                       >> $GITHUB_OUTPUT
+            echo "images_tag=${REF_NAME}-${ARCH}" >> $GITHUB_OUTPUT
+            echo "images_push=true"                          >> $GITHUB_OUTPUT
           else
-            echo "images_tag=${REF_NAME}-${{ matrix.arch }}" >> $GITHUB_OUTPUT
+            echo "images_tag=${REF_NAME}-${ARCH}" >> $GITHUB_OUTPUT
             echo "images_push=false"                         >> $GITHUB_OUTPUT
           fi
 
-          # develop target: push on default branch only
-          if [[ "$IS_DEFAULT" == "true" ]]; then
+          # develop target: push for the submodule bump PR only
+          if [[ "$IS_NIGHTLY" == "true" ]]; then
             echo "develop_push=true"  >> $GITHUB_OUTPUT
           else
             echo "develop_push=false" >> $GITHUB_OUTPUT
           fi
 
           # nextcloud-office images must not be pushed to ghcr.io/euro-office;
-          # only its .deb/.rpm packages are shipped (via SSH). Override the
+          # on tags its standalone image goes to ghcr.io/nextcloud-releases
+          # instead (see nc_publish). Override the
           # flags for that brand (last write to $GITHUB_OUTPUT wins).
-          if [[ "${{ matrix.brand.name }}" == "nextcloud-office" ]]; then
+          if [[ "$BRAND" == "nextcloud-office" ]]; then
             echo "images_push=false"  >> $GITHUB_OUTPUT
             echo "develop_push=false" >> $GITHUB_OUTPUT
           fi
 
-          # e2e image: pull_request builds don't push the release tags, so push
-          # the amd64 euro-office standalone image under a throwaway pr-<n> tag
-          # that the e2e job pulls. Layer dedup keeps the transfer small, and a
-          # cleanup workflow deletes the tag when the PR closes. Other
-          # arches/brands stay cacheonly.
-          if [[ "${{ github.event_name }}" == "pull_request" \
-                && "${{ matrix.brand.name }}" == "euro-office" \
-                && "${{ matrix.arch }}" == "amd64" ]]; then
+          # e2e image: builds that don't push the release tags push the amd64
+          # euro-office standalone image under a throwaway tag that the e2e
+          # job pulls: pr-<n> for pull requests (a cleanup workflow deletes it
+          # when the PR closes), <branch> for main and manual dispatches.
+          # Layer dedup keeps the transfer small. Other arches/brands stay
+          # cacheonly. The nightly build tests its pushed nightly-amd64.
+          if [[ "$IS_TAG" != "true" && "$IS_NIGHTLY" != "true" \
+                && "$IS_FORK" != "true" \
+                && "$BRAND" == "euro-office" \
+                && "$ARCH" == "amd64" ]]; then
             echo "export_image=true" >> $GITHUB_OUTPUT
           else
             echo "export_image=false" >> $GITHUB_OUTPUT
           fi
-          echo "e2e_image=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
-
-          # Parse PRODUCT_VERSION / BUILD_NUMBER from tag of the form v${PRODUCT_VERSION}-${BUILD_NUMBER}
-          # (e.g. v9.3.1-beta.1, v9.3.1-stable.1). Fall back to env defaults otherwise.
-          if [[ "$IS_TAG" == "true" && "${{ github.ref_name }}" =~ ^v([^-]+)-(.+)$ ]]; then
-            echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
-            echo "build_number=${BASH_REMATCH[2]}"    >> $GITHUB_OUTPUT
+          if [[ "$IS_NIGHTLY" == "true" ]]; then
+            echo "e2e_image=${{ env.REGISTRY }}/documentserver:nightly-amd64" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "e2e_image=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
           else
-            echo "product_version=${{ env.PRODUCT_VERSION }}" >> $GITHUB_OUTPUT
-            echo "build_number=${{ env.BUILD_NUMBER }}"       >> $GITHUB_OUTPUT
+            echo "e2e_image=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${REF_NAME}" >> $GITHUB_OUTPUT
           fi
 
-      - name: Build all targets (packages → docker → develop)
-        uses: docker/bake-action@4a9a8d494466d37134e2bfca2d3a8de8fb2681ad # v5.13.0
+          # Stable release tags are vX.Y.Z (e.g. v9.3.4) and its patch builds
+          # vX.Y.Z-N (e.g. v9.3.4-1). Only these are published into the public
+          # APT/DNF archive; pre-release tags (v9.3.5-rc.1, v9.3.1-beta.1, ...)
+          # carry a suffix with letters and are not.
+          # Read the tag via $GITHUB_REF_NAME rather than a template expression:
+          # the tag name is attacker-controllable (zizmor template-injection).
+          if [[ "$IS_TAG" == "true" && "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[1-9][0-9]*)?$ ]]; then
+            echo "is_stable=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "is_stable=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # nextcloud-office release image: on tags the standalone image is
+          # exported as an OCI archive and pushed to ghcr.io/nextcloud-releases
+          # by a later step, with its own credential (see there).
+          if [[ "$IS_TAG" == "true" && "$BRAND" == "nextcloud-office" ]]; then
+            echo "nc_publish=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "nc_publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Parse PRODUCT_VERSION / BUILD_NUMBER from the git tag.
+          # Supported formats:
+          #   v9.3.5-rc.1      →  product_version=9.3.5  build_number=0~rc.1
+          #   v9.3.4           →  product_version=9.3.4  build_number=0
+          #   v9.3.4-1         →  product_version=9.3.4  build_number=1
+          # The "0~" prefix sorts a prerelease before the final release
+          # (9.3.5-0~rc.1 < 9.3.5-0) in both dpkg and rpm; a patch build
+          # sorts after it (9.3.4-0 < 9.3.4-1).
+          # Fall back to the VERSION file for non-tag builds.
+          if [[ "$IS_TAG" == "true" && "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-([1-9][0-9]*)$ ]]; then
+            echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
+            echo "build_number=${BASH_REMATCH[2]}"    >> $GITHUB_OUTPUT
+          elif [[ "$IS_TAG" == "true" && "$GITHUB_REF_NAME" =~ ^v([^-]+)-(.+)$ ]]; then
+            echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
+            echo "build_number=0~${BASH_REMATCH[2]}"  >> $GITHUB_OUTPUT
+          elif [[ "$IS_TAG" == "true" && "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
+            echo "build_number=0"                     >> $GITHUB_OUTPUT
+          elif [[ "$IS_TAG" == "true" ]]; then
+            echo "::error::Unsupported tag format: $GITHUB_REF_NAME (expected vX.Y.Z or vX.Y.Z-ID)"
+            exit 1
+          else
+            VERSION_FILE=$(cat VERSION 2>/dev/null | tr -d '[:space:]')
+            # Split VERSION file the same way as tags: 9.3.5-rc.1 → version=9.3.5 build=0~rc.1
+            if [[ "${VERSION_FILE}" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-([1-9][0-9]*)$ ]]; then
+              echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
+              echo "build_number=${BASH_REMATCH[2]}"    >> $GITHUB_OUTPUT
+            elif [[ "${VERSION_FILE}" =~ ^([^-]+)-(.+)$ ]]; then
+              echo "product_version=${BASH_REMATCH[1]}" >> $GITHUB_OUTPUT
+              echo "build_number=0~${BASH_REMATCH[2]}"  >> $GITHUB_OUTPUT
+            else
+              echo "product_version=${VERSION_FILE}" >> $GITHUB_OUTPUT
+              echo "build_number=${{ env.BUILD_NUMBER }}"                        >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      # The prebuilt core and its WebAssembly modules when the build cache
+      # has them (releases, main and nightly only take packages built on core's main
+      # and stable branches); empty to build them in the bake. A no-cache
+      # build always builds core.
+      - name: Fetch prebuilt core
+        id: core
+        env:
+          EO_CORE_CACHE: ${{ steps.meta.outputs.no_cache == 'true' && 'off' || 'auto' }}
+        run: |
+          channels="${{ (startsWith(github.ref, 'refs/tags/') || inputs.nightly || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) && '--channels main' || '' }}"
+          dir=$(./build/fetch-core.sh $channels)
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          wasm=$(./build/fetch-core-wasm.sh $channels)
+          echo "wasm=$wasm" >> "$GITHUB_OUTPUT"
+
+      # Without a package the bake builds core. The hosted runners start with
+      # an empty BuildKit cache, so ccache keeps the objects. Not for releases.
+      - name: Restore ccache
+        if: steps.core.outputs.dir == '' && !startsWith(github.ref, 'refs/tags/') && steps.meta.outputs.no_cache != 'true'
+        id: ccache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0 # zizmor: ignore[cache-poisoning]
         with:
-          workdir: ./build
+          path: ccache
+          # A new key per run: an exact hit would save nothing
+          key: ccache-core-${{ matrix.brand.name }}-${{ matrix.arch }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-core-${{ matrix.brand.name }}-${{ matrix.arch }}-
+            ccache-core-
+
+      - name: Inject ccache into BuildKit
+        if: steps.core.outputs.dir == '' && !startsWith(github.ref, 'refs/tags/') && steps.meta.outputs.no_cache != 'true'
+        uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723 # v3.4.0
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          cache-map: |
+            {
+              "ccache": { "target": "/ccache", "id": "core-ccache" }
+            }
+          skip-extraction: ${{ steps.ccache.outputs.cache-hit }}
+
+      # The same for core-wasm when there is no wasm package
+      - name: Restore wasm ccache
+        if: steps.core.outputs.wasm == '' && !startsWith(github.ref, 'refs/tags/') && steps.meta.outputs.no_cache != 'true'
+        id: wasm-ccache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0 # zizmor: ignore[cache-poisoning]
+        with:
+          path: wasm-ccache
+          key: ccache-wasm-${{ matrix.brand.name }}-${{ matrix.arch }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-wasm-${{ matrix.brand.name }}-${{ matrix.arch }}-
+            ccache-wasm-
+
+      - name: Inject wasm ccache into BuildKit
+        if: steps.core.outputs.wasm == '' && !startsWith(github.ref, 'refs/tags/') && steps.meta.outputs.no_cache != 'true'
+        uses: reproducible-containers/buildkit-cache-dance@5422eac04292c961a382e0f584ea0f03ad9da723 # v3.4.0
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          cache-map: |
+            {
+              "wasm-ccache": { "target": "/ccache", "id": "wasm-ccache" }
+            }
+          skip-extraction: ${{ steps.wasm-ccache.outputs.cache-hit }}
+
+      - name: Build all targets (packages → docker → develop)
+        uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
+        with:
+          source: ./build
           # For nextcloud-office, brand-server.hcl is appended; empty lines are
           # filtered by bake-action so euro-office sees only the base file.
           files: |
@@ -263,7 +428,7 @@ jobs:
             ${{ matrix.brand.extra_bake_files }}
           # extra_targets is either "" (euro-office) or "brand-icons," so the
           # comma-joined target list resolves correctly for both.
-          targets: ${{ matrix.brand.extra_targets }}packages,standalone,develop,cluster-utils,cluster-example,cluster-docs
+          targets: ${{ matrix.brand.extra_targets }}${{ needs.scope.outputs.targets }}
           # push=false here; per-target pushing is controlled via tags below.
           # Targets with empty tags= are not pushed regardless of this flag.
           push: false
@@ -271,235 +436,136 @@ jobs:
           # cache-to still repopulates fresh cache. pull refreshes base images.
           no-cache: ${{ steps.meta.outputs.no_cache == 'true' }}
           pull: ${{ steps.meta.outputs.no_cache == 'true' }}
+          # Pin every target's build context to the repo root (".." from
+          # source ./build). Without this override bake resolves the context
+          # to ../../../build and every leg fails with "lstat ../../../build:
+          # no such file or directory". The last line clears every cache-to
+          # for fork PRs; bake applies --set in order, so it must stay last.
+          # (Note: comments must stay outside the set: block below, which is
+          # parsed line by line.)
           set: |
-            core.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}core-buildcache-${{ matrix.arch }}
-            core.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}core-buildcache-${{ matrix.arch }},mode=max
+            *.context=..
+            core.args.CORE_CCACHE=1
+            core.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}core-buildcache-${{ matrix.arch }}
+            core.cache-from+=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_fallback }}-${{ matrix.brand.cache_prefix }}core-buildcache-${{ matrix.arch }}
+            core.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}core-buildcache-${{ matrix.arch }},mode=max
             core.tags=
-            core-wasm.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}core-wasm-buildcache-${{ matrix.arch }}
-            core-wasm.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}core-wasm-buildcache-${{ matrix.arch }},mode=max
+            core-wasm.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}core-wasm-buildcache-${{ matrix.arch }}
+            core-wasm.cache-from+=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_fallback }}-${{ matrix.brand.cache_prefix }}core-wasm-buildcache-${{ matrix.arch }}
+            core-wasm.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}core-wasm-buildcache-${{ matrix.arch }},mode=max
             core-wasm.tags=
-            sdkjs.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}sdkjs-buildcache-${{ matrix.arch }}
-            sdkjs.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}sdkjs-buildcache-${{ matrix.arch }},mode=max
+            sdkjs.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}sdkjs-buildcache-${{ matrix.arch }}
+            sdkjs.cache-from+=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_fallback }}-${{ matrix.brand.cache_prefix }}sdkjs-buildcache-${{ matrix.arch }}
+            sdkjs.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}sdkjs-buildcache-${{ matrix.arch }},mode=max
             sdkjs.tags=
-            web-apps.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}web-apps-buildcache-${{ matrix.arch }}
-            web-apps.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}web-apps-buildcache-${{ matrix.arch }},mode=max
+            web-apps.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}web-apps-buildcache-${{ matrix.arch }}
+            web-apps.cache-from+=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_fallback }}-${{ matrix.brand.cache_prefix }}web-apps-buildcache-${{ matrix.arch }}
+            web-apps.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}web-apps-buildcache-${{ matrix.arch }},mode=max
             web-apps.tags=
-            server.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}server-buildcache-${{ matrix.arch }}
-            server.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}server-buildcache-${{ matrix.arch }},mode=max
+            server.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}server-buildcache-${{ matrix.arch }}
+            server.cache-from+=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_fallback }}-${{ matrix.brand.cache_prefix }}server-buildcache-${{ matrix.arch }}
+            server.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}server-buildcache-${{ matrix.arch }},mode=max
             server.tags=
-            example.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}example-buildcache-${{ matrix.arch }}
-            example.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}example-buildcache-${{ matrix.arch }},mode=max
+            example.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}example-buildcache-${{ matrix.arch }}
+            example.cache-from+=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_fallback }}-${{ matrix.brand.cache_prefix }}example-buildcache-${{ matrix.arch }}
+            example.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}example-buildcache-${{ matrix.arch }},mode=max
             example.tags=
-            bundle.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}bundle-buildcache-${{ matrix.arch }}
-            bundle.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}bundle-buildcache-${{ matrix.arch }},mode=max
+            bundle.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}bundle-buildcache-${{ matrix.arch }}
+            bundle.cache-from+=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_fallback }}-${{ matrix.brand.cache_prefix }}bundle-buildcache-${{ matrix.arch }}
+            bundle.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}bundle-buildcache-${{ matrix.arch }},mode=max
             bundle.tags=
-            packages.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}packages-buildcache-${{ matrix.arch }}
-            packages.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}packages-buildcache-${{ matrix.arch }},mode=max
+            packages.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}packages-buildcache-${{ matrix.arch }}
+            packages.cache-from+=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_fallback }}-${{ matrix.brand.cache_prefix }}packages-buildcache-${{ matrix.arch }}
+            packages.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}packages-buildcache-${{ matrix.arch }},mode=max
             packages.tags=
-            cluster-docs.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}cluster-docs-buildcache-${{ matrix.arch }}
-            cluster-docs.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}cluster-docs-buildcache-${{ matrix.arch }},mode=max
+            cluster-docs.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}cluster-docs-buildcache-${{ matrix.arch }}
+            cluster-docs.cache-from+=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_fallback }}-${{ matrix.brand.cache_prefix }}cluster-docs-buildcache-${{ matrix.arch }}
+            cluster-docs.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}cluster-docs-buildcache-${{ matrix.arch }},mode=max
             cluster-docs.tags=${{ steps.meta.outputs.images_push == 'true' && format('{0}/{1}:{2}', env.REGISTRY, matrix.brand.cluster_docs, steps.meta.outputs.images_tag) || '' }}
-            cluster-docs.output=${{ steps.meta.outputs.images_push == 'true' && format('type=registry') || 'type=cacheonly' }}
-            cluster-example.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}cluster-example-buildcache-${{ matrix.arch }}
-            cluster-example.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}cluster-example-buildcache-${{ matrix.arch }},mode=max
+            cluster-docs.output=${{ steps.meta.outputs.images_push == 'true' && 'type=registry' || 'type=cacheonly' }}
+            cluster-example.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}cluster-example-buildcache-${{ matrix.arch }}
+            cluster-example.cache-from+=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_fallback }}-${{ matrix.brand.cache_prefix }}cluster-example-buildcache-${{ matrix.arch }}
+            cluster-example.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}cluster-example-buildcache-${{ matrix.arch }},mode=max
             cluster-example.tags=${{ steps.meta.outputs.images_push == 'true' && format('{0}/{1}:{2}', env.REGISTRY, matrix.brand.cluster_example, steps.meta.outputs.images_tag) || '' }}
-            cluster-example.output=${{ steps.meta.outputs.images_push == 'true' && format('type=registry') || 'type=cacheonly' }}
-            cluster-utils.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}cluster-utils-buildcache-${{ matrix.arch }}
-            cluster-utils.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}cluster-utils-buildcache-${{ matrix.arch }},mode=max
+            cluster-example.output=${{ steps.meta.outputs.images_push == 'true' && 'type=registry' || 'type=cacheonly' }}
+            cluster-utils.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}cluster-utils-buildcache-${{ matrix.arch }}
+            cluster-utils.cache-from+=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_fallback }}-${{ matrix.brand.cache_prefix }}cluster-utils-buildcache-${{ matrix.arch }}
+            cluster-utils.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}cluster-utils-buildcache-${{ matrix.arch }},mode=max
             cluster-utils.tags=${{ steps.meta.outputs.images_push == 'true' && format('{0}/{1}:{2}', env.REGISTRY, matrix.brand.cluster_utils, steps.meta.outputs.images_tag) || '' }}
-            cluster-utils.output=${{ steps.meta.outputs.images_push == 'true' && format('type=registry') || 'type=cacheonly' }}
-            standalone.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}standalone-buildcache-${{ matrix.arch }}
-            standalone.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}standalone-buildcache-${{ matrix.arch }},mode=max
+            cluster-utils.output=${{ steps.meta.outputs.images_push == 'true' && 'type=registry' || 'type=cacheonly' }}
+            standalone.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}standalone-buildcache-${{ matrix.arch }}
+            standalone.cache-from+=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_fallback }}-${{ matrix.brand.cache_prefix }}standalone-buildcache-${{ matrix.arch }}
+            standalone.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}standalone-buildcache-${{ matrix.arch }},mode=max
             standalone.tags=${{ steps.meta.outputs.images_push == 'true' && format('{0}/{1}:{2}', env.REGISTRY, matrix.brand.image_name, steps.meta.outputs.images_tag) || (steps.meta.outputs.export_image == 'true' && steps.meta.outputs.e2e_image || '') }}
-            standalone.output=${{ (steps.meta.outputs.images_push == 'true' || steps.meta.outputs.export_image == 'true') && 'type=registry' || 'type=cacheonly' }}
-            develop.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}develop-buildcache-${{ matrix.arch }}
-            develop.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.ref_name }}-${{ matrix.brand.cache_prefix }}develop-buildcache-${{ matrix.arch }},mode=max
+            standalone.output=${{ steps.meta.outputs.nc_publish == 'true' && format('type=oci,dest={0}/nc-standalone.oci.tar', runner.temp) || ((steps.meta.outputs.images_push == 'true' || steps.meta.outputs.export_image == 'true') && 'type=registry' || 'type=cacheonly') }}
+            develop.cache-from=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}develop-buildcache-${{ matrix.arch }}
+            develop.cache-from+=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_fallback }}-${{ matrix.brand.cache_prefix }}develop-buildcache-${{ matrix.arch }}
+            develop.cache-to=type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:${{ steps.meta.outputs.cache_ref }}-${{ matrix.brand.cache_prefix }}develop-buildcache-${{ matrix.arch }},mode=max
             develop.tags=${{ steps.meta.outputs.develop_push == 'true' && format('{0}/{1}:latest-dev-{2}', env.REGISTRY, matrix.brand.image_name, matrix.arch) || '' }}
             develop.output=${{ steps.meta.outputs.develop_push == 'true' && 'type=registry' || 'type=cacheonly' }}
+            ${{ steps.meta.outputs.is_fork == 'true' && '*.cache-to=' || '' }}
         env:
           REGISTRY: ${{ env.REGISTRY }}
           TAG: ${{ steps.meta.outputs.images_tag }}
           PRODUCT_VERSION: ${{ steps.meta.outputs.product_version }}
           BUILD_NUMBER: ${{ steps.meta.outputs.build_number }}
+          BUILD_COMMITS: ${{ steps.meta.outputs.build_commits }}
+          OS_UPDATE_STAMP: ${{ steps.meta.outputs.os_update_stamp }}
           BUILD_ROOT: ${{ env.BUILD_ROOT }}
+          CORE_PREBUILT: ${{ steps.core.outputs.dir }}
+          CORE_WASM_PREBUILT: ${{ steps.core.outputs.wasm }}
           NUGET_CACHE: local
 
-      - name: Upload packages to GitHub Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        if: matrix.brand.name == 'euro-office' && startsWith(github.ref, 'refs/tags/')
-        with:
-          files: |
-            build/deploy/packages/*.deb
-            build/deploy/packages/*.rpm
-
-      - name: Upload packages via SSH (nextcloud-office)
-        if: matrix.brand.name == 'nextcloud-office' && startsWith(github.ref, 'refs/tags/')
+      # Pushed with skopeo and a private authfile rather than docker login:
+      # the docker credential store holds one login per host, and ghcr.io is
+      # already logged in as GITHUB_TOKEN for the euro-office build cache.
+      # continue-on-error: a failed push must not fail the build job, which
+      # would also skip publish-euro-office-images. The failure still surfaces
+      # in publish-nextcloud-images, which cannot find the per-arch image.
+      - name: Push standalone image to nextcloud-releases (nextcloud-office)
+        if: steps.meta.outputs.nc_publish == 'true'
+        continue-on-error: true
         env:
-          SSH_KEY:         ${{ secrets.NEXTCLOUD_SSH_KEY }}
-          SSH_HOST:        ${{ secrets.NEXTCLOUD_SSH_HOST }}
-          SSH_USER:        ${{ secrets.NEXTCLOUD_SSH_USER }}
-          SSH_PORT:        ${{ secrets.NEXTCLOUD_SSH_PORT || 22 }}
-          REMOTE_BASE:     ${{ secrets.NEXTCLOUD_SSH_REMOTE_PATH }}
-          PRODUCT_VERSION: ${{ steps.meta.outputs.product_version }}
-          BUILD_NUMBER:    ${{ steps.meta.outputs.build_number }}
+          GHCR_USER:  ${{ secrets.NEXTCLOUD_RELEASES_USER }}
+          GHCR_TOKEN: ${{ secrets.NEXTCLOUD_RELEASES_TOKEN }}
+          IMAGE:      ${{ env.NEXTCLOUD_RELEASES_IMAGE }}
+          IMAGE_TAG:  ${{ steps.meta.outputs.ref_name }}-${{ matrix.arch }}
+          ARCHIVE:    ${{ runner.temp }}/nc-standalone.oci.tar
         run: |
           set -euo pipefail
-          mkdir -p ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
-          chmod 600 ~/.ssh/id_deploy
-          ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
-
-          TARGET="$REMOTE_BASE/$PRODUCT_VERSION/$BUILD_NUMBER"
-          ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" "mkdir -p '$TARGET'"
-          scp -i ~/.ssh/id_deploy -P "$SSH_PORT" \
-            build/deploy/packages/*.deb build/deploy/packages/*.rpm \
-            "$SSH_USER@$SSH_HOST:$TARGET/"
-
-  # ─────────────────────────────────────────────────────────────
-  # MANIFEST
-  #
-  # Merges the arch-specific images into multi-arch manifests for
-  # both brands. Runs on default branch (:nightly) and git tags
-  # (:latest + sanitised ref tag).
-  # ─────────────────────────────────────────────────────────────
-  manifest:
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/')
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Compute safe ref name
-        id: ref
-        run: echo "name=$(echo '${{ github.ref_name }}' | tr '/' '-')" >> $GITHUB_OUTPUT
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create and push multi-arch manifests
-        run: |
-          REF="${{ steps.ref.outputs.name }}"
-          REGISTRY="${{ env.REGISTRY }}"
-
-          create_manifest() {
-            local repo="$1"
-            local target_tag="$2"
-            local source_tag="${3:-$target_tag}"
-            docker buildx imagetools create \
-              -t "${repo}:${target_tag}" \
-              "${repo}:${source_tag}-amd64" \
-              "${repo}:${source_tag}-arm64"
-          }
-
-          # Repos that follow the standard tagging scheme
-          # (nightly on default branch, latest + ref on git tags).
-          # documentserver and nextcloud-office-documentserver also get
-          # :latest-dev on the default branch via the develop target;
-          # the cluster images do not.
-          REPOS=(
-            "${REGISTRY}/${{ env.IMAGE_NAME }}"
-            "${REGISTRY}/${{ env.CLUSTER_IMG_DOCS }}"
-            "${REGISTRY}/${{ env.CLUSTER_IMG_EXAMPLE }}"
-            "${REGISTRY}/${{ env.CLUSTER_IMG_UTILS }}"
-            #"${REGISTRY}/${{ env.NEXTCLOUD_IMAGE_NAME }}"
-            #"${REGISTRY}/${{ env.NEXTCLOUD_CLUSTER_IMG_DOCS }}"
-            #"${REGISTRY}/${{ env.NEXTCLOUD_CLUSTER_IMG_EXAMPLE }}"
-            #"${REGISTRY}/${{ env.NEXTCLOUD_CLUSTER_IMG_UTILS }}"
-          )
-
-          if [[ "${{ github.ref_name }}" == "${{ github.event.repository.default_branch }}" ]]; then
-            for repo in "${REPOS[@]}"; do
-              create_manifest "$repo" "nightly"
-            done
-            create_manifest "${REGISTRY}/${{ env.IMAGE_NAME }}" "latest-dev"
-            #create_manifest "${REGISTRY}/${{ env.NEXTCLOUD_IMAGE_NAME }}" "latest-dev"
+          if ! command -v skopeo >/dev/null; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq skopeo
           fi
+          AUTH="$RUNNER_TEMP/nc-releases-auth.json"
+          printf '%s' "$GHCR_TOKEN" | skopeo login ghcr.io --authfile "$AUTH" -u "$GHCR_USER" --password-stdin
+          skopeo copy --retry-times 3 --dest-authfile "$AUTH" \
+            "oci-archive:$ARCHIVE" "docker://$IMAGE:$IMAGE_TAG"
+          rm -f "$ARCHIVE" "$AUTH"
 
-          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            for repo in "${REPOS[@]}"; do
-              create_manifest "$repo" "latest"
-              create_manifest "$repo" "${REF}" "latest"
-            done
-          fi
-
-  e2e:
-    runs-on: self-hosted
-    # Depend on build (produces the image) and manifest (multi-arch tags on
-    # main/tags). manifest is skipped on pull_request, so don't require it there.
-    needs: [build, manifest]
-    if: |
-      !cancelled() &&
-      needs.build.result == 'success' &&
-      (github.event_name != 'pull_request' ||
-       github.event.pull_request.head.repo.full_name == github.repository) &&
-      (github.event_name == 'pull_request' ||
-       ((github.ref == format('refs/heads/{0}', github.event.repository.default_branch) || startsWith(github.ref, 'refs/tags/'))
-        && needs.manifest.result == 'success'))
-    permissions:
-      contents: read
-      packages: read
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      # Handed to publish-nextcloud-download-server and
+      # publish-nextcloud-github-release (every tag) and
+      # publish-nextcloud-apt-dnf (stable vX.Y.Z tags only; that job
+      # carries its own gate).
+      - name: Upload packages as artifact (nextcloud-office)
+        if: matrix.brand.name == 'nextcloud-office' && startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          persist-credentials: false
+          name: nc-packages-${{ matrix.arch }}
+          path: |
+            build/deploy/packages/*.deb
+            build/deploy/packages/*.rpm
+          if-no-files-found: error
+          retention-days: 1
 
-      - name: Determine image
-        id: image
-        run: |
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            echo "ref=${{ env.REGISTRY }}/${{ env.CACHE_IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            echo "ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_OUTPUT
-          else
-            echo "ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:nightly" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@c99871dec2022cc055c062a10cc1a1310835ceb4 # v4.3.0
+      # Lets a release/v* PR or a manual dispatch be tried out before tagging;
+      # on tags publish-euro-office-release attaches them to the release.
+      - name: Upload packages as artifact (euro-office)
+        if: matrix.brand.name == 'euro-office' && (github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release/') || startsWith(github.ref, 'refs/tags/'))
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Pull built image
-        run: docker pull ${{ steps.image.outputs.ref }}
-
-      - name: Set up Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: e2e/package-lock.json
-
-      - name: Install dependencies
-        working-directory: e2e
-        run: npm ci
-
-      - name: Install Playwright browsers
-        working-directory: e2e
-        run: npx playwright install chromium --with-deps
-
-      - name: Run E2E tests
-        working-directory: e2e
-        env:
-          E2E_IMAGE: ${{ steps.image.outputs.ref }}
-        run: npm test
-
-      - name: Upload Playwright report
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: playwright-report-${{ github.sha }}
-          path: e2e/playwright-report/
-          retention-days: 14
+          name: packages-${{ matrix.arch }}
+          path: |
+            build/deploy/packages/*.deb
+            build/deploy/packages/*.rpm
+          if-no-files-found: error
+          retention-days: 7

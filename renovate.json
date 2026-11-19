@@ -1,6 +1,15 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended"
+    "config:recommended",
+    "github>Euro-Office/.github"
+  ],
+  "packageRules": [
+    {
+      "description": "Python interpreter upgrades in the cluster-utils image are not exercised by CI, so review them manually",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["python"],
+      "automerge": false
+    }
   ]
 }

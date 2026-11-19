@@ -6,6 +6,7 @@ all: web-apps sdkjs core server #core/wasm
 # ARM64 platform accommodations
 IS_ARM64      := $(filter aarch64,$(shell uname -m))
 CC_PLATFORM   ?= $(if $(IS_ARM64),java,$(shell $(EO_DEV)/sdkjs/build/node_modules/google-closure-compiler-linux/compiler --version >/dev/null 2>&1 && echo "native,java" || echo "java"))
+PKG_TARGET    := linux-$(if $(IS_ARM64),arm64,x64)
 CORE_FLAGS    := -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS_DEBUG="-g -O0" -DCMAKE_C_FLAGS_DEBUG="-g -O0"
 SERVER_FLAGS  :=
 SDKJS_FLAGS   :=
@@ -18,10 +19,12 @@ WEBAPPS_FLAGS :=
 #   PRODUCT_VERSION=9.4.0 make web-apps-dev
 PRODUCT_VERSION ?= $(shell cat $(EO_DEV)/VERSION)
 
-# Pass SKIP_MOBILE=1 to skip framework7-react mobile builds (~50s saved).
-# Useful when iterating on desktop editor JS/CSS only.
-#   SKIP_MOBILE=1 make web-apps-dev
-SKIP_MOBILE ?= 0
+# "DocumentServer=<sha> web-apps=<sha> ..." for the About dialog, read from the mounted checkout
+ifndef BUILD_COMMITS
+BUILD_COMMITS := $(shell cd $(EO_DEV) && export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0='*' && \
+	HEAD=$$(git rev-parse HEAD 2>/dev/null) && echo "DocumentServer=$$HEAD $$(git submodule foreach --quiet 'echo $$name=$$(git rev-parse HEAD)')")
+endif
+export BUILD_COMMITS
 
 CHECK_WEBAPPS_DEPS = @test -d $(EO_DEV)/web-apps/build/node_modules || { echo "Run 'make web-apps' first to install dependencies"; exit 1; }
 
@@ -62,7 +65,6 @@ web-apps:
 	cd $(EO_DEV)/web-apps/build && \
 	npm ci && \
 	BUILD_ROOT=$(EO_ROOT) PRODUCT_VERSION=$(PRODUCT_VERSION) THEME=euro-office \
-	SKIP_MOBILE=$(SKIP_MOBILE) \
 	node scripts/build-pipeline.js
 	$(FLUSH_CACHE)
 
@@ -72,7 +74,6 @@ web-apps-dev:
 	python3 merge_and_check.py && \
 	cd $(EO_DEV)/web-apps/build && \
 	BUILD_ROOT=$(EO_ROOT) PRODUCT_VERSION=$(PRODUCT_VERSION) THEME=euro-office \
-	SKIP_MOBILE=$(SKIP_MOBILE) \
 	node scripts/build-pipeline.js
 	$(FLUSH_CACHE)
 
@@ -183,7 +184,7 @@ define build_server
 	@echo "Building $(1) with flags $(CFLAGS)"
 	cd $(1) && \
 	npm install && \
-	pkg . -t linux-x64 --node-options="--max_old_space_size=4096" $(CFLAGS) -o $(2) && \
+	pkg . -t $(PKG_TARGET) --node-options="--max_old_space_size=4096" $(CFLAGS) -o $(2) && \
 	supervisorctl restart $(3)
 endef
 

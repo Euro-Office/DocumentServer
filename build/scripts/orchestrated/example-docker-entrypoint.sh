@@ -5,7 +5,7 @@ export NODE_CONFIG='{
         "siteUrl": "'${DS_URL:-"/"}'",
         "token": {
           "enable": '${JWT_ENABLED:-false}',
-          "secret": "'${JWT_SECRET:-secret}'",
+          "secret": "'${JWT_SECRET:-euro-office-dev-jwt-secret-key-2026}'",
           "authorizationHeader": "'${JWT_HEADER:-Authorization}'"
         }
       }

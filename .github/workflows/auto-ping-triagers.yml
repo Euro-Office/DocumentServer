@@ -1,3 +1,15 @@
+# Triaging a community issue means:
+# - Check that it is understandable and reproducible; if details are missing,
+#   ask the reporter and add `needs info`
+# - Label it (e.g. `bug`, `enhancement`, `question`) and the affected area
+# - If it may have a bigger impact (e.g. data loss, many users affected),
+#   raise it with the team right away
+# - If it describes a security vulnerability, hide its details and ask the
+#   reporter to submit a private report via GitHub security advisories as
+#   described in SECURITY.md
+# - Close it with `duplicate`, `invalid` or `wontfix` if it does not need
+#   further work
+
 name: Request community issue triage
 
 on:
@@ -15,7 +27,7 @@ jobs:
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
-            const candidates = ['j-base64', 'MonaAghili', 'Alex-Arsys', 'DmySyz', 'rikled', 'chrip', 'Aiiaiiio', 'moodyjmz', 'emberfiend'];
+            const candidates = ['j-base64', 'MonaAghili', 'DmySyz', 'rikled', 'chrip', 'Aiiaiiio', 'moodyjmz'];
             const exclusions = ['HerrRichter', 'juliusknorr'];
             const count = 2;
 
@@ -43,9 +55,9 @@ jobs:
               repo: context.repo.repo,
               issue_number: context.payload.issue.number,
               body: [
-                      '<!-- community-triage-request -->',          // tags required for: 
-                      `<!-- triagers: ${picked.join(',')} -->`,     // remind-community-issue-triage.yml
-                      `${mentions} Please triage this community-created issue within 48 hours.`,
-                    ].join('\n'),
+                '<!-- community-triage-request -->',          // tags required for: 
+                `<!-- triagers: ${picked.join(',')} -->`,     // remind-community-issue-triage.yml
+                `${mentions} Please triage this community-created issue within 48 hours.`,
+              ].join('\n'),
             });
             core.info(`Requested community triage from: ${picked.join(', ')}`);

@@ -1,0 +1,50 @@
+# This workflow is provided via the organization template repository
+#
+# https://github.com/Euro-Office/.github
+# https://docs.github.com/en/actions/learn-github-actions/sharing-workflows-with-your-organization
+#
+# SPDX-FileCopyrightText: Nextcloud GmbH and Nextcloud contributors
+# SPDX-License-Identifier: MIT
+
+name: Auto approve Renovate PRs
+
+on:
+  pull_request_target: # zizmor: ignore[dangerous-triggers]
+    branches:
+      - main
+      - master
+      - stable*
+
+permissions:
+  contents: read
+
+concurrency:
+  group: renovate-approve-merge-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  auto-approve-merge:
+    if: ${{
+      github.event.pull_request.user.login == 'renovate[bot]'
+      && github.event.sender.login == 'renovate[bot]'
+      && startsWith(github.head_ref, 'renovate/')
+      }}
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+
+    steps:
+      - name: Disabled on forks
+        if: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          echo 'Can not approve PRs from forks'
+          exit 1
+
+      # Auto-merge of non-major updates is enabled by Renovate itself via the
+      # shared preset: "extends": ["github>Euro-Office/.github"]
+      - name: GitHub actions bot approve
+        run: gh pr review --approve "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.EO_ROBOT_GITHUB_TOKEN }}
+

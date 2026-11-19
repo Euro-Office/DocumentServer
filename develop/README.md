@@ -14,7 +14,7 @@ Before starting, make sure Docker and your build user are set up: [Build Requisi
 - Follow the repo cloning steps in the build readme
 - In DocumentServer/develop, start the containers and get into eo bash. The
   recommended path on all architectures is to **pull the prebuilt dev image** — a
-  multi-arch `:latest-dev` (amd64 **and** arm64) is published on every merge to `main`,
+  multi-arch `:latest-dev` (amd64 **and** arm64) is published nightly from `main` with all submodules at their latest commit (on days a submodule moved),
   so no local image build is needed, including on Apple Silicon:
   - `make pull` to pull the latest dev image from GitHub and start (recommended first step)
   - `make` to use the image already available locally
@@ -158,7 +158,11 @@ The Docker image and dev Makefile handle ARM64 automatically:
 - **web-apps**: Skips imagemin on arm64 (native binaries are x86_64-only)
 - **server**: `pkg` builds native arm64 binaries
 
-A multi-arch `:latest-dev` image (amd64 + arm64) is published to GHCR on every merge to `main`, so ARM64 users can `make pull` like everyone else — `make build` is only needed for offline work or to rebuild the image itself.
+A multi-arch `:latest-dev` image (amd64 + arm64) is published to GHCR nightly, built from `main` with all submodules at their latest commit, so ARM64 users can `make pull` like everyone else — `make build` is only needed for offline work or to rebuild the image itself.
+
+#### Error reporting (GlitchTip or Sentry)
+
+`docker compose --profile sentry up -d glitchtip glitchtip-db` starts a local [GlitchTip](https://glitchtip.com/) at http://localhost:8083. Register, create an organization and project, then put its DSN with the host replaced by `glitchtip:8000` into `develop/.env` as `EO_SENTRY_DSN=http://<key>@glitchtip:8000/<id>` and run `docker compose up -d eo`. The server reads it as `SENTRY_DSN` (stage 2 of #392); empty means disabled. For Sentry, set the DSN of a [sentry.io](https://sentry.io) Node.js project as `EO_SENTRY_DSN` instead and skip the profile; events then leave your machine.
 
 ## Parallel test servers (`eo.sh`)
 
@@ -194,6 +198,18 @@ test servers — **do not expose them publicly**. Override the image with `EO_IM
 To create and open a document, use the example app's **Create new → Document** (which
 hits `editor?fileExt=docx`). Opening `editor?fileName=new.docx` directly will fail —
 that form expects an already-existing file.
+
+### Upload size limits
+
+The dev setups (`eo.sh` and `docker-compose.yml`) raise the upload limits from 100 MB to
+500 MB so large test documents open. The limits are environment variables of the image:
+
+| Variable | Image default | Dev | Controls |
+|---|---|---|---|
+| `NGINX_CLIENT_MAX_BODY_SIZE` | `100m` | `500m` | nginx request body size (uploads to the document server) |
+| `MAX_FILE_SIZE` | `104857600` | `524288000` | example app upload limit and docservice temp file upload |
+| `FILECONVERTER_MAX_DOWNLOAD_BYTES` | `524288000` | default | largest file the converter downloads from storage |
+| `FILECONVERTER_INPUT_LIMIT_UNCOMPRESSED` | `500MB` | default | uncompressed size limit for OOXML files |
 
 ## Development Builds
 

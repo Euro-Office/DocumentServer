@@ -37,9 +37,53 @@ If you only want to build one of the components, you can specify the respective 
 docker buildx bake TARGET
 ```
 
+### Using an alternate BuildKit cache directory
+
+By default, local BuildKit caches are stored under `./.docker-cache/`.  
+Full builds can require more than 20 GB of cache space, so you can override the cache root using the `CACHE_ROOT` environment variable:
+
+```sh
+cd DocumentServer/build
+CACHE_ROOT=/path/with/enough/space docker buildx bake
+```
+
+The same option can be used when building a specific target:
+
+```sh
+CACHE_ROOT=/path/with/enough/space docker buildx bake develop
+```
+
+`CACHE_ROOT` should be an absolute path on a filesystem with sufficient
+available space.
+
+### Prebuilt core
+
+Core CI publishes its build output for every commit on main and for pull
+requests from branches of the core repository that are up to date with their
+base. To use it instead of building core:
+
+```sh
+cd DocumentServer/build
+CORE_PREBUILT=$(./fetch-core.sh) CORE_WASM_PREBUILT=$(./fetch-core-wasm.sh) docker buildx bake
+```
+
+`fetch-core.sh` downloads the package for the `core` checkout, and
+`fetch-core-wasm.sh` the editors' WebAssembly modules. Each prints nothing,
+and the bake builds that part of core, when there is no package or `core` has
+local changes.
+
 ## Running the Container
 
 After building the image, you can run it with a simple `docker run`.
+
+### Boolean environment variables
+
+Boolean settings such as `JWT_ENABLED`, `WOPI_ENABLED` or `EXAMPLE_ENABLED` accept, case-insensitively and with surrounding whitespace ignored:
+
+* `true`, `yes`, `y`, `on`, `1` for true
+* `false`, `no`, `n`, `off`, `0` for false
+
+An empty value uses the default. Any other value is rejected for `JWT_ENABLED`, `JWT_ENABLED_INBOX` and `JWT_ENABLED_OUTBOX`: the container refuses to start rather than guess whether to authenticate. For all other flags it is logged as a warning and the default applies.
 
 If the docker build stockes because of broken content in cache, for example with error:
 ```sh
@@ -114,21 +158,13 @@ make vagrant-destroy
 
 ## Tagging a release
 
-The `scripts/tag_release.sh` script creates semver pre-release tags
-(`vX.Y.Z-ID.BUILD`) on the main repo and all submodules. The version is read
-from the `VERSION` file at the repo root.
+The `scripts/tag_release.sh` script tags the main repo and all submodules. The
+version is read from the `VERSION` file at the repo root. `vX.Y.Z` is a stable
+release, `vX.Y.Z-ID` a pre-release. There are no rebuild tags: a broken release
+gets a new patch version.
 
 ```sh
-# Auto-increment: finds the last -tp.N tag and bumps to N+1
-../scripts/tag_release.sh --dry-run
-../scripts/tag_release.sh
-
-# Explicit build number
-../scripts/tag_release.sh -b 5
-
-# Custom pre-release identifier (default: tp)
-../scripts/tag_release.sh -p rc        # → v9.3.1-rc.1
-
-# Create and push tags to remotes
-../scripts/tag_release.sh --push
+../scripts/tag_release.sh --dry-run     # → v9.3.1
+../scripts/tag_release.sh -p rc.1       # → v9.3.1-rc.1
+../scripts/tag_release.sh --push        # create and push tags to remotes
 ```

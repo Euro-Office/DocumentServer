@@ -1,4 +1,5 @@
 .vscode/
+build/.docker-cache
 build/vagrant/.vagrant
 build/deploy
 develop/richdocuments
@@ -6,3 +7,6 @@ e2e/node_modules/
 e2e/playwright-report/
 e2e/test-results/
 e2e/dist/
+develop/.env
+build/core-prebuilt/
+build/core-wasm-prebuilt/

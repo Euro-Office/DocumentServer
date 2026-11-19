@@ -1,0 +1,5 @@
+{
+  "//": "Marks the harness scripts as ES modules for Node, which runs them by stripping types (Node 22.18 or later).",
+  "private": true,
+  "type": "module"
+}

@@ -1,9 +1,14 @@
 name: Update submodules to latest main branch
 
+# Opens (or rebases onto main and updates) the submodule bump PR every night.
+# CI on that PR is the nightly build: it publishes :nightly and :latest-dev
+# once e2e passes (see the plan job in ci.yml). Keep the branch name in sync.
+
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 6 * * *'   # 06:00 UTC daily — after the mirror job (05:30 UTC)
+    - cron: '0 6 * * *'
+  workflow_call:
 
 jobs:
   update-submodules:
@@ -14,12 +19,14 @@ jobs:
 
     steps:
       - name: Checkout fork repo (main)
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
-          submodules: recursive
+          # Submodule contents are not needed: gitlinks are updated in the index
+          # and history is read from commit-only bare clones below.
+          submodules: false
           token: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN }}
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Configure git identity
         run: |
@@ -41,39 +48,38 @@ jobs:
           # Enumerate every submodule from .gitmodules so none are missed.
           mapfile -t paths < <(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | awk '{print $2}')
 
+          # The checkout's token, for the bare clones of private submodules (they don't see its config)
+          auth="$(git config --get http.https://github.com/.extraheader || true)"
+
           for path in "${paths[@]}"; do
-            if [ ! -d "$path" ]; then
-              echo "Skipping $path — directory not found"
+            old_sha="$(git ls-tree HEAD "$path" | awk '{print $3}')"
+            if [ -z "$old_sha" ]; then
+              echo "Skipping $path — no gitlink in HEAD"
               continue
             fi
-            pushd "$path" > /dev/null
-            old_sha="$(git rev-parse HEAD)"
-            git fetch origin
-            # Resolve the remote's actual default branch (HEAD), falling back to main.
-            git remote set-head origin --auto > /dev/null 2>&1 || true
-            branch="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@')"
-            [ -z "$branch" ] && branch="main"
-            echo "Updating $path → $branch"
-            git checkout "$branch"
-            git reset --hard "origin/$branch"
-            new_sha="$(git rev-parse HEAD)"
+            # Commits only (no trees/blobs): enough to resolve the default branch tip and build the changelog.
+            meta="$RUNNER_TEMP/submodules/$path.git"
+            git ${auth:+-c "http.https://github.com/.extraheader=$auth"} clone --quiet --bare --no-tags --filter=tree:0 "$(git config -f .gitmodules --get "submodule.$path.url")" "$meta"
+            branch="$(git -C "$meta" symbolic-ref --short HEAD)"
+            new_sha="$(git -C "$meta" rev-parse HEAD)"
+            echo "Updating $path → $branch ($new_sha)"
+            git update-index --cacheinfo "160000,$new_sha,$path"
             if [ "$old_sha" != "$new_sha" ]; then
-              count="$(git rev-list --count "$old_sha..$new_sha")"
+              count="$(git -C "$meta" rev-list --count "$old_sha..$new_sha")"
               {
                 echo "### $path ($branch) — $count new commit(s)"
                 echo
                 echo '```'
-                git log --no-merges --pretty=format:'%h %s' "$old_sha..$new_sha"
+                git -C "$meta" log --no-merges --pretty=format:'%h %s' "$old_sha..$new_sha"
                 echo
                 echo '```'
                 echo
               } >> "$BODY"
             fi
-            popd > /dev/null
           done
 
       - name: Open PR if submodule pointers changed
-        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7.0.11
+        uses: peter-evans/create-pull-request@3ffccacd46053766916f087ce41d627c0b8cf2d1 # v8.1.3
         with:
           token: ${{ secrets.EURO_OFFICE_MIRROR_TOKEN }}
           branch: chore/nightly-submodule-bump

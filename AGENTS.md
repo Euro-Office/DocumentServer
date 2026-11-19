@@ -1,3 +1,36 @@
+## What this repo is
+
+DocumentServer is the master orchestrator for the Euro-Office ecosystem. It manages all submodules, docker orchestration, and workspace-level build configurations.
+
+This repo holds the workspace configuration for the submodules:
+- `core`, `core-fonts`, `sdkjs`, `sdkjs-forms`, `server`, `web-apps`, `dictionaries`, `document-formats`, `document-server-integration`, `document-server-package`, `document-templates`.
+
+Any change to the orchestration (e.g., updating a submodule commit, modifying `docker-bake.hcl`, or changing the build order) requires a full verification of the dependency chain.
+
+## Architecture notes
+
+### Submodule dependency chain
+
+Changes flow in one direction — everything downstream needs rebuilding:
+
+```
+core-fonts → core/AllFontsGen → sdkjs (AllFonts.js) → web-apps → server → Docker image
+```
+
+Each submodule has its own `AGENTS.md` with repo-specific guidance.
+
+The Nextcloud integration app lives in the **sibling repo `eurooffice-nextcloud`**, mounted read-only into the dev container.
+
+> **Shared submodules**: `core`, `sdkjs`, `web-apps`, `core-fonts`, and `sdkjs-forms` are also submodules of the **`DesktopEditors`** product (the Windows/Mac/Linux desktop app). A change merged to any of those repos affects both DocumentServer and DesktopEditors.
+
+## Rules
+
+- **Never** modify submodule contents directly from here without verifying the target submodule's own `AGENTS.md`.
+- **Never** introduce workspace-wide dependencies that break the "no root package.json" rule in submodules.
+- **Never** commit changes to `docker-bake.hcl` without validating the build orchestration for all platforms.
+- **Always** verify that `AGENTS.md` is updated if you modify workspace-level developer workflows.
+- **Never** update submodule refs manually via a PR — submodule bumps are handled by an automated GitHub Action.
+
 ## Build & run a test server (Docker)
 
 The dev environment in `develop/` runs a full document server from a prebuilt image. Individual components are rebuilt *inside* the container — never rebuild the docker image to test a change. The repo is bind-mounted at `/develop` in the container, so edits on the host are immediately visible inside.
@@ -11,6 +44,8 @@ docker compose up -d eo    # document server only; add `nextcloud` for the conne
 ```
 
 If the pull fails (GHCR auth), build locally once: `cd build && docker buildx bake develop`.
+To place BuildKit caches outside `/tmp`, set `CACHE_ROOT` to an absolute path for that bake command.
+See `build/README.md` for details.
 
 Do not use `make`/`make local` in `develop/` — those exec into an interactive shell. Use `docker compose exec -T eo <cmd>` for everything.
 
@@ -45,6 +80,23 @@ Troubleshooting: if `make` fails with `Makefile: No such file or directory`, the
 - **Conversion check**: opening a `.docx`/`.xlsx` in the example app exercises FileConverter + x2t; watch `converter/out.log` for errors.
 - **Nextcloud connector flow** (only when testing the integration): `docker compose up -d`, then `make refresh-urls` to wait for install and wire URLs/JWT; Nextcloud at `http://localhost:8081/` (admin/admin).
 
+### Error reporting (GlitchTip or Sentry)
+
+The opt-in `sentry` profile runs [GlitchTip](https://glitchtip.com/), a Sentry-compatible error tracker, next to `eo`:
+
+```sh
+cd develop
+docker compose --profile sentry up -d glitchtip glitchtip-db
+```
+
+1. Open http://localhost:8083, register a user, create an organization and a project, and copy the project's DSN.
+2. Replace the DSN host with the in-network service name, e.g. `http://<key>@glitchtip:8000/<id>`, and put it in `develop/.env` (gitignored) as `EO_SENTRY_DSN=...`.
+3. Recreate the server with `docker compose up -d eo`; it receives the value as `SENTRY_DSN`. Empty or unset means reporting is disabled.
+
+To use Sentry instead, create a Node.js project on [sentry.io](https://sentry.io), set its DSN as `EO_SENTRY_DSN` unchanged, and skip the profile. Events then leave your machine, so only use it with test documents.
+
+The server-side reporter that reads `SENTRY_DSN` lands in stage 2 of #392. `eo.sh` instances are not on the compose network and cannot reach `glitchtip`.
+
 ### Running instances (`eo.sh`)
 
 `develop/eo.sh` runs one or more test servers as self-contained containers from the same image — current tree mounted at `/develop`, auto-assigned port. Starts detached (agent-friendly, unlike `make local`):
@@ -57,7 +109,7 @@ cd develop
 ./eo.sh ls | logs <name> | down <name>|--all   # manage; `up --force` to recreate
 ```
 
-Run a building instance from its own git worktree so builds don't share `node_modules`; a fresh worktree needs `git submodule update --init --recursive` first. JWT (secret `euro-office-dev-jwt-secret-key-2026`), `EXAMPLE_ENABLED` and `WOPI_ENABLED` are on, so the example app works out of the box.
+Run a building instance from its own git worktree so builds don't share `node_modules`; a fresh worktree needs `git submodule update --init --recursive` first. JWT (secret `euro-office-dev-jwt-secret-key-2026`), `EXAMPLE_ENABLED` and `WOPI_ENABLED` are on, so the example app works out of the box. Upload limits are raised to 500 MB (see `develop/README.md`).
 
 ### Verify in a browser (Playwright MCP)
 
@@ -77,6 +129,12 @@ All contributions generated or assisted by this agent must fully comply with:
 - **[AI Contribution Policy](https://github.com/Euro-Office/.github/blob/main/AI_POLICY.md)** — the primary reference for AI-specific rules, covering disclosure, author accountability, communication, security, licensing, code quality, and autonomous agent behavior.
 - **[Contribution Guidelines](CONTRIBUTING.md)** — covering testing requirements, sign-off, license headers, and the review process. These apply in full to all contributions regardless of how they were produced.
 
+- For existing, copied or derived files: preserve upstream attribution, dates, licenses, additional terms and modification notices. Add our attribution only for our own copyrightable contributions; do not replace upstream notices or bump years merely for touching a file.
+- For new files we only add our copyright notice as SPDX headers
+- Use SPDX headers for our notices, e.g.:
+    SPDX-FileCopyrightText: 2026 Euro-Office contributors
+    SPDX-License-Identifier: AGPL-3.0-only
+
 ### What this agent must always do
 
 - Add an `Assisted-by: AGENT_NAME:MODEL_VERSION` git trailer to every commit containing AI-assisted content.
@@ -91,8 +149,7 @@ All contributions generated or assisted by this agent must fully comply with:
 
 - Open issues, submit pull requests, post review comments, or send security reports autonomously. Every contribution must be reviewed and submitted by a human.
 - Add `Signed-off-by` tags to commits. Only the human contributor can certify the Developer Certificate of Origin.
-- Generate or submit security reports without independent human verification. Report verified vulnerabilities privately by email to the maintainers (`euro-office-team` on the `proton.me` mail server), not as GitHub issues.
+- Generate or submit security reports without independent human verification. Report verified vulnerabilities privately through [Euro-Office/security-advisories](https://github.com/Euro-Office/security-advisories/security/advisories/new) or by email to the maintainers (`euro-office-team` on the `proton.me` mail server), not as GitHub issues.
 - Write PR descriptions, review comments, or issue reports on behalf of the contributor. These must be in the contributor's own words.
 - Fully automate the resolution of issues labeled [`good first issue`](https://github.com/search?q=org%3AEuro-Office+label%3A%22good+first+issue%22&type=issues) or similar beginner-friendly labels.
 - Submit code that has not been reviewed and cleaned up by the contributor. Dead code, redundant logic, excessive comments, and unrelated changes must be removed before submission.
-
