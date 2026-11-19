@@ -144,6 +144,21 @@ jobs:
       matrix: ${{ fromJSON(needs.scope.outputs.matrix) }}
 
     steps:
+      # Repository variable, unset in the public repository: PRIVATE_SUBMODULES,
+      # space-separated submodule names (e.g. "core sdkjs") that are fetched
+      # from Euro-Office/<name>-private instead. The mirror token must be able
+      # to read those repositories.
+      - name: Fetch listed submodules from their private copies
+        if: vars.PRIVATE_SUBMODULES != ''
+        shell: bash
+        env:
+          PRIVATE_SUBMODULES: ${{ vars.PRIVATE_SUBMODULES }}
+        run: |
+          for name in $PRIVATE_SUBMODULES; do
+            git config --global "url.https://github.com/Euro-Office/${name}-private.git.insteadOf" \
+              "https://github.com/Euro-Office/${name}.git"
+          done
+
       - name: Checkout fork repository (with submodules)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -170,8 +185,18 @@ jobs:
           SDKJS_BRANCH:   ${{ github.event.inputs.sdkjs_branch || '' }}
           WEBAPPS_BRANCH: ${{ github.event.inputs.web_apps_branch || '' }}
           SERVER_BRANCH:  ${{ github.event.inputs.server_branch || '' }}
+          # The checkout does not keep its credentials, and a branch in a
+          # private copy cannot be fetched without them.
+          FETCH_TOKEN:    ${{ vars.PRIVATE_SUBMODULES != '' && secrets.EURO_OFFICE_MIRROR_TOKEN || '' }}
         run: |
           set -euo pipefail
+
+          if [ -n "$FETCH_TOKEN" ]; then
+            basic=$(printf 'x-access-token:%s' "$FETCH_TOKEN" | base64 -w0)
+            export GIT_CONFIG_COUNT=1
+            export GIT_CONFIG_KEY_0="http.https://github.com/.extraheader"
+            export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${basic}"
+          fi
 
           checkout_submodule() {
             local path=$1
