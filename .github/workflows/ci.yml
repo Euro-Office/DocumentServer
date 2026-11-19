@@ -73,6 +73,9 @@ jobs:
   # build: full matrix, published as :nightly and :latest-dev once e2e and
   # the upgrade check pass. Pushes to main only build and test.
   plan:
+    # A private copy builds pull requests and manual runs only; its main just
+    # follows the public main. build needs this job.
+    if: ${{ github.event_name != 'push' || !github.event.repository.private }}
     runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     permissions:
       pull-requests: read
@@ -125,7 +128,7 @@ jobs:
   prune-ccache:
     runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: build
-    if: always()
+    if: ${{ always() && (github.event_name != 'push' || !github.event.repository.private) }}
     permissions:
       actions: write
     steps:
@@ -364,7 +367,7 @@ jobs:
   ci-result:
     runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: [build, publish-nightly-images, e2e, upgrade]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && (github.event_name != 'push' || !github.event.repository.private) }}
     permissions: {}
     steps:
       - name: Check job results

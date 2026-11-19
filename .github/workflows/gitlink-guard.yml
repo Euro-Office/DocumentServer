@@ -18,8 +18,10 @@ concurrency:
 jobs:
   check:
     name: Submodule pins are on default branches
-    if: ${{ !github.event.pull_request.draft }}
-    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
+    # Not in a private copy: its pull requests pin commits that exist only in
+    # the private copies of the submodules, which this check cannot see.
+    if: ${{ !github.event.pull_request.draft && !github.event.repository.private }}
+    runs-on: ubuntu-latest
     permissions:
       contents: read  # checkout
     steps:
