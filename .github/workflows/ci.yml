@@ -73,7 +73,7 @@ jobs:
   # build: full matrix, published as :nightly and :latest-dev once e2e and
   # the upgrade check pass. Pushes to main only build and test.
   plan:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     permissions:
       pull-requests: read
     outputs:
@@ -123,7 +123,7 @@ jobs:
   # newest one per leg is restored. Deletes the others of this ref, or the
   # caches outgrow their limit and GitHub evicts the ones still in use.
   prune-ccache:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: build
     if: always()
     permissions:
@@ -145,7 +145,7 @@ jobs:
   # Points release/v* PRs (opened by Euro-Office/release) to the test build.
   # Edits its previous comment on re-runs instead of adding a new one.
   pr-comment:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: build
     if: |
       github.event_name == 'pull_request' &&
@@ -176,7 +176,7 @@ jobs:
   # upgrade check. A failed nightly keeps the previous multi-arch tags; the
   # nightly-<arch> and latest-dev-<arch> tags are pushed by the build itself.
   publish-nightly-images:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: [plan, build, e2e, upgrade]
     if: |
       !cancelled() &&
@@ -362,7 +362,7 @@ jobs:
   # The one build check for branch protection: the build matrix differs
   # between PRs and full builds, so its per-leg checks cannot be required.
   ci-result:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: [build, publish-nightly-images, e2e, upgrade]
     if: ${{ !cancelled() }}
     permissions: {}
