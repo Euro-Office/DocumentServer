@@ -21,6 +21,8 @@ Run after changing any of the XML here, then re-run the open-* specs:
     python3 -I e2e/frontend/fixtures/make-fixtures.py
 
 Keep the strings in step with FIXTURE_TEXT in e2e/frontend/tests/helpers.ts.
+uploadFixtureFile checks that they match, so drift fails as "fixture out of
+step" rather than as an editor content mismatch — but it cannot fix it for you.
 """
 
 import zipfile
@@ -225,12 +227,15 @@ def main():
     for ext, build in BUILDERS.items():
         parts = build(FIXTURE_TEXT[ext])
         path = out_dir / f"fixture.{ext}"
-        # Fixed timestamps and no compression variance, so rebuilding an
-        # unchanged fixture produces identical bytes and no git churn.
-        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as package:
+        # Fixed timestamps, and stored rather than deflated: rebuilding an
+        # unchanged fixture then produces identical bytes whatever zlib is
+        # installed, and the text stays greppable in the file itself, which is
+        # what lets uploadFixtureFile check the fixture against FIXTURE_TEXT.
+        # These packages are a few KB; the compression buys nothing.
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as package:
             for name, body in parts.items():
                 info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
-                info.compress_type = zipfile.ZIP_DEFLATED
+                info.compress_type = zipfile.ZIP_STORED
                 info.external_attr = 0o644 << 16
                 package.writestr(info, body)
         print(f"{path.name}: {path.stat().st_size} bytes, {len(parts)} parts")

@@ -55,6 +55,11 @@ script and `tests/helpers.ts`; change one, change the other, then rebuild:
 python3 -I frontend/fixtures/make-fixtures.py
 ```
 
+`uploadFixtureFile` checks each fixture holds its `FIXTURE_TEXT` string before
+uploading it, so drifted strings or a fixture left unrebuilt fail as that,
+rather than as an editor content mismatch. The packages are stored uncompressed
+to keep that check a plain byte search; they are a few KB either way.
+
 The file store is server-side and shared by every spec (it is keyed by client
 IP) while spec files run in parallel workers, so a spec may only assert on rows
 it created itself, never on the list as a whole. The create-new route hands out

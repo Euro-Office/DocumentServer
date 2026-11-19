@@ -150,7 +150,8 @@ export async function uploadStoredFile(page: Page, fileName: string): Promise<st
  * compare the editor against it exactly rather than by substring.
  *
  * Kept in step with FIXTURE_TEXT in `frontend/fixtures/make-fixtures.py`, which
- * writes those files. Change a string here and you must rebuild them.
+ * writes those files. Change a string here and you must rebuild them —
+ * uploadFixtureFile fails the test if you did not.
  */
 export const FIXTURE_TEXT = {
   docx: 'Euro-Office e2e fixture paragraph',
@@ -167,6 +168,12 @@ export type FixtureExt = keyof typeof FIXTURE_TEXT;
  * uploadStoredFile copies a sample the server already ships; this sends a file
  * whose entire content we know, which is what lets the open-* specs assert the
  * editor shows the fixture rather than merely that something opened.
+ *
+ * The fixture is checked against FIXTURE_TEXT before it goes up. FIXTURE_TEXT
+ * exists twice — here and in make-fixtures.py — so without this a stale or
+ * rebuilt-from-edited-strings fixture would surface as a content mismatch in
+ * the editor, which reads as an editor bug rather than a fixture one. The
+ * packages are written uncompressed, so a plain byte search is enough.
  */
 export async function uploadFixtureFile(
   page: Page,
@@ -174,6 +181,12 @@ export async function uploadFixtureFile(
   fileName: string,
 ): Promise<string> {
   const buffer = await readFile(join(__dirname, '..', 'fixtures', `fixture.${ext}`));
+  expect(
+    buffer.includes(FIXTURE_TEXT[ext]),
+    `fixture.${ext} does not contain "${FIXTURE_TEXT[ext]}" — FIXTURE_TEXT here and ` +
+      'in fixtures/make-fixtures.py have drifted, or the fixture needs rebuilding: ' +
+      'python3 -I frontend/fixtures/make-fixtures.py',
+  ).toBe(true);
   return postUpload(page, fileName, SAMPLE_MIME[ext], buffer);
 }
 
