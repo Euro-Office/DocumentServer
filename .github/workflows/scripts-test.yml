@@ -9,6 +9,7 @@ on:
       - .github/scripts/**
       - .github/actions/**
       - build/scripts/lib/**
+      - build/configs/standalone/supervisor/**
       - build/docker-bake.hcl
       - .github/workflows/scripts-test.yml
   push:

@@ -15,7 +15,7 @@ const MENU_TABS = [
   'View',
 ] as const;
 
-test.describe('PDF form editor - create new', () => {
+test.describe('PDF form editor - create new', { tag: ['@pdf', '@smoke', '@regression'] }, () => {
   test('creates a PDF form in a new window with the full menu bar', async ({ page }) => {
     // Opens <baseURL>/example/, clicks "PDF form" and waits for the editor to load.
     // The example page links it as editor?fileExt=pdf.

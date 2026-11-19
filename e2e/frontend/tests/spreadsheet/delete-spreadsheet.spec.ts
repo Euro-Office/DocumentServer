@@ -8,4 +8,5 @@ describeStoredFileDeletion({
   noun: 'spreadsheet',
   ext: 'xlsx',
   rowClass: 'cell',
+  tag: '@spreadsheet',
 });

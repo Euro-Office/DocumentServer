@@ -28,7 +28,7 @@ const TEXT = 'Euro-Office e2e edit test';
 // See edit-document.spec.ts.
 const createdFiles: string[] = [];
 
-test.describe('PDF form editor - editing a stored file', () => {
+test.describe('PDF form editor - editing a stored file', { tag: ['@pdf', '@regression'] }, () => {
   test.afterAll(({ browser }) => cleanUpStoredFiles(browser, createdFiles));
 
   // Editor state only; persistence is the next test. See edit-document.spec.ts.
@@ -52,7 +52,7 @@ test.describe('PDF form editor - editing a stored file', () => {
   test('an edit survives closing and reopening the PDF form', async ({ page }) => {
     // Sized from the step timeouts inside, not the run time; see
     // edit-document.spec.ts.
-    test.setTimeout(270_000);
+    test.setTimeout(360_000);
     const fileName = await createStoredFile(page, newFileLink('pdf'), PDF);
     createdFiles.push(fileName);
     const { editorPage } = await openStoredEditor(page, fileName, PDF);

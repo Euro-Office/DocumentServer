@@ -8,4 +8,5 @@ describeStoredFileDeletion({
   noun: 'presentation',
   ext: 'pptx',
   rowClass: 'slide',
+  tag: '@presentation',
 });

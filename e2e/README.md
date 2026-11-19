@@ -8,6 +8,7 @@ Browser-level end-to-end tests for Euro-Office DocumentServer, built on [Playwri
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Running the tests](#running-the-tests)
+- [Test tags](#test-tags)
 - [Code quality](#code-quality)
 
 ## Repository layout
@@ -19,17 +20,18 @@ e2e/
 │   ├── constants.ts           Host port, container name, default base URL
 │   ├── global-setup.ts        Starts the Docker container, waits for readiness
 │   ├── global-teardown.ts     Removes the container
+│   ├── fixtures/              fixture.docx/.xlsx/.pptx, and make-fixtures.py which writes them
 │   └── tests/
-│       ├── document/          create-, save-, edit-, delete-document, document-editing
-│       ├── spreadsheet/       create-, save-, edit-, delete-spreadsheet, spreadsheet-formula
-│       ├── presentation/      create-, save-, edit-, delete-presentation, presentation-slides
+│       ├── document/          create-, save-, edit-, open-, delete-document, document-editing
+│       ├── spreadsheet/       create-, save-, edit-, open-, delete-spreadsheet, spreadsheet-formula
+│       ├── presentation/      create-, save-, edit-, open-, delete-presentation, presentation-slides
 │       ├── pdf-form/          create-, save-, edit-, delete-pdf-form
 │       ├── mobile/            mobile-editor
 │       ├── example-page.spec.ts
-│       ├── stored-file-delete.suite.ts  The deletion scenario the four delete-* specs share
-│       └── helpers.ts         Shared openNewEditor, editorApi, downloadStoredFile, saveAndReopen,
-│                              and the stored-file helpers openStoredEditor, createStoredFile,
-│                              uploadStoredFile, uniqueFileName, deleteStoredFile, cleanUpStoredFiles
+│       ├── stored-file-delete.suite.ts   The deletion scenario the four delete-* specs share
+│       ├── open-stored-fixture.suite.ts  The scenario the three open-* specs share
+│       └── helpers.ts         Shared editor, stored-file, fixture-upload and content-reading
+│                              helpers used by every spec
 ├── eslint.config.mjs          ESLint rules (typescript-eslint + Playwright plugin)
 ├── .prettierrc.json           Prettier rules
 ├── .editorconfig              Indentation and line endings
@@ -37,8 +39,26 @@ e2e/
 ```
 
 The `create-*` and `save-*` specs cover the create-new route (`?fileExt=`); the
-`edit-*` and `delete-*` specs cover a file that is already on the server
-(`?fileName=`), reached by clicking it in "Your documents".
+`edit-*`, `open-*` and `delete-*` specs cover a file that is already on the
+server (`?fileName=`), reached by clicking it in "Your documents".
+
+### Fixtures
+
+The `open-*` specs upload a file from `frontend/fixtures/` and check the editor
+shows exactly what is in it. Each fixture is the smallest valid OOXML package of
+its type holding one known string. `make-fixtures.py` writes them from raw XML
+rather than saving them out of an editor, so a fault in our own writer cannot
+bake itself into the oracle. The strings live in `FIXTURE_TEXT` in both that
+script and `tests/helpers.ts`; change one, change the other, then rebuild:
+
+```sh
+python3 -I frontend/fixtures/make-fixtures.py
+```
+
+`uploadFixtureFile` checks each fixture holds its `FIXTURE_TEXT` string before
+uploading it, so drifted strings or a fixture left unrebuilt fail as that,
+rather than as an editor content mismatch. The packages are stored uncompressed
+to keep that check a plain byte search; they are a few KB either way.
 
 The file store is server-side and shared by every spec (it is keyed by client
 IP) while spec files run in parallel workers, so a spec may only assert on rows
@@ -102,6 +122,57 @@ $env:E2E_BASE_URL = 'http://localhost:8080'; npm test           # PowerShell
 
 ```sh
 E2E_IMAGE=ghcr.io/euro-office/documentserver:dev E2E_HOST_PORT=9000 npm test
+```
+
+## Test tags
+
+Every test carries tags, so a subset can be selected with `--grep` instead of by file path. Tags are set with Playwright's `tag` option, usually on the `test.describe` (its tests inherit them):
+
+```ts
+test.describe('Document - create new document', { tag: ['@document', '@smoke', '@regression'] }, () => {
+```
+
+| Tag                                                  | Meaning                                                      |
+| ---------------------------------------------------- | ------------------------------------------------------------ |
+| `@document`, `@spreadsheet`, `@presentation`, `@pdf` | Area: the editor the test exercises. Exactly one per test.   |
+| `@mobile`                                            | Extra tag on the mobile-editor tests, next to their area tag |
+| `@smoke`                                             | The fast sanity set, see below                               |
+| `@regression`                                        | The full suite, see below                                    |
+| `@ignore`                                            | Temporarily excluded from every run, see below               |
+
+### Rules
+
+- Every test has exactly one area tag and `@regression`. Tests that also qualify for the smoke set add `@smoke`.
+- Tag every new test when you write it. Keep to the area names above: do not introduce a second spelling such as `@sheet` or `@pdf-form`.
+
+**`@smoke`** is a fast check that the basics work on a new build or image, run before the full suite.
+
+- Qualifies: a test that opens an editor and confirms it loads, or covers the one core action of an area, such as create-new.
+- Keep it small: at most one or two smoke tests per area. A smoke test must be quick and stable, with no known flakiness and no long multi-step flow.
+- Run it on every build, image or deploy.
+
+**`@regression`** is the full suite, which checks that existing behaviour has not broken. It includes every test, smoke tests too. Run it before a release, after larger changes, and in CI.
+
+**`@ignore`** marks a test that is temporarily excluded from every run, local and CI, for example because it is flaky or obsolete and waiting for a fix or removal.
+
+- Add it next to the test's other tags, which stay in place so the test is easy to restore, and put a comment above it with the reason and a Jira key, for example `// flaky on slow CI, see EUOFFICE-xxx`.
+- It is a temporary state: fix the test or delete it.
+- `playwright.config.ts` skips these tests by default (`grepInvert`). Set `E2E_INCLUDE_IGNORED=1` to run them, for example to check whether a flaky test is fixed.
+
+### Selecting tests by tag
+
+A combined pattern is matched against the tags in the order they are written on the test, which is area first, then `@smoke`, then `@regression`.
+
+```sh
+npm test -- --grep @smoke                  # quick sanity check
+npm test -- --grep "@document.*@smoke"     # smoke tests for one area (area tag first)
+npm test -- --grep @spreadsheet            # one area
+npm test -- --grep-invert @mobile          # everything except the mobile tests
+npm test -- --list --grep @smoke           # list what would run, without running it
+```
+
+```sh
+E2E_INCLUDE_IGNORED=1 npm test -- --grep @ignore   # run only the ignored tests
 ```
 
 ## Code quality

@@ -4,7 +4,7 @@ import { openNewEditor, editorApi, downloadStoredFile, saveAndReopen } from '../
 // The text typed into the document and expected back after reopening.
 const TEXT = 'Euro-Office e2e save test';
 
-test.describe('Document editor - add data and save', () => {
+test.describe('Document editor - add data and save', { tag: ['@document', '@regression'] }, () => {
   test('typed text is saved and survives closing and reopening', async ({ page }) => {
     // 1. Open the example page, click "Document" (it has no id, so it is found
     //    by its title) and wait until the new .docx editor has finished loading.

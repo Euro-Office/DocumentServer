@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from 'crypto';
-import { APIRequestContext, Browser, Page, expect } from '@playwright/test';
+import { readFile } from 'fs/promises';
+import { join } from 'path';
+import { APIRequestContext, Browser, FrameLocator, Page, expect } from '@playwright/test';
 import { DEFAULT_BASE_URL } from '../constants';
 
 const EDITOR_IFRAME = 'iframe[name="frameEditor"]';
@@ -17,8 +19,12 @@ async function waitForEditorReady(editorPage: Page, urlExt: RegExp) {
   const editorIframe = editorPage.locator(EDITOR_IFRAME);
   await expect(editorIframe).toBeAttached({ timeout: 15_000 });
 
+  // 60 s, not 30 s: the iframe attaches quickly, but the document behind it has
+  // to be converted and loaded, and the first opens of a run pay for a cold
+  // editor bundle while three other workers do the same. 30 s expired on CI for
+  // tests that then passed in seconds later in the same run.
   const frame = editorPage.frameLocator(EDITOR_IFRAME);
-  await expect(frame.locator('#loading-mask')).toBeHidden({ timeout: 30_000 });
+  await expect(frame.locator('#loading-mask')).toBeHidden({ timeout: 60_000 });
 
   await frame.locator('#editor_sdk').click();
   return frame;
@@ -136,15 +142,70 @@ export async function uploadStoredFile(page: Page, fileName: string): Promise<st
   const sample = await page.request.get(samplePath);
   expect(sample.ok(), `could not read the sample document at ${samplePath}`).toBe(true);
 
+  return postUpload(page, fileName, mimeType, await sample.body());
+}
+
+/**
+ * The whole of the text each `frontend/fixtures/` document holds, so a test can
+ * compare the editor against it exactly rather than by substring.
+ *
+ * Kept in step with FIXTURE_TEXT in `frontend/fixtures/make-fixtures.py`, which
+ * writes those files. Change a string here and you must rebuild them —
+ * uploadFixtureFile fails the test if you did not.
+ */
+export const FIXTURE_TEXT = {
+  docx: 'Euro-Office e2e fixture paragraph',
+  xlsx: 'Euro-Office e2e fixture cell',
+  pptx: 'Euro-Office e2e fixture title',
+} as const;
+
+export type FixtureExt = keyof typeof FIXTURE_TEXT;
+
+/**
+ * Upload one of this repo's fixture documents under a name of the caller's
+ * choosing, and return the name it was stored as.
+ *
+ * uploadStoredFile copies a sample the server already ships; this sends a file
+ * whose entire content we know, which is what lets the open-* specs assert the
+ * editor shows the fixture rather than merely that something opened.
+ *
+ * The fixture is checked against FIXTURE_TEXT before it goes up. FIXTURE_TEXT
+ * exists twice — here and in make-fixtures.py — so without this a stale or
+ * rebuilt-from-edited-strings fixture would surface as a content mismatch in
+ * the editor, which reads as an editor bug rather than a fixture one. The
+ * packages are written uncompressed, so a plain byte search is enough.
+ */
+export async function uploadFixtureFile(
+  page: Page,
+  ext: FixtureExt,
+  fileName: string,
+): Promise<string> {
+  const buffer = await readFile(join(__dirname, '..', 'fixtures', `fixture.${ext}`));
+  expect(
+    buffer.includes(FIXTURE_TEXT[ext]),
+    `fixture.${ext} does not contain "${FIXTURE_TEXT[ext]}" — FIXTURE_TEXT here and ` +
+      'in fixtures/make-fixtures.py have drifted, or the fixture needs rebuilding: ' +
+      'python3 -I frontend/fixtures/make-fixtures.py',
+  ).toBe(true);
+  return postUpload(page, fileName, SAMPLE_MIME[ext], buffer);
+}
+
+/** POST a file to the upload endpoint. Returns the name the app stored it
+ * under, which is what the file list is keyed by and need not be the one asked
+ * for. */
+async function postUpload(
+  page: Page,
+  fileName: string,
+  mimeType: string,
+  buffer: Buffer,
+): Promise<string> {
   const response = await page.request.post('/example/upload', {
     multipart: {
-      uploadedFile: { name: fileName, mimeType, buffer: await sample.body() },
+      uploadedFile: { name: fileName, mimeType, buffer },
     },
   });
   expect(response.ok(), `upload of ${fileName} failed`).toBe(true);
 
-  // The app echoes back the name it actually stored, which is the one the file
-  // list will be keyed by.
   const { filename } = (await response.json()) as { filename: string };
   return filename;
 }
@@ -352,7 +413,8 @@ export async function saveAndReopen(page: Page, editorPage: Page, before: Buffer
   await reopened.goto(editorUrl);
   await expect(reopened.locator(EDITOR_IFRAME)).toBeAttached({ timeout: 15_000 });
   const frame = reopened.frameLocator(EDITOR_IFRAME);
-  await expect(frame.locator('#loading-mask')).toBeHidden({ timeout: 30_000 });
+  // Same budget as waitForEditorReady, for the same reason.
+  await expect(frame.locator('#loading-mask')).toBeHidden({ timeout: 60_000 });
   return { editorPage: reopened, frame };
 }
 
@@ -372,4 +434,69 @@ export async function readDocumentText(editorPage: Page): Promise<string> {
   const text = await editorApi<string>(editorPage, (api) => api.asc_GetSelectedText());
   await editorPage.keyboard.press('ArrowRight');
   return text.trim();
+}
+
+/**
+ * The cell the grid currently has selected, as the editor reports it.
+ * Returns an "error: ..." string instead of throwing while the iframe is still
+ * settling, so expect.poll retries rather than failing on the first read.
+ */
+export const selectedCellText = (editorPage: Page) =>
+  editorApi(editorPage, (api) => {
+    const info = api.asc_getCellInfo();
+    return info && info.asc_getText ? info.asc_getText() : null;
+  }).catch((e: Error) => `error: ${e.message}`);
+
+/**
+ * Move the spreadsheet selection using the name box. It has an id, so it is the
+ * stable handle — but it also takes keyboard focus, which is why every caller
+ * that types or undoes afterwards presses Ctrl+Home first to get back to the
+ * grid.
+ */
+export const selectCell = async (frame: FrameLocator, cell: string) => {
+  const nameBox = frame.locator('#ce-cell-name');
+  await nameBox.fill(cell);
+  await nameBox.press('Enter');
+};
+
+/**
+ * Select the nth shape on the current slide. Tab walks the selection through
+ * the shapes; on a Title slide shape 1 is the title placeholder and shape 2 the
+ * subtitle.
+ */
+export async function focusShape(editorPage: Page, shapeNumber: number) {
+  // Escape twice: leave text editing, then deselect, so Tab starts from the
+  // first shape whatever state the previous step left behind.
+  await editorPage.keyboard.press('Escape');
+  await editorPage.keyboard.press('Escape');
+  for (let i = 0; i < shapeNumber; i++) {
+    await editorPage.keyboard.press('Tab');
+  }
+}
+
+/**
+ * Put the caret in a shape and select all of its text. Key presses, so it
+ * changes editor state: call it once, never from inside expect.poll.
+ */
+export async function selectShapeText(editorPage: Page, shapeNumber: number) {
+  await focusShape(editorPage, shapeNumber);
+  await editorPage.keyboard.press('Enter');
+  await editorPage.keyboard.press('Control+A');
+}
+
+/**
+ * The current selection, as the editor reports it. Read-only, so this is the
+ * half that is safe to poll. Returns an "error: ..." string rather than
+ * throwing while the iframe is still settling, so a poll retries.
+ * Ctrl+A also selects the paragraph end, so the editor appends a line break.
+ */
+export const selectedText = (editorPage: Page) =>
+  editorApi(editorPage, (api) => api.asc_GetSelectedText())
+    .then((text) => String(text).trim())
+    .catch((e: Error) => `error: ${e.message}`);
+
+/** One-shot read of a shape's text: select, then read. */
+export async function readShape(editorPage: Page, shapeNumber: number) {
+  await selectShapeText(editorPage, shapeNumber);
+  return selectedText(editorPage);
 }
