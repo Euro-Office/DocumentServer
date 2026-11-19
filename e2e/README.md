@@ -19,7 +19,7 @@ e2e/
 │   ├── playwright.config.ts   Playwright configuration (single `chromium` project, 4 workers)
 │   ├── constants.ts           Host port, container name, default base URL
 │   ├── global-setup.ts        Starts the Docker container, waits for readiness
-│   ├── global-teardown.ts     Removes the container
+│   ├── global-teardown.ts     Saves the server logs, then removes the container
 │   ├── fixtures/              fixture.docx/.xlsx/.pptx, and make-fixtures.py which writes them
 │   └── tests/
 │       ├── document/          create-, save-, edit-, open-, delete-document, document-editing
@@ -123,6 +123,12 @@ $env:E2E_BASE_URL = 'http://localhost:8080'; npm test           # PowerShell
 ```sh
 E2E_IMAGE=ghcr.io/euro-office/documentserver:dev E2E_HOST_PORT=9000 npm test
 ```
+
+### Server logs
+
+When the tests start the container themselves, teardown copies its logs into `e2e/server-logs/` before removing it: `container.log` (`docker logs`) plus the contents of `/var/log/euro-office/documentserver` (docservice, converter, nginx, example app). When a test times out waiting for an editor, these show whether the server was slow (conversions queued) or broken (errors). The folder is cleared at the start of each save, so it only holds the last run, and it is gitignored.
+
+In CI it is uploaded as its own artifact, `server-logs-<sha>`, next to `playwright-report-<sha>`. Nothing is saved when you run against your own server with `E2E_BASE_URL`, because the tests do not own that container.
 
 ## Test tags
 
