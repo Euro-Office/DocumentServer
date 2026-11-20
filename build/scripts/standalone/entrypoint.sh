@@ -10,7 +10,7 @@ EO_CONF="${EO_CONF:-/etc/euro-office/documentserver}"
 # A branded image (e.g. nextcloud-office) installs under its own name and
 # sets COMPANY_NAME_LOW, so derive the paths it does not set itself.
 EO_LIB="${EO_LIB:-/var/lib/${COMPANY_NAME_LOW:-euro-office}/documentserver}"
-DATA_DIR="/var/www/${COMPANY_NAME_LOW:-euro-office}/Data"
+DATA_DIR="${DATA_DIR:-/var/www/${COMPANY_NAME_LOW:-euro-office}/Data}"
 LEGACY_DATA_DIR="/var/www/euro-office/Data"
 PRIVATE_DIR="${DATA_DIR}/.private"
 CONFIG_FILE="${EO_CONF}/local.json"
@@ -28,8 +28,12 @@ SUPERVISOR_CONF_DIR="/etc/supervisor/conf.d"
 # Normalize boolean env vars before the defaults below, so a value that is
 # not recognized falls back to the variable's own default.
 # --------------------------------------------------------------------
-. /usr/local/lib/euro-office/bool.sh
-. /usr/local/lib/euro-office/log-dirs.sh
+BOOL_HELPER="${BOOL_HELPER:-$(dirname "$0")/../lib/bool.sh}"
+[ -r "$BOOL_HELPER" ] || BOOL_HELPER=/usr/local/lib/euro-office/bool.sh
+. "$BOOL_HELPER"
+LOG_DIRS_HELPER="${LOG_DIRS_HELPER:-$(dirname "$0")/../lib/log-dirs.sh}"
+[ -r "$LOG_DIRS_HELPER" ] || LOG_DIRS_HELPER=/usr/local/lib/euro-office/log-dirs.sh
+. "$LOG_DIRS_HELPER"
 require_bool JWT_ENABLED JWT_ENABLED_INBOX JWT_ENABLED_OUTBOX
 normalize_bool JWT_IN_BODY \
   WOPI_ENABLED PLUGINS_ENABLED METRICS_ENABLED GENERATE_FONTS \
@@ -57,6 +61,71 @@ AMQP_START_TIMEOUT="${AMQP_START_TIMEOUT:-60}"
 
 REDIS_SERVER_HOST="${REDIS_SERVER_HOST:-localhost}"
 REDIS_SERVER_PORT="${REDIS_SERVER_PORT:-6379}"
+
+REDIS_TOPOLOGY_HELPER="${REDIS_TOPOLOGY_HELPER:-$(dirname "$0")/../redis-topology.sh}"
+[ -r "$REDIS_TOPOLOGY_HELPER" ] || REDIS_TOPOLOGY_HELPER=/usr/local/lib/euro-office/redis-topology.sh
+. "$REDIS_TOPOLOGY_HELPER"
+REDIS_SENTINEL_GROUP_NAME_OVERRIDE="${REDIS_SENTINEL_GROUP_NAME:-}"
+# The bundled Redis on localhost is never a Sentinel; see redis_topology_init.
+# REDIS_SENTINEL_* settings without REDIS_SENTINEL_NODES still apply to a
+# Sentinel configured in local.json or NODE_CONFIG. An invalid NODE_CONFIG is
+# reported below.
+REDIS_SENTINEL_LOCAL_FALLBACK=false
+REDIS_SENTINEL_IN_CONFIG=false
+redis_config_override="${NODE_CONFIG:-}"
+[ -n "$redis_config_override" ] || redis_config_override='{}'
+if [ "$(printf '%s\n' "$redis_config_override" |
+  redis_effective_topology "$CONFIG_FILE" 2>/dev/null)" = sentinel ]; then
+  REDIS_SENTINEL_IN_CONFIG=true
+fi
+unset redis_config_override
+redis_topology_init
+
+# Keep environment-derived Redis settings out of local.json. A mounted config
+# may outlive the container, so writing a topology there would make removing or
+# switching REDIS_* variables ineffective on the next start.
+REDIS_SENTINEL_OPTIONS_JSON=null
+if [ "$REDIS_SENTINEL_REQUESTED" = true ]; then
+  if [ -n "$REDIS_SENTINEL_GROUP_NAME_OVERRIDE" ]; then
+    sentinel_name="$REDIS_SENTINEL_GROUP_NAME"
+  else
+    sentinel_name=$(redis_config_file_json "$CONFIG_FILE" 2>/dev/null |
+      jq -r '.services?.CoAuthoring?.redis?.optionsSentinel?.name? // "mymaster"')
+  fi
+  REDIS_SENTINEL_OPTIONS_JSON=$(redis_build_sentinel_options \
+    "$sentinel_name" "$REDIS_SENTINEL_NODES_JSON" \
+    "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PASS:-}" "${REDIS_SERVER_DB:-}" \
+    "$REDIS_SENTINEL_USER" "$REDIS_SENTINEL_PASS")
+fi
+REDIS_CLUSTER_OPTIONS_JSON=null
+if [ -n "${REDIS_CLUSTER_NODES:-}" ]; then
+  REDIS_CLUSTER_OPTIONS_JSON=$(redis_build_cluster_options "$REDIS_CLUSTER_NODES_JSON" \
+    "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PASS:-}")
+fi
+REDIS_BASE_OPTIONS_JSON=$(redis_build_base_options \
+  "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PASS:-}" "${REDIS_SERVER_DB:-}")
+REDIS_SECTION_JSON=$(printf '%s\n%s\n%s\n' \
+  "$REDIS_BASE_OPTIONS_JSON" "$REDIS_SENTINEL_OPTIONS_JSON" "$REDIS_CLUSTER_OPTIONS_JSON" |
+  redis_build_section "$REDIS_SERVER_HOST" "$REDIS_SERVER_PORT")
+unset REDIS_BASE_OPTIONS_JSON REDIS_SENTINEL_OPTIONS_JSON REDIS_CLUSTER_OPTIONS_JSON
+
+NODE_CONFIG_OVERRIDE="${NODE_CONFIG:-}"
+[ -n "$NODE_CONFIG_OVERRIDE" ] || NODE_CONFIG_OVERRIDE='{}'
+if ! printf '%s\n' "$NODE_CONFIG_OVERRIDE" | jq -es 'length == 1 and (.[0] | type) == "object"' >/dev/null 2>&1; then
+  echo 'Supplied NODE_CONFIG must be a valid JSON object.' >&2
+  exit 1
+fi
+# The documents go to jq on stdin, never on its command line. See
+# redis_merge_node_config for the Redis-specific steps.
+NODE_CONFIG=$(printf '{"services":{"CoAuthoring":{"redis":%s}}}\n%s\n' \
+  "$REDIS_SECTION_JSON" "$NODE_CONFIG_OVERRIDE" |
+  redis_merge_node_config "$CONFIG_FILE")
+export NODE_CONFIG
+unset NODE_CONFIG_OVERRIDE REDIS_SECTION_JSON
+
+REDIS_TOPOLOGY=$(printf '%s' "$NODE_CONFIG" | redis_effective_topology "$CONFIG_FILE")
+REDIS_TOPOLOGY_CONFIGURED=false
+[ "$REDIS_TOPOLOGY" != standalone ] && REDIS_TOPOLOGY_CONFIGURED=true
 
 WOPI_ENABLED="${WOPI_ENABLED:-false}"
 PLUGINS_ENABLED="${PLUGINS_ENABLED:-true}"
@@ -196,7 +265,8 @@ waiting_for_connection() {
 }
 
 [ "$DB_HOST" != "localhost" ] && waiting_for_connection "$DB_HOST" "$DB_PORT"
-[ "$REDIS_SERVER_HOST" != "localhost" ] && waiting_for_connection "$REDIS_SERVER_HOST" "$REDIS_SERVER_PORT"
+[ "$REDIS_SERVER_HOST" != "localhost" ] && [ "$REDIS_TOPOLOGY_CONFIGURED" != true ] && \
+  waiting_for_connection "$REDIS_SERVER_HOST" "$REDIS_SERVER_PORT"
 if [ -n "${AMQP_URI:-}" ]; then
   : # caller picks their host; we don't parse the URI here
 elif [ "$AMQP_HOST" != "localhost" ]; then
@@ -217,7 +287,6 @@ jq_filter='$ENV.EO_JQ_JWT_SECRET as $jwtSecret
   | $ENV.EO_JQ_JWT_SECRET_INBOX as $jwtSecretInbox
   | $ENV.EO_JQ_JWT_SECRET_OUTBOX as $jwtSecretOutbox
   | $ENV.EO_JQ_DB_PASS as $dbPass
-  | $ENV.EO_JQ_REDIS_PASS as $redisPass
   | $ENV.EO_JQ_AMQP_URI as $amqpUri
   | $ENV.EO_JQ_WOPI_PRIV as $wopiPriv
   | $ENV.EO_JQ_SECURE_LINK_SECRET as $secureLinkSecret
@@ -247,13 +316,6 @@ jq_set '.services.CoAuthoring.sql.dbPort = ($dbPort | tonumber? // $dbPort)'
 jq_set '.services.CoAuthoring.sql.dbName = $dbName'
 jq_set '.services.CoAuthoring.sql.dbUser = $dbUser'
 [ -n "${DB_PWD:-}" ] && jq_set '.services.CoAuthoring.sql.dbPass = $dbPass'
-
-# Redis
-jq_set '.services.CoAuthoring.redis.host = $redisHost'
-jq_set '.services.CoAuthoring.redis.port = ($redisPort | tonumber? // $redisPort)'
-[ -n "${REDIS_SERVER_USER:-}" ] && jq_set '.services.CoAuthoring.redis.options.username = $redisUser'
-[ -n "${REDIS_SERVER_PASS:-}" ] && jq_set '.services.CoAuthoring.redis.options.password = $redisPass'
-[ -n "${REDIS_SERVER_DB:-}"   ] && jq_set '.services.CoAuthoring.redis.options.database = ($redisDb | tonumber? // $redisDb)'
 
 # AMQP / RabbitMQ
 if [ -n "${AMQP_URI:-}" ]; then
@@ -332,7 +394,6 @@ EO_JQ_JWT_SECRET="$JWT_SECRET" \
 EO_JQ_JWT_SECRET_INBOX="$JWT_SECRET_INBOX" \
 EO_JQ_JWT_SECRET_OUTBOX="$JWT_SECRET_OUTBOX" \
 EO_JQ_DB_PASS="${DB_PWD:-}" \
-EO_JQ_REDIS_PASS="${REDIS_SERVER_PASS:-}" \
 EO_JQ_AMQP_URI="$AMQP_URI_VALUE" \
 EO_JQ_WOPI_PRIV="$WOPI_PRIVATE_KEY_DATA" \
 EO_JQ_SECURE_LINK_SECRET="$SECURE_LINK_SECRET" \
@@ -348,10 +409,6 @@ jq \
   --arg dbPort           "$DB_PORT" \
   --arg dbName           "$DB_NAME" \
   --arg dbUser           "$DB_USER" \
-  --arg redisHost        "$REDIS_SERVER_HOST" \
-  --arg redisPort        "$REDIS_SERVER_PORT" \
-  --arg redisUser        "${REDIS_SERVER_USER:-}" \
-  --arg redisDb          "${REDIS_SERVER_DB:-}" \
   --arg wopiEnabled      "$WOPI_ENABLED" \
   --arg wopiPub          "$WOPI_PUBLIC_KEY_DATA" \
   --arg wopiMod          "$WOPI_MODULUS" \
@@ -367,6 +424,18 @@ jq \
 mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
 # The services read this file as ds (documentserver-update-securelink.sh used to do this).
 chown ds:ds "$CONFIG_FILE" 2>/dev/null || true
+
+# Allow the standalone configuration generation to be tested without starting
+# bundled services. This is intentionally limited to the generated config.
+if [ "${ENTRYPOINT_CONFIG_ONLY:-false}" = "true" ]; then
+  if [ -n "${ENTRYPOINT_CONFIG_ONLY_OUTPUT:-}" ]; then
+    (umask 077; set -C; printf '%s\n' "$NODE_CONFIG" > "$ENTRYPOINT_CONFIG_ONLY_OUTPUT")
+  else
+    echo 'ENTRYPOINT_CONFIG_ONLY: configuration generated but not saved;' \
+      'set ENTRYPOINT_CONFIG_ONLY_OUTPUT to a new file path to keep it.' >&2
+  fi
+  exit 0
+fi
 
 # --------------------------------------------------------------------
 # log4js level
@@ -677,7 +746,7 @@ if [ "$AMQP_HOST" = "localhost" ] && [ -z "${AMQP_URI:-}" ]; then
   start_rabbitmq \
     || echo "ERROR: RabbitMQ did not become ready within ${AMQP_START_TIMEOUT}s; docservice will fail to connect." >&2
 fi
-[ "$REDIS_SERVER_HOST"  = "localhost" ] && service redis-server start
+[ "$REDIS_SERVER_HOST"  = "localhost" ] && [ "$REDIS_TOPOLOGY_CONFIGURED" != true ] && service redis-server start
 service nginx start
 
 # --------------------------------------------------------------------
