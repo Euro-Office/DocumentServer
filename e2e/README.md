@@ -132,13 +132,13 @@ Every test carries tags, so a subset can be selected with `--grep` instead of by
 test.describe('Document - create new document', { tag: ['@document', '@smoke', '@regression'] }, () => {
 ```
 
-| Tag                                                  | Meaning                                                      |
-| ---------------------------------------------------- | ------------------------------------------------------------ |
-| `@document`, `@spreadsheet`, `@presentation`, `@pdf` | Area: the editor the test exercises. Exactly one per test.   |
-| `@mobile`                                            | Extra tag on the mobile-editor tests, next to their area tag |
-| `@smoke`                                             | The fast sanity set, see below                               |
-| `@regression`                                        | The full suite, see below                                    |
-| `@ignore`                                            | Temporarily excluded from every run, see below               |
+| Tag                                                            | Meaning                                                      |
+| -------------------------------------------------------------- | ------------------------------------------------------------ |
+| `@document`, `@spreadsheet`, `@presentation`, `@pdf`, `@visio` | Area: the editor the test exercises. Exactly one per test.   |
+| `@mobile`                                                      | Extra tag on the mobile-editor tests, next to their area tag |
+| `@smoke`                                                       | The fast sanity set, see below                               |
+| `@regression`                                                  | The full suite, see below                                    |
+| `@ignore`                                                      | Temporarily excluded from every run, see below               |
 
 ### Rules
 
