@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { readDocumentText } from '../helpers';
-import { describeOpeningStoredFixture } from '../open-stored-fixture.suite';
+import { describeOpeningStoredFixture, expectEditorBundle } from '../open-stored-fixture.suite';
 
 // Remit and the reasoning behind it: open-stored-fixture.suite.ts.
 describeOpeningStoredFixture({
@@ -12,7 +12,7 @@ describeOpeningStoredFixture({
   tag: '@document',
   rowClass: 'word',
   urlExt: /\.docx/,
-  editorApp: /documenteditor/,
+  assertEditorApp: expectEditorBundle(/documenteditor/),
   // The fixture is a single paragraph, so Select All reads the whole of it.
   readContent: async (editorPage, frame) => {
     await frame.locator('#editor_sdk').click();
