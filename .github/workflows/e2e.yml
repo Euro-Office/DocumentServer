@@ -79,3 +79,14 @@ jobs:
           name: playwright-report-${{ github.sha }}
           path: e2e/playwright-report/
           retention-days: 14
+
+      # A separate artifact so the report keeps its layout: with two paths
+      # upload-artifact roots the zip at their common parent.
+      - name: Upload server logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: server-logs-${{ github.sha }}
+          path: e2e/server-logs/
+          if-no-files-found: ignore
+          retention-days: 14

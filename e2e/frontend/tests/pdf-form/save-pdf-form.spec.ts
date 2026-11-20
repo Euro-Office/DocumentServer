@@ -1,5 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
 import { openNewEditor, editorApi, downloadStoredFile, saveAndReopen } from '../helpers';
+import { DOCUMENT_SAVED, EDITOR_CONTENT_READ } from '../../timeouts';
 
 const TEXT = 'Euro-Office e2e save test';
 
@@ -32,7 +33,7 @@ test.describe('PDF form editor - add data and save', { tag: ['@pdf', '@regressio
     // prefixes document.title with "*" while there are unsaved changes.
     const saved = await test.step('save the PDF form', async () => {
       await editorPage.keyboard.press('Control+S');
-      await expect(editorPage).not.toHaveTitle(/^\*/, { timeout: 30_000 });
+      await expect(editorPage).not.toHaveTitle(/^\*/, { timeout: DOCUMENT_SAVED });
       // The title only reflects the editor's own state. Close the editor so
       // docservice writes the file back, wait for storage to change, and reopen
       // the saved file in a new tab (a reload would be served from cache).
@@ -46,7 +47,7 @@ test.describe('PDF form editor - add data and save', { tag: ['@pdf', '@regressio
         await saved.frame.locator('#editor_sdk').click();
         await saved.editorPage.keyboard.press('Control+A');
         expect(await documentText(saved.editorPage)).toBe(TEXT);
-      }).toPass({ timeout: 30_000 });
+      }).toPass({ timeout: EDITOR_CONTENT_READ });
     });
   });
 });

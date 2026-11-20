@@ -3,6 +3,7 @@ import { readFile } from 'fs/promises';
 import { join } from 'path';
 import { APIRequestContext, Browser, FrameLocator, Page, expect } from '@playwright/test';
 import { DEFAULT_BASE_URL } from '../constants';
+import { EDITOR_IFRAME_ATTACH, EDITOR_LOAD, STORED_FILE_SAVED } from '../timeouts';
 
 const EDITOR_IFRAME = 'iframe[name="frameEditor"]';
 
@@ -17,14 +18,10 @@ async function waitForEditorReady(editorPage: Page, urlExt: RegExp) {
   await expect(editorPage).toHaveURL(urlExt);
 
   const editorIframe = editorPage.locator(EDITOR_IFRAME);
-  await expect(editorIframe).toBeAttached({ timeout: 15_000 });
+  await expect(editorIframe).toBeAttached({ timeout: EDITOR_IFRAME_ATTACH });
 
-  // 60 s, not 30 s: the iframe attaches quickly, but the document behind it has
-  // to be converted and loaded, and the first opens of a run pay for a cold
-  // editor bundle while three other workers do the same. 30 s expired on CI for
-  // tests that then passed in seconds later in the same run.
   const frame = editorPage.frameLocator(EDITOR_IFRAME);
-  await expect(frame.locator('#loading-mask')).toBeHidden({ timeout: 60_000 });
+  await expect(frame.locator('#loading-mask')).toBeHidden({ timeout: EDITOR_LOAD });
 
   await frame.locator('#editor_sdk').click();
   return frame;
@@ -405,16 +402,15 @@ export async function saveAndReopen(page: Page, editorPage: Page, before: Buffer
   await expect
     .poll(async () => sha256(await downloadStoredFile(page, editorUrl)), {
       message: 'saved file in storage differs from the blank template',
-      timeout: 60_000,
+      timeout: STORED_FILE_SAVED,
     })
     .not.toBe(sha256(before));
 
   const reopened = await page.context().newPage();
   await reopened.goto(editorUrl);
-  await expect(reopened.locator(EDITOR_IFRAME)).toBeAttached({ timeout: 15_000 });
+  await expect(reopened.locator(EDITOR_IFRAME)).toBeAttached({ timeout: EDITOR_IFRAME_ATTACH });
   const frame = reopened.frameLocator(EDITOR_IFRAME);
-  // Same budget as waitForEditorReady, for the same reason.
-  await expect(frame.locator('#loading-mask')).toBeHidden({ timeout: 60_000 });
+  await expect(frame.locator('#loading-mask')).toBeHidden({ timeout: EDITOR_LOAD });
   return { editorPage: reopened, frame };
 }
 

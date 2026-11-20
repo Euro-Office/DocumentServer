@@ -1,5 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
 import { openNewEditor, editorApi, downloadStoredFile, saveAndReopen } from '../helpers';
+import { DOCUMENT_SAVED } from '../../timeouts';
 
 // What each cell holds as text.
 const CELLS: [cell: string, text: string][] = [
@@ -64,7 +65,7 @@ test.describe('Spreadsheet - add data and save', { tag: ['@spreadsheet', '@regre
     const saved = await test.step('save the spreadsheet with Ctrl+S', async () => {
       await editorPage.keyboard.press('Control+Home');
       await editorPage.keyboard.press('Control+S');
-      await expect(editorPage).not.toHaveTitle(/^\*/, { timeout: 30_000 });
+      await expect(editorPage).not.toHaveTitle(/^\*/, { timeout: DOCUMENT_SAVED });
       // The title only reflects the editor's own state. Close the editor so
       // docservice writes the file back, wait for storage to change, and reopen
       // the saved file in a new tab (a reload would be served from cache).
