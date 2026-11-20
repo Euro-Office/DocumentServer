@@ -16,6 +16,9 @@ env:
 
 jobs:
   delete-pr-image:
+    # A private copy has pushed nothing, and its pull request numbers would
+    # match images of this repository's pull requests.
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     steps:
       - name: Delete pr-<n> image version

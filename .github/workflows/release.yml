@@ -33,6 +33,9 @@ env:
 
 jobs:
   build:
+    # Releases are cut from the public repository only. Every other job
+    # needs this one.
+    if: ${{ !github.event.repository.private }}
     permissions:
       contents: read
       packages: write

@@ -12,6 +12,9 @@ on:
 
 jobs:
   update-submodules:
+    # Not in a private copy, which follows the public repository instead.
+    # Other repositories call this workflow, so this cannot test the name.
+    if: ${{ !github.event.repository.private }}
     runs-on: self-hosted
     permissions:
       contents: write
