@@ -282,7 +282,8 @@ from `extraConf` take effect. Where the password counts depends on the topology:
   `optionsSentinel.nodeClientOptions.password` for Sentinel;
 * Redis Cluster: `optionsCluster.defaults.password`. Cluster nodes do not use
   `options`, so a password only in `options.password` leaves them
-  unauthenticated.
+  unauthenticated, and DocService fails its startup check with
+  `NOAUTH Authentication required`.
 
 Any other username needs a password. `REDIS_SENTINEL_USER=default` works the
 same way with `optionsSentinel.sentinelClientOptions.password`. A
@@ -647,7 +648,7 @@ docker compose \
   -f develop/docker-compose.redis-base.yml \
   -f develop/docker-compose.redis-standalone.yml \
   exec --user ds eo sh -lc '
-  pid=$(pgrep -u ds -x docservice)
+  pid=$(pgrep -u ds -f "server/DocService/docservice\$" | head -n 1)
   jq -Rs --slurpfile saved /etc/euro-office/documentserver/local.json "
     (split(\"\\u0000\") | map(select(startswith(\"NODE_CONFIG=\"))) |
       first | ltrimstr(\"NODE_CONFIG=\") | fromjson) as \$runtime |
@@ -694,7 +695,7 @@ docker compose \
   -f develop/docker-compose.redis-base.yml \
   -f develop/docker-compose.redis-sentinel.yml \
   exec --user ds eo sh -lc '
-  pid=$(pgrep -u ds -x docservice)
+  pid=$(pgrep -u ds -f "server/DocService/docservice\$" | head -n 1)
   jq -eRs --slurpfile saved /etc/euro-office/documentserver/local.json "
     (split(\"\\u0000\") | map(select(startswith(\"NODE_CONFIG=\"))) |
       first | ltrimstr(\"NODE_CONFIG=\") | fromjson) as \$runtime |
