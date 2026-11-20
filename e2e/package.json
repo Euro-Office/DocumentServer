@@ -15,6 +15,7 @@
     "fix": "prettier --write . && eslint . --fix && npm run typecheck"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.14.0",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.49.0",
     "@types/node": "^26.0.0",

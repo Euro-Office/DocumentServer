@@ -2,3 +2,4 @@ node_modules/
 dist/
 playwright-report/
 test-results/
+a11y-report/*.json
