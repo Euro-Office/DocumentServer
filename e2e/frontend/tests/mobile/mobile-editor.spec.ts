@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { EDITOR_IFRAME_ATTACH, EDITOR_LOAD } from '../../timeouts';
 
 // Canvas id differs by engine: doc/presentation use #id_viewer, spreadsheet #ws-canvas.
 // PDF excluded: with ?type=mobile, api.js coerces appType to 'word', so a .pdf loads the same
@@ -39,7 +40,7 @@ test.describe('Mobile editor smoke', { tag: ['@mobile', '@regression'] }, () => 
       await page.goto(`/example/editor?fileExt=${editor.fileExt}&type=mobile`);
 
       const editorIframe = page.locator('iframe[name="frameEditor"]');
-      await expect(editorIframe).toBeAttached({ timeout: 15_000 });
+      await expect(editorIframe).toBeAttached({ timeout: EDITOR_IFRAME_ATTACH });
       await expect(editorIframe).toHaveAttribute('src', /type=mobile/);
 
       // The real "document loaded" signal is the loading skeleton clearing, not the canvas:
@@ -50,7 +51,7 @@ test.describe('Mobile editor smoke', { tag: ['@mobile', '@regression'] }, () => 
       const frame = page.frameLocator('iframe[name="frameEditor"]');
       const placeholder = frame.locator('.doc-placeholder');
       await expect(placeholder.first()).toBeVisible({ timeout: 15_000 });
-      await expect(placeholder).toHaveCount(0, { timeout: 30_000 });
+      await expect(placeholder).toHaveCount(0, { timeout: EDITOR_LOAD });
       await expect(frame.locator(ERROR_SURFACE_SELECTOR)).toHaveCount(0, { timeout: 5_000 });
       await expect(frame.locator(editor.canvasSelector)).toBeVisible({ timeout: 5_000 });
       expect(errors).toEqual([]);

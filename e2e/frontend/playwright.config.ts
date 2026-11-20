@@ -1,15 +1,14 @@
 import { defineConfig, devices } from '@playwright/test';
 import { DEFAULT_BASE_URL } from './constants';
+import { TEST_TIMEOUT } from './timeouts';
 
 export default defineConfig({
   testDir: './tests',
-  // Sized from the waits a test contains, not from how long a healthy run
-  // takes. One editor open is iframe attach 15 s + document load 60 s, and the
-  // stored-file tests open two — create the file, then reopen it from the list
-  // — so 60 s was less than the test's own internal budget and expired first on
-  // a loaded server, reporting a bare "test timeout" instead of naming the wait
-  // that was too slow.
-  timeout: 180_000,
+  // Derived from the waits a test contains (see timeouts.ts), not from how long
+  // a healthy run takes: the stored-file tests open two editors, so a shorter
+  // budget expires first on a loaded server and reports a bare "test timeout"
+  // instead of naming the wait that was too slow.
+  timeout: TEST_TIMEOUT,
   expect: { timeout: 15_000 },
   fullyParallel: false,
   // One document server serves every worker, so the limit is the server, not

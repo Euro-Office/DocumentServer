@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { openNewEditor, editorApi, downloadStoredFile, saveAndReopen } from '../helpers';
+import { DOCUMENT_SAVED, EDITOR_CONTENT_READ } from '../../timeouts';
 
 // The text typed into the document and expected back after reopening.
 const TEXT = 'Euro-Office e2e save test';
@@ -26,7 +27,7 @@ test.describe('Document editor - add data and save', { tag: ['@document', '@regr
     //    "*" while there are unsaved changes and removes it once they are saved.
     const saved = await test.step('save the document with Ctrl+S', async () => {
       await editorPage.keyboard.press('Control+S');
-      await expect(editorPage).not.toHaveTitle(/^\*/, { timeout: 30_000 });
+      await expect(editorPage).not.toHaveTitle(/^\*/, { timeout: DOCUMENT_SAVED });
       // The title only reflects the editor's own state. Close the editor so
       // docservice writes the file back, wait for storage to change, and reopen
       // the saved file in a new tab (a reload would be served from cache).
@@ -43,7 +44,7 @@ test.describe('Document editor - add data and save', { tag: ['@document', '@regr
         await saved.editorPage.keyboard.press('Control+A');
         const text = await editorApi(saved.editorPage, (api) => api.asc_GetSelectedText());
         expect(text).toContain(TEXT);
-      }).toPass({ timeout: 30_000 });
+      }).toPass({ timeout: EDITOR_CONTENT_READ });
     });
   });
 });

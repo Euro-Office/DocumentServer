@@ -1,5 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
 import { openNewEditor, editorApi, downloadStoredFile, saveAndReopen } from '../helpers';
+import { DOCUMENT_SAVED, EDITOR_CONTENT_READ } from '../../timeouts';
 
 const TITLE = 'Euro-Office e2e title';
 const SUBTITLE = 'Euro-Office e2e subtitle';
@@ -66,7 +67,7 @@ test.describe(
         await editorPage.keyboard.press('Escape');
         await editorPage.keyboard.press('Escape');
         await editorPage.keyboard.press('Control+S');
-        await expect(editorPage).not.toHaveTitle(/^\*/, { timeout: 30_000 });
+        await expect(editorPage).not.toHaveTitle(/^\*/, { timeout: DOCUMENT_SAVED });
         // The title only reflects the editor's own state. Close the editor so
         // docservice writes the file back, wait for storage to change, and reopen
         // the saved file in a new tab (a reload would be served from cache).
@@ -82,7 +83,7 @@ test.describe(
           await saved.frame.locator('#editor_sdk').click();
           expect(await readShape(saved.editorPage, 1)).toBe(TITLE);
           expect(await readShape(saved.editorPage, 2)).toBe(SUBTITLE);
-        }).toPass({ timeout: 30_000 });
+        }).toPass({ timeout: EDITOR_CONTENT_READ });
       });
     });
   },
