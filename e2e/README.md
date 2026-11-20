@@ -21,16 +21,16 @@ e2e/
 │   ├── global-setup.ts        Starts the Docker container, waits for readiness
 │   ├── global-teardown.ts     Saves the server logs, then removes the container
 │   ├── timeouts.ts            The editor wait timeouts and the per-test timeout derived from them
-│   ├── fixtures/              fixture.docx/.xlsx/.pptx, and make-fixtures.py which writes them
+│   ├── fixtures/              fixture.docx/.xlsx/.pptx/.pdf, and make-fixtures.py which writes them
 │   └── tests/
 │       ├── document/          create-, save-, edit-, open-, delete-document, document-editing
 │       ├── spreadsheet/       create-, save-, edit-, open-, delete-spreadsheet, spreadsheet-formula
 │       ├── presentation/      create-, save-, edit-, open-, delete-presentation, presentation-slides
-│       ├── pdf-form/          create-, save-, edit-, delete-pdf-form
+│       ├── pdf-form/          create-, save-, edit-, delete-pdf-form, open-pdf
 │       ├── mobile/            mobile-editor
 │       ├── example-page.spec.ts
 │       ├── stored-file-delete.suite.ts   The deletion scenario the four delete-* specs share
-│       ├── open-stored-fixture.suite.ts  The scenario the three open-* specs share
+│       ├── open-stored-fixture.suite.ts  The scenario the four open-* specs share
 │       └── helpers.ts         Shared editor, stored-file, fixture-upload and content-reading
 │                              helpers used by every spec
 ├── eslint.config.mjs          ESLint rules (typescript-eslint + Playwright plugin)
@@ -46,11 +46,12 @@ server (`?fileName=`), reached by clicking it in "Your documents".
 ### Fixtures
 
 The `open-*` specs upload a file from `frontend/fixtures/` and check the editor
-shows exactly what is in it. Each fixture is the smallest valid OOXML package of
-its type holding one known string. `make-fixtures.py` writes them from raw XML
-rather than saving them out of an editor, so a fault in our own writer cannot
-bake itself into the oracle. The strings live in `FIXTURE_TEXT` in both that
-script and `tests/helpers.ts`; change one, change the other, then rebuild:
+shows exactly what is in it. Each fixture is the smallest valid file of its
+type holding one known string. `make-fixtures.py` writes them from raw XML, and
+the PDF from raw PDF syntax, rather than saving them out of an editor, so a
+fault in our own writer cannot bake itself into the oracle. The strings live in
+`FIXTURE_TEXT` in both that script and `tests/helpers.ts`; change one, change
+the other, then rebuild:
 
 ```sh
 python3 -I frontend/fixtures/make-fixtures.py
@@ -58,8 +59,9 @@ python3 -I frontend/fixtures/make-fixtures.py
 
 `uploadFixtureFile` checks each fixture holds its `FIXTURE_TEXT` string before
 uploading it, so drifted strings or a fixture left unrebuilt fail as that,
-rather than as an editor content mismatch. The packages are stored uncompressed
-to keep that check a plain byte search; they are a few KB either way.
+rather than as an editor content mismatch. The OOXML packages are stored
+uncompressed and the PDF content stream is left uncompressed, to keep that
+check a plain byte search; they are a few KB either way.
 
 The file store is server-side and shared by every spec (it is keyed by client
 IP) while spec files run in parallel workers, so a spec may only assert on rows
