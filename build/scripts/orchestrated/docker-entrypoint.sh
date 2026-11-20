@@ -25,7 +25,10 @@ if [[ -n ${LOG_LEVEL} ]]; then
 fi
 
 if [[ -n ${LOG_TYPE} ]]; then
-  sed 's/\("type"\:\) "pattern"/\1 "'$LOG_TYPE'"/' -i /etc/$COMPANY_NAME/documentserver/log4js/production.json
+  log_layout=$LOG_TYPE
+  [[ $LOG_TYPE == pattern ]] && log_layout=patternWithTokens
+  sed -Ei 's/("type":[[:space:]]*")pattern(WithTokens)?"/\1'"$log_layout"'"/' \
+    "/etc/$COMPANY_NAME/documentserver/log4js/production.json"
 fi
 
 if [[ -n ${LOG_PATTERN} ]]; then
