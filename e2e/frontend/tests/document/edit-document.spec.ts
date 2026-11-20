@@ -12,6 +12,7 @@ import {
   saveAndReopen,
   undoButton,
 } from '../helpers';
+import { DOCUMENT_SAVED, EDITOR_CONTENT_READ } from '../../timeouts';
 
 const DOCX = /\.docx/;
 const TEXT = 'Euro-Office e2e edit test';
@@ -88,7 +89,7 @@ test.describe(
         // step along the way and never the assertion. saveAndReopen closes the
         // tab — which is what makes docservice hand the file back — waits until
         // the stored bytes change, then opens the file in a fresh tab.
-        await expect(editorPage).not.toHaveTitle(/^\*/, { timeout: 30_000 });
+        await expect(editorPage).not.toHaveTitle(/^\*/, { timeout: DOCUMENT_SAVED });
         return saveAndReopen(page, editorPage, before);
       });
 
@@ -99,7 +100,7 @@ test.describe(
         await expect(async () => {
           await saved.frame.locator('#editor_sdk').click();
           expect(await readDocumentText(saved.editorPage)).toBe(TEXT);
-        }).toPass({ timeout: 30_000 });
+        }).toPass({ timeout: EDITOR_CONTENT_READ });
       });
     });
   },

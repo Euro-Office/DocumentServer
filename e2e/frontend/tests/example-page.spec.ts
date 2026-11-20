@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { EDITOR_IFRAME_ATTACH, EDITOR_LOAD } from '../timeouts';
 
 const EXAMPLE_PATH = '/example/';
 
@@ -35,7 +36,7 @@ test.describe('Example page - Create new', { tag: '@regression' }, () => {
       // 2. DocsAPI replaces the #iframeEditor mount point with an <iframe name="frameEditor">.
       //    Assert that iframe is present and its src points to the document editor app.
       const editorIframe = editorPage.locator('iframe[name="frameEditor"]');
-      await expect(editorIframe).toBeAttached({ timeout: 15_000 });
+      await expect(editorIframe).toBeAttached({ timeout: EDITOR_IFRAME_ATTACH });
       await expect(editorIframe).toHaveAttribute(
         'src',
         /documenteditor|spreadsheeteditor|presentationeditor/,
@@ -44,7 +45,7 @@ test.describe('Example page - Create new', { tag: '@regression' }, () => {
       // 3. Wait for the file to finish loading inside the editor iframe.
       //    The loading mask (#loading-mask) is removed from the DOM once ready.
       const frame = editorPage.frameLocator('iframe[name="frameEditor"]');
-      await expect(frame.locator('#loading-mask')).toBeHidden({ timeout: 30_000 });
+      await expect(frame.locator('#loading-mask')).toBeHidden({ timeout: EDITOR_LOAD });
 
       // 4. Verify the Insert tab is clickable and becomes active.
       const insertTab = frame.locator('a[data-tab="ins"]');

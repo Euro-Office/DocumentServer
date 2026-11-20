@@ -13,6 +13,7 @@ import {
   selectedCellText,
   undoButton,
 } from '../helpers';
+import { DOCUMENT_SAVED } from '../../timeouts';
 
 const XLSX = /\.xlsx/;
 const VALUE = 'Euro-Office e2e';
@@ -78,7 +79,7 @@ test.describe(
         // The title loses its "*" when the editor finishes its own save step.
         // That is a browser-side flag, not a server acknowledgement, so it is a
         // step along the way and never the assertion.
-        await expect(editorPage).not.toHaveTitle(/^\*/, { timeout: 30_000 });
+        await expect(editorPage).not.toHaveTitle(/^\*/, { timeout: DOCUMENT_SAVED });
         return saveAndReopen(page, editorPage, before);
       });
 
