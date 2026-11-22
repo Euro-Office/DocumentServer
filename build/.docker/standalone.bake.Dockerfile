@@ -92,6 +92,10 @@ RUN apt-get update && \
 # The package's Ubuntu dependencies come from the daily-cached layer above, so
 # this per-commit layer normally needs no apt mirror. apt-get update only runs
 # when that list falls behind document-server-package/deb/template/control.m4.
+#
+# DS_PLUGIN_INSTALLATION=false skips the postinst plugin download from the
+# plugin store: the image ships the bundled plugins, and the entrypoint runs
+# the update at start unless PLUGINS_ENABLED=false.
 ARG TARGETARCH
 RUN --mount=type=bind,from=packages,target=/mnt/packages \
     (pg_createcluster 16 main || true) && \
@@ -109,9 +113,9 @@ RUN --mount=type=bind,from=packages,target=/mnt/packages \
     echo "${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW} ds/db-pwd password eurooffice" | debconf-set-selections && \
     echo "${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW} ds/db-name string eurooffice" | debconf-set-selections && \
     DEB=/mnt/packages/${COMPANY_NAME_LOW}-${PRODUCT_NAME_LOW}_${PRODUCT_VERSION}-${BUILD_NUMBER}_${TARGETARCH}.deb && \
-    (DS_DOCKER_INSTALLATION=true apt-get install -yq "$DEB" || \
+    (DS_DOCKER_INSTALLATION=true DS_PLUGIN_INSTALLATION=false apt-get install -yq "$DEB" || \
      (echo "WARNING: .deb dependencies missing from the cached layer, see control.m4" >&2 && \
-      apt-get update && DS_DOCKER_INSTALLATION=true apt-get install -yq "$DEB")) && \
+      apt-get update && DS_DOCKER_INSTALLATION=true DS_PLUGIN_INSTALLATION=false apt-get install -yq "$DEB")) && \
     (runuser -u rabbitmq -- rabbitmqctl shutdown || true) && \
     service postgresql stop && \
     rm -rf /var/lib/rabbitmq/mnesia /var/lib/apt/lists/* /tmp/*
