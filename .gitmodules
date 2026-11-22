@@ -3,7 +3,7 @@
 	url = https://github.com/Euro-Office/server.git
 [submodule "web-apps"]
 	path = web-apps
-	url = https://github.com/Euro-Office/web-apps.git
+	url = https://github.com/W4MEX/W4-Office-WebApps.git
 [submodule "sdkjs"]
 	path = sdkjs
 	url = https://github.com/Euro-Office/sdkjs.git
