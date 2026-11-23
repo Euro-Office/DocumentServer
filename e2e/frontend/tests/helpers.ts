@@ -154,6 +154,7 @@ export const FIXTURE_TEXT = {
   docx: 'Euro-Office e2e fixture paragraph',
   xlsx: 'Euro-Office e2e fixture cell',
   pptx: 'Euro-Office e2e fixture title',
+  pdf: 'Euro-Office e2e fixture page',
 } as const;
 
 export type FixtureExt = keyof typeof FIXTURE_TEXT;
@@ -494,5 +495,28 @@ export const selectedText = (editorPage: Page) =>
 /** One-shot read of a shape's text: select, then read. */
 export async function readShape(editorPage: Page, shapeNumber: number) {
   await selectShapeText(editorPage, shapeNumber);
+  return selectedText(editorPage);
+}
+
+/**
+ * The text of the PDF page on screen: drag the pointer across the canvas to
+ * select everything on it, then read the selection back.
+ *
+ * A drag because the PDF editor has no working Select All — Ctrl+A, the
+ * toolbar's Select all and asc_EditSelectAll each leave the selection empty on
+ * a page it is displaying. Only what is on screen is selected, so this reads a
+ * single page.
+ */
+export async function readPdfPageText(editorPage: Page, frame: FrameLocator): Promise<string> {
+  const box = await frame.locator('#editor_sdk').boundingBox();
+  if (!box) throw new Error('the PDF canvas is not on screen');
+
+  // Inset so the drag starts and ends on the canvas rather than its border.
+  const inset = 5;
+  await editorPage.mouse.move(box.x + inset, box.y + inset);
+  await editorPage.mouse.down();
+  await editorPage.mouse.move(box.x + box.width - inset, box.y + box.height - inset, { steps: 20 });
+  await editorPage.mouse.up();
+
   return selectedText(editorPage);
 }
