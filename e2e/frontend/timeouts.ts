@@ -26,7 +26,16 @@ export const EDITOR_CONTENT_READ = 30_000;
 // editor disconnects.
 export const STORED_FILE_SAVED = 60_000;
 
+// The editor puts "*" in the title a moment after an edit. Waiting this long for
+// it separates "not shown yet" from "already cleared by autosave".
+export const TITLE_DIRTY_APPEARS = 3_000;
+
 // One test opens at most two editors (create the file, then reopen it from the
 // list); the slack covers the typing and assertions around them.
 const TEST_SLACK = 30_000;
 export const TEST_TIMEOUT = 2 * (EDITOR_IFRAME_ATTACH + EDITOR_LOAD) + TEST_SLACK;
+
+// A final-save test opens up to three editors and opens each again after saving:
+// six opens, a save wait per editor and one storage wait.
+export const FINAL_SAVE_TEST_TIMEOUT =
+  6 * (EDITOR_IFRAME_ATTACH + EDITOR_LOAD) + 3 * DOCUMENT_SAVED + STORED_FILE_SAVED + TEST_SLACK;
