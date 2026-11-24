@@ -64,10 +64,11 @@ FROM ubuntu:24.04 AS package
 
     RUN mkdir -p /packages && \
         find /document-server-package/deb          -name "*.deb" -exec cp -v {} /packages/ \;  && \
+        find /document-server-package/deb          -name "*.ddeb" -exec cp -v {} /packages/ \;  && \
         find /document-server-package/rpm/builddir -name "*.rpm" -exec cp -v {} /packages/ \;
 
 #### PACKAGES OUTPUT ####
 # Scratch stage so `docker build --target packages -o <dir>` extracts only
-# the finished .deb and .rpm files.
+# the finished .deb and .rpm files, plus the .ddeb with the core symbols.
 FROM scratch AS packages
     COPY --from=package /packages/ /
