@@ -1,14 +1,14 @@
 import { createHash, randomUUID } from 'crypto';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
-import { APIRequestContext, Browser, FrameLocator, Page, errors, expect } from '@playwright/test';
+import { APIRequestContext, Browser, FrameLocator, Page, expect } from '@playwright/test';
 import { DEFAULT_BASE_URL } from '../constants';
 import {
   DOCUMENT_SAVED,
   EDITOR_IFRAME_ATTACH,
   EDITOR_LOAD,
+  STORED_FILE_POLL_INTERVAL,
   STORED_FILE_SAVED,
-  TITLE_DIRTY_APPEARS,
 } from '../timeouts';
 
 const EDITOR_IFRAME = 'iframe[name="frameEditor"]';
@@ -420,21 +420,19 @@ export async function saveAndReopen(page: Page, editorPage: Page, before: Buffer
 /**
  * Press Ctrl+S and wait until the editor has handed its changes to the server.
  *
- * The example page puts "*" in the title while changes are unsent and removes it
- * once the server has them. "*" shows up a moment after the edit, so waiting only
- * for it to be absent can pass before it ever appeared, and a tab closed then
- * loses the edit. Wait briefly for "*" first. If it never shows, autosave has
- * already sent the change and cleared it.
+ * The editor's own unsaved-changes flag is read first because it is set as soon
+ * as the edit is made. The "*" in the example page's title follows a moment
+ * later, so waiting only for it to be absent can pass before it ever appeared,
+ * and a tab closed then loses the edit.
  */
 export async function saveAndWaitForServer(editorPage: Page) {
   await editorPage.keyboard.press('Control+s');
-  await editorPage
-    .waitForFunction(() => document.title.startsWith('*'), undefined, {
-      timeout: TITLE_DIRTY_APPEARS,
+  await expect
+    .poll(() => editorApi(editorPage, (api) => api.asc_isDocumentCanSave()).catch(() => true), {
+      message: 'editor still holds changes the server has not accepted',
+      timeout: DOCUMENT_SAVED,
     })
-    .catch((error) => {
-      if (!(error instanceof errors.TimeoutError)) throw error;
-    });
+    .toBe(false);
   await expect(editorPage).not.toHaveTitle(/^\*/, { timeout: DOCUMENT_SAVED });
 }
 
@@ -446,6 +444,31 @@ export async function waitForStoredFileChange(page: Page, editorUrl: string, bef
       timeout: STORED_FILE_SAVED,
     })
     .not.toBe(sha256(before));
+}
+
+/**
+ * Check that the file an editor URL points at stays equal to `before` in storage
+ * for the whole `duration`. A negative check cannot return early, so it has to
+ * watch for as long as a wrongly started save would take.
+ */
+export async function expectStoredFileUnchanged(
+  page: Page,
+  editorUrl: string,
+  before: Buffer,
+  duration: number,
+) {
+  const deadline = Date.now() + duration;
+  let changed = false;
+  await expect
+    .poll(
+      async () => {
+        changed ||= sha256(await downloadStoredFile(page, editorUrl)) !== sha256(before);
+        return changed || Date.now() >= deadline;
+      },
+      { intervals: [STORED_FILE_POLL_INTERVAL], timeout: duration + STORED_FILE_SAVED },
+    )
+    .toBe(true);
+  expect(changed, 'stored file changed while another editor was still connected').toBe(false);
 }
 
 /** Open an editor URL in a new tab of the same context and wait until it has loaded. */

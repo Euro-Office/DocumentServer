@@ -7,6 +7,7 @@ import {
   type FixtureExt,
   cleanUpStoredFiles,
   downloadStoredFile,
+  expectStoredFileUnchanged,
   focusShape,
   openStoredEditor,
   readDocumentText,
@@ -16,12 +17,11 @@ import {
   saveAndWaitForServer,
   selectCell,
   selectedCellText,
-  sha256,
   shortFileName,
   uploadFixtureFile,
   waitForStoredFileChange,
 } from './helpers';
-import { EDITOR_CONTENT_READ, FINAL_SAVE_TEST_TIMEOUT } from '../timeouts';
+import { EDITOR_CONTENT_READ, FINAL_SAVE_QUIET_PERIOD, FINAL_SAVE_TEST_TIMEOUT } from '../timeouts';
 
 // The final save is what docservice does after the last editor disconnects. The
 // save and edit specs prove one document saved once; these tests cover closing
@@ -175,8 +175,11 @@ test.describe('Document editor - final save', { tag: ['@document', '@regression'
       await editorPage.close();
     });
 
-    // Not waiting for storage: this reopens within the delay docservice allows
-    // before it saves, so the editor attaches to the document the first one left.
+    // Not waiting for storage: docservice saves a few seconds after the first
+    // editor disconnects. An editor that connects before then makes the pending
+    // save do nothing, and this editor's own close saves later. One that connects
+    // after the save has started opens the saved file. Either way the edit must
+    // be there exactly once.
     const second = await test.step('reopen straight away', () => reopenEditor(page, editorUrl));
 
     await test.step('the edit is there exactly once', () =>
@@ -208,6 +211,9 @@ test.describe('Document editor - final save', { tag: ['@document', '@regression'
     await test.step('the first tab leaves, the second keeps editing', async () => {
       await saveAndWaitForServer(first.editorPage);
       await first.editorPage.close();
+      // The second tab is still connected, so storage must stay as it was for
+      // longer than docservice waits before it saves.
+      await expectStoredFileUnchanged(page, editorUrl, before, FINAL_SAVE_QUIET_PERIOD);
 
       await second.frame.locator('#editor_sdk').click();
       await typeAtEnd(second.editorPage, TEXT_B);
@@ -216,9 +222,6 @@ test.describe('Document editor - final save', { tag: ['@document', '@regression'
 
     await test.step('the last tab leaves and both edits are saved', async () => {
       await saveAndWaitForServer(second.editorPage);
-      // The first tab leaving must not have saved the document: storage only
-      // changes once the last editor is gone.
-      expect(sha256(await downloadStoredFile(page, editorUrl))).toBe(sha256(before));
       await second.editorPage.close();
       await waitForStoredFileChange(page, editorUrl, before);
 
