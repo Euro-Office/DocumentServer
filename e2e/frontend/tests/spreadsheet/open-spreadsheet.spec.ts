@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { selectCell, selectedCellText } from '../helpers';
-import { describeOpeningStoredFixture } from '../open-stored-fixture.suite';
+import { describeOpeningStoredFixture, expectEditorBundle } from '../open-stored-fixture.suite';
 
 // Remit and the reasoning behind it: open-stored-fixture.suite.ts.
 describeOpeningStoredFixture({
@@ -12,7 +12,7 @@ describeOpeningStoredFixture({
   tag: '@spreadsheet',
   rowClass: 'cell',
   urlExt: /\.xlsx/,
-  editorApp: /spreadsheeteditor/,
+  assertEditorApp: expectEditorBundle(/spreadsheeteditor/),
   // The fixture's only value is in A1 of its only sheet. Selecting by name box
   // rather than trusting wherever the opening click left the cursor.
   readContent: async (editorPage, frame) => {

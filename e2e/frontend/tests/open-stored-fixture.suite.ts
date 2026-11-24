@@ -16,17 +16,28 @@ import { EDITOR_CONTENT_READ } from '../timeouts';
 const EDITOR_IFRAME = 'iframe[name="frameEditor"]';
 
 /**
- * The P1 "open an existing file" scenario, shared by the three open-*.spec.ts
+ * Assert the editor iframe loaded a given app bundle. The document,
+ * spreadsheet and presentation editors are each served from their own path, so
+ * the src names the app that was handed the file. A PDF comes from the shared
+ * `common/index.html`, so open-pdf.spec.ts asks the editor itself instead.
+ */
+export const expectEditorBundle = (bundle: RegExp) => async (editorPage: Page) => {
+  await expect(editorPage.locator(EDITOR_IFRAME)).toHaveAttribute('src', bundle);
+};
+
+/**
+ * The P1 "open an existing file" scenario, shared by the four open-*.spec.ts
  * files: an uploaded file is listed under its type, opens in the matching
  * editor, and shows the content it was uploaded with.
  *
  * The fixture is the point. Every other spec reads back content the app itself
  * wrote, so a fault that mangled content consistently would sit on both sides
  * of the comparison and stay invisible. These compare against
- * `frontend/fixtures/fixture.{docx,xlsx,pptx}`, which the server never touched.
+ * `frontend/fixtures/fixture.{docx,xlsx,pptx,pdf}`, which the server never
+ * touched.
  *
- * Out of scope (P2/P3): formatting, images, multi-page and multi-sheet
- * fixtures, malformed files, and the PDF form editor.
+ * Out of scope (P2/P3): formatting, images, multi-page, multi-sheet and
+ * form-field fixtures, and malformed files.
  */
 export function describeOpeningStoredFixture(type: {
   /** Editor name for the describe title, e.g. `Spreadsheet editor`. */
@@ -35,14 +46,14 @@ export function describeOpeningStoredFixture(type: {
   noun: string;
   /** Fixture extension, which also picks the expected text. */
   ext: FixtureExt;
-  /** Row class the file list marks this type with: word, cell, slide. */
+  /** Row class the file list marks this type with: word, cell, slide, pdf. */
   rowClass: string;
-  /** Area tag: @document, @spreadsheet or @presentation. */
+  /** Area tag: @document, @spreadsheet, @presentation or @pdf. */
   tag: string;
   /** Matches the editor tab's URL. */
   urlExt: RegExp;
-  /** Matches the editor iframe's src: the app that actually loaded. */
-  editorApp: RegExp;
+  /** Prove the app that actually loaded is the right one for this type. */
+  assertEditorApp: (editorPage: Page) => Promise<void>;
   /** Read the whole of the fixture's content. Polled, so it must be repeatable. */
   readContent: (editorPage: Page, frame: FrameLocator) => Promise<string>;
 }) {
@@ -78,9 +89,9 @@ export function describeOpeningStoredFixture(type: {
           // Parsed, not matched as a URL pattern: generated names contain regex
           // metacharacters.
           expect(new URL(editorPage.url()).searchParams.get('fileName')).toBe(fileName);
-          // The URL extension would not catch the wrong editor being handed the
-          // file; the iframe src is the app that actually loaded.
-          await expect(editorPage.locator(EDITOR_IFRAME)).toHaveAttribute('src', type.editorApp);
+          // The URL extension would not catch the wrong editor being handed
+          // the file, so this checks the app that actually loaded.
+          await type.assertEditorApp(editorPage);
         });
 
         await test.step('the content is what the fixture holds', async () => {
