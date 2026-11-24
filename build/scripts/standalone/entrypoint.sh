@@ -78,6 +78,7 @@ ONLYOFFICE_HTTPS_HSTS_MAXAGE="${ONLYOFFICE_HTTPS_HSTS_MAXAGE:-31536000}"
 USE_UNAUTHORIZED_STORAGE="${USE_UNAUTHORIZED_STORAGE:-false}"
 ALLOW_PRIVATE_IP_ADDRESS="${ALLOW_PRIVATE_IP_ADDRESS:-false}"
 ALLOW_META_IP_ADDRESS="${ALLOW_META_IP_ADDRESS:-false}"
+ALLOW_LOCAL_NETWORK_ACCESS_IFRAMES="${ALLOW_LOCAL_NETWORK_ACCESS_IFRAMES:-false}"
 ADMINPANEL_ENABLED="${ADMINPANEL_ENABLED:-false}"
 EXAMPLE_ENABLED="${EXAMPLE_ENABLED:-false}"
 
@@ -286,6 +287,10 @@ jq_set '.storage = { "fs": { "secretString": $secureLinkSecret } }'
   jq_set '.services.CoAuthoring["request-filtering-agent"].allowPrivateIPAddress = true'
 [ "$ALLOW_META_IP_ADDRESS" = "true" ] && \
   jq_set '.services.CoAuthoring["request-filtering-agent"].allowMetaIPAddress = true'
+
+# Browser local network access for plugins (opt-in, Chromium only)
+[ "$ALLOW_LOCAL_NETWORK_ACCESS_IFRAMES" = "true" ] && \
+  jq_set '.security.allowLocalNetworkAccessIframes = true'
 
 # Upload size limit
 jq_set '.services.CoAuthoring.server.limits_tempfile_upload = ($maxFileSize | tonumber? // $maxFileSize)'
