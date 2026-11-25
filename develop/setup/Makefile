@@ -197,10 +197,10 @@ server/common:
 	sed "s|\(const buildVersion = \).*|\1'${PRODUCT_VERSION}';|" -i sources/commondefines.js
 
 server/docservice: server/common
-	$(call build_server,$(EO_DEV)/server/DocService,${EO_ROOT}/server/DocService/docservice, docservice)
+	$(call build_server,$(EO_DEV)/server/DocService,${EO_ROOT}/server/DocService/docservice, ds:docservice)
 
 server/converter: server/common
-	$(call build_server,$(EO_DEV)/server/FileConverter,${EO_ROOT}/server/FileConverter/converter, converter)
+	$(call build_server,$(EO_DEV)/server/FileConverter,${EO_ROOT}/server/FileConverter/converter, ds:converter)
 
 server/metrics: server/common
 	$(call build_server,$(EO_DEV)/server/Metrics,${EO_ROOT}/server/Metrics/metrics, metrics)
