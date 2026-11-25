@@ -3,33 +3,61 @@ SPDX-FileCopyrightText: 2026 Euro-Office contributors
 SPDX-License-Identifier: AGPL
 -->
 
-[![License](https://img.shields.io/badge/License-GNU%20AGPL%20V3-green.svg?style=flat)](https://www.gnu.org/licenses/agpl-3.0.en.html)
+# W4 Office Server
 
-# Euro-Office
-**Your sovereign office**
+W4 Office Server brings browser-based document, spreadsheet, presentation and
+PDF editors to a file platform such as Nextcloud. The server runs the editing
+and conversion services. The connected platform stores the documents.
 
-[Learn more.](https://github.com/Euro-Office/)
+The editor interface lives in [W4 Office WebApps](https://github.com/W4MEX/W4-Office-WebApps).
+For the standalone Windows application and portable USB edition, visit
+[W4 Office Desktop Releases](https://github.com/W4MEX/W4-OfficeDesktop/releases).
 
-## Install
+## Try the development server
 
-The Document Server is not a standalone application and needs a platform such as Nextcloud that stores the files.
+Docker and Docker Compose are required. Clone the orchestrator with its pinned
+submodules and start the document server service:
 
-* **Nextcloud Office**: signed builds for production use, with APT and DNF package repositories, available on [nextcloud-releases/Office-DocumentServer](https://github.com/nextcloud-releases/Office-DocumentServer/releases)
-* **Euro-Office**: community builds for testing and contributing, available as deb/rpm on the [releases](https://github.com/Euro-Office/DocumentServer/releases/latest) page and as the `ghcr.io/euro-office/documentserver` container image
-
-See the [installation guide](https://euro-office.github.io/documentation/installation/) in the [official documentation](https://euro-office.github.io/documentation/) for step-by-step instructions.
-
-## Get involved
-Get involved! You can file issues, propose pull requests and more. We are looking forward to make the digital sovereign office space better than ever before!
-
-### Try out
-We currently provide a docker image for testing and integration purposes. Check the [releases](https://github.com/Euro-Office/DocumentServer/releases) for deb/rpm packages.
-
-```
-docker pull ghcr.io/euro-office/documentserver:latest
-docker run -i -t -d -p 8080:80 --restart=always -e EXAMPLE_ENABLED=true -e JWT_SECRET=my_long_jwt_secret_at_least_32_chars ghcr.io/euro-office/documentserver:latest
+```sh
+git clone --recurse-submodules https://github.com/W4MEX/W4-OfficeServer.git
+cd W4-OfficeServer/develop
+docker compose pull eo
+docker compose up -d eo
 ```
 
-### Building
+When the service is ready, open the demo at `http://localhost:8080/example/`.
+See the [development guide](develop/README.md) for the health check, logs and
+Nextcloud integration. Use test documents with the development setup.
 
-Our build steps and processes are documented in https://github.com/Euro-Office/DocumentServer/tree/main/build. For development there are more detailed steps to build and run individual components in https://github.com/Euro-Office/DocumentServer/tree/main/develop 
+The development Compose file uses a prebuilt Euro-Office image. Its interface
+can show the upstream branding. The W4 editor theme lives in WebApps and needs
+to be included in the WebApps revision pinned here and selected when building
+the editor interface.
+
+## Build from source
+
+From the repository root, initialize the submodules if they were skipped
+during cloning:
+
+```sh
+git submodule update --init --recursive
+cd build
+docker buildx bake
+```
+
+See the [build requirements](build/BUILD_REQUISITES.md) and the
+[build guide](build/README.md) for image targets and cache settings. The
+[development guide](develop/README.md) explains how to rebuild a component
+inside the test container.
+
+## Contribute
+
+Report problems or suggest improvements in
+[W4 Office Server Issues](https://github.com/W4MEX/W4-OfficeServer/issues).
+Include the version or commit, the affected component and the steps to reproduce.
+See the [contribution guidelines](CONTRIBUTING.md) before submitting a change.
+
+## License and credits
+
+See [LICENSE](LICENSE) and [ATTRIBUTION](ATTRIBUTION) for the license and
+credits for inherited components.
