@@ -29,6 +29,7 @@ e2e/
 │       ├── pdf-form/          create-, save-, edit-, delete-pdf-form, open-pdf
 │       ├── mobile/            mobile-editor
 │       ├── example-page.spec.ts
+│       ├── final-save.spec.ts            Final save with several editors closed together, an early reopen and two tabs
 │       ├── stored-file-delete.suite.ts   The deletion scenario the four delete-* specs share
 │       ├── open-stored-fixture.suite.ts  The scenario the four open-* specs share
 │       └── helpers.ts         Shared editor, stored-file, fixture-upload and content-reading

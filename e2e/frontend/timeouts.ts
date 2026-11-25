@@ -30,3 +30,20 @@ export const STORED_FILE_SAVED = 60_000;
 // list); the slack covers the typing and assertions around them.
 const TEST_SLACK = 30_000;
 export const TEST_TIMEOUT = 2 * (EDITOR_IFRAME_ATTACH + EDITOR_LOAD) + TEST_SLACK;
+
+// How often a stored file is read while checking that it does not change.
+export const STORED_FILE_POLL_INTERVAL = 1_000;
+
+// How long to watch for a save that must not happen: docservice waits
+// savetimeoutdelay (5 s by default) after an editor disconnects before it saves,
+// and the conversion follows.
+export const FINAL_SAVE_QUIET_PERIOD = 15_000;
+
+// A final-save test opens up to three editors and opens each again after saving:
+// six opens, a save wait per editor and one storage wait.
+export const FINAL_SAVE_TEST_TIMEOUT =
+  6 * (EDITOR_IFRAME_ATTACH + EDITOR_LOAD) +
+  3 * DOCUMENT_SAVED +
+  STORED_FILE_SAVED +
+  FINAL_SAVE_QUIET_PERIOD +
+  TEST_SLACK;
