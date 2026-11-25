@@ -1,0 +1,7 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Euro-Office contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+# Save the open documents back to their storage before the services stop.
+. "$SNAP/bin/common.sh"
+(as_daemon curl -s -o /dev/null --max-time 240 -X PUT --unix-socket "$RUN/docservice.sock" \
+    http://localhost/internal/cluster/inactive) || true

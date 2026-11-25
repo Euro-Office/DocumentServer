@@ -1,0 +1,21 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Euro-Office contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+set -eu
+. "$SNAP/bin/common.sh"
+if [ "$(id -u)" -eq 0 ]; then as_daemon "$0"; fi
+umask 077
+BASE=$SNAP_COMMON/rabbitmq
+export HOME="$BASE"
+export RABBITMQ_HOME
+for RABBITMQ_HOME in "$SNAP"/usr/lib/rabbitmq/lib/rabbitmq_server-*; do :; done
+export RABBITMQ_NODENAME=euro-office@localhost
+export RABBITMQ_CONF_ENV_FILE=/dev/null
+export RABBITMQ_CONFIG_FILE="$CONFIG/rabbitmq.conf"
+export RABBITMQ_MNESIA_BASE="$BASE/mnesia" RABBITMQ_LOG_BASE="$BASE/log" RABBITMQ_LOGS=-
+export RABBITMQ_ENABLED_PLUGINS_FILE="$BASE/enabled_plugins"
+export RABBITMQ_FEATURE_FLAGS_FILE="$BASE/feature_flags"
+# Private, loopback-only ports, so a RabbitMQ on the host is not affected.
+export ERL_EPMD_ADDRESS=127.0.0.1 ERL_EPMD_PORT=8484 RABBITMQ_DIST_PORT=8483
+export RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS="-kernel inet_dist_use_interface {127,0,0,1}"
+exec "$RABBITMQ_HOME/sbin/rabbitmq-server"

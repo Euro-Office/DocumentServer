@@ -1,0 +1,13 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Euro-Office contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+set -e
+"$SNAP/bin/render-config"
+settings=$(snapctl get -d port address workers jwt | sha256sum | cut -d" " -f1)
+applied=$(snapctl get private.applied)
+snapctl set private.applied="$settings"
+if [ "$applied" ] && [ "$applied" != "$settings" ]; then
+    for app in docservice converter nginx; do
+        snapctl restart "$SNAP_INSTANCE_NAME.$app"
+    done
+fi

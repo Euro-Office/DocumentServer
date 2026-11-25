@@ -1,0 +1,1 @@
+{"url": "http://127.0.0.1:@PORT@/", "jwt_secret": "@JWT_SECRET@"}

@@ -1,0 +1,9 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Euro-Office contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+set -eu
+. "$SNAP/bin/common.sh"
+if [ "$(id -u)" -eq 0 ]; then as_daemon "$0"; fi
+umask 077
+mkdir -p /var/lib/euro-office/documentserver/tmp /var/lib/euro-office/documentserver/App_Data/cache/files
+run_node FileConverter converter

@@ -1,0 +1,26 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Euro-Office contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+set -eu
+. "$SNAP/bin/common.sh"
+if [ "$(id -u)" -eq 0 ]; then as_daemon "$0"; fi
+umask 077
+DATA=$SNAP_COMMON/postgresql
+
+chmod 700 "$DATA"
+if [ ! -f "$DATA/PG_VERSION" ]; then
+    initdb -D "$DATA" -U _daemon_ -A peer -E UTF8 --no-locale
+fi
+# No TCP: the socket directory is only accessible to this snap's user.
+OPTS="-c listen_addresses= -c unix_socket_directories=$RUN -c max_connections=60"
+
+# Create the schema before anything can connect.
+printf 'CREATE DATABASE documentserver;\n' |
+    postgres --single -D "$DATA" postgres >/dev/null 2>&1 || true
+pg_ctl -D "$DATA" -w -o "$OPTS" start
+psql -q -v ON_ERROR_STOP=1 -h "$RUN" -U _daemon_ -d documentserver \
+    -f /var/www/euro-office/documentserver/server/schema/postgresql/createdb.sql
+pg_ctl -D "$DATA" -w -m fast stop
+
+# shellcheck disable=SC2086
+exec postgres -D "$DATA" $OPTS
