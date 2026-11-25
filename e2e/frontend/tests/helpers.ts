@@ -3,7 +3,13 @@ import { readFile } from 'fs/promises';
 import { join } from 'path';
 import { APIRequestContext, Browser, FrameLocator, Page, expect } from '@playwright/test';
 import { DEFAULT_BASE_URL } from '../constants';
-import { EDITOR_IFRAME_ATTACH, EDITOR_LOAD, STORED_FILE_SAVED } from '../timeouts';
+import {
+  DOCUMENT_SAVED,
+  EDITOR_IFRAME_ATTACH,
+  EDITOR_LOAD,
+  STORED_FILE_POLL_INTERVAL,
+  STORED_FILE_SAVED,
+} from '../timeouts';
 
 const EDITOR_IFRAME = 'iframe[name="frameEditor"]';
 
@@ -97,6 +103,15 @@ export async function createStoredFile(
  */
 export const newFileLink = (ext: string) => `a[href*="fileExt=${ext}"]`;
 
+/**
+ * A short readable name for a test's own document, e.g. `final-save-early-1a2b3c4d.docx`.
+ * The random suffix keeps parallel workers and repeated runs on a long-lived
+ * server from sharing a name, while the file list stays easy to read. Use
+ * uniqueFileName when the name does not need to be read.
+ */
+export const shortFileName = (label: string, ext: string) =>
+  `${label}-${randomUUID().slice(0, 8)}.${ext}`;
+
 /** A name no parallel worker can be handed. See uploadStoredFile. */
 export const uniqueFileName = (label: string, ext: string) => `e2e-${label}-${randomUUID()}.${ext}`;
 
@@ -154,6 +169,7 @@ export const FIXTURE_TEXT = {
   docx: 'Euro-Office e2e fixture paragraph',
   xlsx: 'Euro-Office e2e fixture cell',
   pptx: 'Euro-Office e2e fixture title',
+  pdf: 'Euro-Office e2e fixture page',
 } as const;
 
 export type FixtureExt = keyof typeof FIXTURE_TEXT;
@@ -353,7 +369,7 @@ export async function editorApi<T>(editorPage: Page, fn: (api: any) => T): Promi
   }, fn.toString());
 }
 
-const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+export const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 
 /**
  * Download the file an editor URL points at straight from the example app's
@@ -398,14 +414,66 @@ async function storedFileBytes(request: APIRequestContext, fileName: string): Pr
 export async function saveAndReopen(page: Page, editorPage: Page, before: Buffer) {
   const editorUrl = editorPage.url();
   await editorPage.close();
+  await waitForStoredFileChange(page, editorUrl, before);
+  return reopenEditor(page, editorUrl);
+}
 
+/**
+ * Press Ctrl+S and wait until the editor has handed its changes to the server.
+ *
+ * The editor's own unsaved-changes flag is read first because it is set as soon
+ * as the edit is made. The "*" in the example page's title follows a moment
+ * later, so waiting only for it to be absent can pass before it ever appeared,
+ * and a tab closed then loses the edit.
+ */
+export async function saveAndWaitForServer(editorPage: Page) {
+  await editorPage.keyboard.press('Control+s');
+  await expect
+    .poll(() => editorApi(editorPage, (api) => api.asc_isDocumentCanSave()).catch(() => true), {
+      message: 'editor still holds changes the server has not accepted',
+      timeout: DOCUMENT_SAVED,
+    })
+    .toBe(false);
+  await expect(editorPage).not.toHaveTitle(/^\*/, { timeout: DOCUMENT_SAVED });
+}
+
+/** Wait until the file an editor URL points at differs from `before` in storage. */
+export async function waitForStoredFileChange(page: Page, editorUrl: string, before: Buffer) {
   await expect
     .poll(async () => sha256(await downloadStoredFile(page, editorUrl)), {
       message: 'saved file in storage differs from the blank template',
       timeout: STORED_FILE_SAVED,
     })
     .not.toBe(sha256(before));
+}
 
+/**
+ * Check that the file an editor URL points at stays equal to `before` in storage
+ * for the whole `duration`. A negative check cannot return early, so it has to
+ * watch for as long as a wrongly started save would take.
+ */
+export async function expectStoredFileUnchanged(
+  page: Page,
+  editorUrl: string,
+  before: Buffer,
+  duration: number,
+) {
+  const deadline = Date.now() + duration;
+  let changed = false;
+  await expect
+    .poll(
+      async () => {
+        changed ||= sha256(await downloadStoredFile(page, editorUrl)) !== sha256(before);
+        return changed || Date.now() >= deadline;
+      },
+      { intervals: [STORED_FILE_POLL_INTERVAL], timeout: duration + STORED_FILE_SAVED },
+    )
+    .toBe(true);
+  expect(changed, 'stored file changed while another editor was still connected').toBe(false);
+}
+
+/** Open an editor URL in a new tab of the same context and wait until it has loaded. */
+export async function reopenEditor(page: Page, editorUrl: string) {
   const reopened = await page.context().newPage();
   await reopened.goto(editorUrl);
   await expect(reopened.locator(EDITOR_IFRAME)).toBeAttached({ timeout: EDITOR_IFRAME_ATTACH });
@@ -494,5 +562,28 @@ export const selectedText = (editorPage: Page) =>
 /** One-shot read of a shape's text: select, then read. */
 export async function readShape(editorPage: Page, shapeNumber: number) {
   await selectShapeText(editorPage, shapeNumber);
+  return selectedText(editorPage);
+}
+
+/**
+ * The text of the PDF page on screen: drag the pointer across the canvas to
+ * select everything on it, then read the selection back.
+ *
+ * A drag because the PDF editor has no working Select All — Ctrl+A, the
+ * toolbar's Select all and asc_EditSelectAll each leave the selection empty on
+ * a page it is displaying. Only what is on screen is selected, so this reads a
+ * single page.
+ */
+export async function readPdfPageText(editorPage: Page, frame: FrameLocator): Promise<string> {
+  const box = await frame.locator('#editor_sdk').boundingBox();
+  if (!box) throw new Error('the PDF canvas is not on screen');
+
+  // Inset so the drag starts and ends on the canvas rather than its border.
+  const inset = 5;
+  await editorPage.mouse.move(box.x + inset, box.y + inset);
+  await editorPage.mouse.down();
+  await editorPage.mouse.move(box.x + box.width - inset, box.y + box.height - inset, { steps: 20 });
+  await editorPage.mouse.up();
+
   return selectedText(editorPage);
 }
