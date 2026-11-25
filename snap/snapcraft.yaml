@@ -98,15 +98,15 @@ parts:
     stage-packages: [libstdc++6, libgcc-s1]
     override-pull: |
       craftctl default
-      release=9.3.8
+      . "$CRAFT_PART_SRC/release"
       case "$CRAFT_ARCH_BUILD_FOR" in
-        amd64) sum=c22213cdaffafd6ac437f2138a174bad1472c8f659d9e833a1163cbb14114393 ;;
-        arm64) sum=c40f9c6b66af792a051a41182b484a3237be6d0d677313759f6f985c06519255 ;;
+        amd64) sum=$SHA256_AMD64 ;;
+        arm64) sum=$SHA256_ARM64 ;;
       esac
       curl -fsSL --retry 3 -o "$CRAFT_PART_SRC/ds.deb" \
-        "https://github.com/Euro-Office/DocumentServer/releases/download/v$release/euro-office-documentserver_$release-0_$CRAFT_ARCH_BUILD_FOR.deb"
+        "https://github.com/Euro-Office/DocumentServer/releases/download/v$RELEASE/euro-office-documentserver_$RELEASE-0_$CRAFT_ARCH_BUILD_FOR.deb"
       echo "$sum  $CRAFT_PART_SRC/ds.deb" | sha256sum -c -
-      craftctl set version="$release"
+      craftctl set version="$RELEASE-$SNAP_REVISION"
     override-build: |
       rm -rf unpack && mkdir unpack
       dpkg-deb -x ds.deb unpack

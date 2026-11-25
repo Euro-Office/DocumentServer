@@ -1,0 +1,104 @@
+name: Snap promote
+
+# Releases a candidate to stable, after the comment
+#   /promote <revision>[,<revision>...] stable [done]
+# on a call-for-testing issue, by somebody with write access.
+on:
+  # The comment is only matched against a pattern, from an environment variable,
+  # and nothing is checked out.
+  issue_comment:  # zizmor: ignore[dangerous-triggers]
+    types: [created]
+
+permissions: {}
+
+concurrency:
+  group: snap-promote
+  cancel-in-progress: false
+
+env:
+  SNAP_NAME: euro-office-documentserver
+  GH_REPO: ${{ github.repository }}
+  ISSUE: ${{ github.event.issue.number }}
+
+jobs:
+  check:
+    if: >-
+      vars.SNAP_STORE_PUBLISH == 'true' &&
+      github.event.issue.pull_request == null &&
+      github.event.issue.user.login == 'github-actions[bot]' &&
+      contains(github.event.issue.labels.*.name, 'call-for-testing') &&
+      startsWith(github.event.comment.body, '/promote ')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      issues: write  # reaction
+    outputs:
+      revisions: ${{ steps.parse.outputs.revisions }}
+      close: ${{ steps.parse.outputs.close }}
+    steps:
+      # author_association is no help: an organization member may have read
+      # access only.
+      - name: Check the access of the commenter
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.event.comment.user.login }}
+        run: |
+          set -euo pipefail
+          permission=$(gh api "repos/$GH_REPO/collaborators/$ACTOR/permission" --jq .permission)
+          case "$permission" in
+            admin | write) ;;
+            *) echo "::error::$ACTOR has no write access"; exit 1 ;;
+          esac
+
+      - name: Parse the comment
+        id: parse
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMMENT: ${{ github.event.comment.body }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          TITLE: ${{ github.event.issue.title }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$COMMENT" =~ ^/promote\ ([0-9]+(,[0-9]+)*)\ stable(\ done)?[[:space:]]*$ ]]; then
+            echo "::error::Expected: /promote <revision>[,<revision>...] stable [done]"
+            exit 1
+          fi
+          revisions=${BASH_REMATCH[1]}
+          close=${BASH_REMATCH[3]:+true}
+          # Only what this issue is about.
+          [[ "$TITLE" =~ \(([0-9,]+)\)$ ]] || { echo "::error::No revisions in the title"; exit 1; }
+          offered=,${BASH_REMATCH[1]},
+          for revision in ${revisions//,/ }; do
+            [[ "$offered" == *",$revision,"* ]] || { echo "::error::Revision $revision is not offered here"; exit 1; }
+          done
+          echo "revisions=$revisions" >> "$GITHUB_OUTPUT"
+          echo "close=${close:-false}" >> "$GITHUB_OUTPUT"
+          gh api "repos/$GH_REPO/issues/comments/$COMMENT_ID/reactions" -f content=+1 --silent
+
+  promote:
+    needs: check
+    runs-on: ubuntu-24.04
+    environment: promote-stable
+    permissions:
+      issues: write  # comment and close
+    steps:
+      - name: Release to stable
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          REVISIONS: ${{ needs.check.outputs.revisions }}
+        run: |
+          set -euo pipefail
+          sudo snap install snapcraft --classic
+          for revision in ${REVISIONS//,/ }; do
+            snapcraft release "$SNAP_NAME" "$revision" stable
+          done
+
+      - name: Comment, and close the issue if asked to
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVISIONS: ${{ needs.check.outputs.revisions }}
+          CLOSE: ${{ needs.check.outputs.close }}
+        run: |
+          set -euo pipefail
+          gh issue comment "$ISSUE" --body "Released to stable: $REVISIONS"
+          if [ "$CLOSE" = true ]; then gh issue close "$ISSUE"; fi
