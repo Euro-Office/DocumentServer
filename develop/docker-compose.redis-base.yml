@@ -47,7 +47,7 @@ services:
       retries: 30
 
   rabbitmq:
-    image: rabbitmq:3
+    image: rabbitmq:4
     container_name: eo-test-rabbitmq-compose
     environment:
       RABBITMQ_DEFAULT_USER: eo
