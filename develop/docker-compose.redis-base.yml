@@ -32,7 +32,7 @@ services:
         condition: service_healthy
 
   postgres:
-    image: postgres:16
+    image: postgres:19
     container_name: eo-test-postgres-compose
     environment:
       POSTGRES_DB: eurooffice
