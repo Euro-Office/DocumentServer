@@ -67,7 +67,7 @@ services:
       EMAIL_URL: consolemail://
       GLITCHTIP_DOMAIN: http://localhost:8083
   glitchtip-db:
-    image: postgres:18-alpine
+    image: postgres:19-alpine
     profiles: [sentry]
     environment:
       POSTGRES_PASSWORD: postgres
