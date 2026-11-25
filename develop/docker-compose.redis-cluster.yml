@@ -1,5 +1,5 @@
 x-redis-cluster-node: &redis-cluster-node
-  image: ${REDIS_IMAGE:-redis:7-alpine}
+  image: ${REDIS_IMAGE:-redis:8-alpine}
   command:
     - sh
     - -c
@@ -102,7 +102,7 @@ services:
       REDIS_CLUSTER_NODE_BUS_PORT: 17005
 
   redis-cluster-init:
-    image: ${REDIS_IMAGE:-redis:7-alpine}
+    image: ${REDIS_IMAGE:-redis:8-alpine}
     command:
       - sh
       - -c

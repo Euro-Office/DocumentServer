@@ -15,7 +15,7 @@ services:
         condition: service_healthy
 
   redis:
-    image: ${REDIS_IMAGE:-redis:7-alpine}
+    image: ${REDIS_IMAGE:-redis:8-alpine}
     container_name: eo-test-redis-compose
     command:
       - ${REDIS_SERVER_COMMAND:-redis-server}

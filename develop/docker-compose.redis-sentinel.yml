@@ -28,7 +28,7 @@ services:
         condition: service_healthy
 
   redis-primary:
-    image: ${REDIS_IMAGE:-redis:7-alpine}
+    image: ${REDIS_IMAGE:-redis:8-alpine}
     container_name: eo-test-redis-primary-compose
     command:
       - ${REDIS_SERVER_COMMAND:-redis-server}
@@ -67,7 +67,7 @@ services:
       retries: 30
 
   redis-replica:
-    image: ${REDIS_IMAGE:-redis:7-alpine}
+    image: ${REDIS_IMAGE:-redis:8-alpine}
     container_name: eo-test-redis-replica-compose
     command:
       - ${REDIS_SERVER_COMMAND:-redis-server}
@@ -112,7 +112,7 @@ services:
       retries: 30
 
   redis-sentinel-1: &sentinel
-    image: ${REDIS_IMAGE:-redis:7-alpine}
+    image: ${REDIS_IMAGE:-redis:8-alpine}
     container_name: eo-test-sentinel-1-compose
     command:
       - sh
