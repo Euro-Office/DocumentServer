@@ -4,13 +4,14 @@
 
 """Build the open-* specs' fixture documents.
 
-Writes fixture.docx, fixture.xlsx and fixture.pptx next to this script: the
-smallest valid OOXML package of each type that holds one known string, listed
-in FIXTURE_TEXT below.
+Writes fixture.docx, fixture.xlsx, fixture.pptx and fixture.pdf next to this
+script: the smallest valid file of each type that holds one known string,
+listed in FIXTURE_TEXT below.
 
-The packages are written from raw XML rather than saved out of the editor on
-purpose. These files are the oracle the open-* specs compare the editor against,
-so a fault in our own writer must not be able to bake itself into them.
+The files are written from raw XML (and, for the PDF, raw PDF syntax) rather
+than saved out of the editor on purpose. They are the oracle the open-* specs
+compare the editor against, so a fault in our own writer must not be able to
+bake itself into them.
 
 Not `e2e/perf/gen-workbooks.ts`, which also writes xlsx from raw XML: that one
 builds large workbooks to time the open path. The only overlap is the zip
@@ -26,12 +27,14 @@ step" rather than as an editor content mismatch — but it cannot fix it for you
 """
 
 import zipfile
+from io import BytesIO
 from pathlib import Path
 
 FIXTURE_TEXT = {
     "docx": "Euro-Office e2e fixture paragraph",
     "xlsx": "Euro-Office e2e fixture cell",
     "pptx": "Euro-Office e2e fixture title",
+    "pdf": "Euro-Office e2e fixture page",
 }
 
 # Shared by every package: the OPC root relationship pointing at the part that
@@ -219,26 +222,84 @@ def pptx(text):
     }
 
 
-BUILDERS = {"docx": docx, "xlsx": xlsx, "pptx": pptx}
+def pdf(text):
+    """A one-page PDF whose only content is the string, in Helvetica.
+
+    Written by hand rather than with a PDF library so the fixtures keep to the
+    standard library, as the OOXML ones do. The content stream is left
+    uncompressed, for the same reason the packages above are stored rather
+    than deflated: it keeps the uploadFixtureFile check a plain byte search.
+    """
+    # The three characters with meaning inside a literal string. FIXTURE_TEXT
+    # holds none of them today, so this is only here to keep a future change
+    # to it from producing a broken PDF.
+    escaped = text.translate(str.maketrans({"\\": r"\\", "(": r"\(", ")": r"\)"}))
+    content = f"BT\n/F1 24 Tf\n72 760 Td\n({escaped}) Tj\nET\n".encode("ascii")
+
+    objects = [
+        b"<</Type/Catalog/Pages 2 0 R>>",
+        b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+        # A4, in points.
+        b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 595 842]"
+        b"/Resources<</Font<</F1 4 0 R>>>>/Contents 5 0 R>>",
+        # One of the 14 standard fonts, so the file embeds no font programme.
+        b"<</Type/Font/Subtype/Type1/BaseFont/Helvetica/Encoding/WinAnsiEncoding>>",
+        b"<</Length %d>>\nstream\n" % len(content) + content + b"endstream",
+    ]
+
+    # The second line's high bytes mark the file as binary, as the spec advises.
+    out = bytearray(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n")
+    offsets = []
+    for number, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % number + body + b"\nendobj\n"
+
+    # The cross-reference table: byte offset of every object, in object order,
+    # after the mandatory free entry for object 0.
+    start_xref = len(out)
+    out += b"xref\n0 %d\n" % (len(objects) + 1)
+    out += b"0000000000 65535 f \n"
+    for offset in offsets:
+        out += b"%010d 00000 n \n" % offset
+    out += b"trailer\n<</Size %d/Root 1 0 R>>\n" % (len(objects) + 1)
+    out += b"startxref\n%d\n%%%%EOF\n" % start_xref
+    return bytes(out)
+
+
+def package(parts):
+    """Zip the parts of an OOXML document into one in-memory package.
+
+    Fixed timestamps, and stored rather than deflated: rebuilding an unchanged
+    fixture then produces identical bytes whatever zlib is installed, and the
+    text stays greppable in the file itself, which is what lets
+    uploadFixtureFile check the fixture against FIXTURE_TEXT. These packages
+    are a few KB; the compression buys nothing.
+    """
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_STORED) as archive:
+        for name, body in parts.items():
+            info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_STORED
+            info.external_attr = 0o644 << 16
+            archive.writestr(info, body)
+    return buffer.getvalue()
+
+
+# Each builder returns the finished bytes of one fixture.
+BUILDERS = {
+    "docx": lambda text: package(docx(text)),
+    "xlsx": lambda text: package(xlsx(text)),
+    "pptx": lambda text: package(pptx(text)),
+    "pdf": pdf,
+}
 
 
 def main():
     out_dir = Path(__file__).resolve().parent
     for ext, build in BUILDERS.items():
-        parts = build(FIXTURE_TEXT[ext])
         path = out_dir / f"fixture.{ext}"
-        # Fixed timestamps, and stored rather than deflated: rebuilding an
-        # unchanged fixture then produces identical bytes whatever zlib is
-        # installed, and the text stays greppable in the file itself, which is
-        # what lets uploadFixtureFile check the fixture against FIXTURE_TEXT.
-        # These packages are a few KB; the compression buys nothing.
-        with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as package:
-            for name, body in parts.items():
-                info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
-                info.compress_type = zipfile.ZIP_STORED
-                info.external_attr = 0o644 << 16
-                package.writestr(info, body)
-        print(f"{path.name}: {path.stat().st_size} bytes, {len(parts)} parts")
+        path.write_bytes(build(FIXTURE_TEXT[ext]))
+        print(f"{path.name}: {path.stat().st_size} bytes")
 
 
 if __name__ == "__main__":

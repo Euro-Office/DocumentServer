@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 import { readShape } from '../helpers';
-import { describeOpeningStoredFixture } from '../open-stored-fixture.suite';
+import { describeOpeningStoredFixture, expectEditorBundle } from '../open-stored-fixture.suite';
 
 // Remit and the reasoning behind it: open-stored-fixture.suite.ts.
 describeOpeningStoredFixture({
@@ -12,7 +12,7 @@ describeOpeningStoredFixture({
   tag: '@presentation',
   rowClass: 'slide',
   urlExt: /\.pptx/,
-  editorApp: /presentationeditor/,
+  assertEditorApp: expectEditorBundle(/presentationeditor/),
   // The fixture is one slide whose only shape is the title, so shape 1 holds
   // the whole of its content.
   readContent: async (editorPage, frame) => {
