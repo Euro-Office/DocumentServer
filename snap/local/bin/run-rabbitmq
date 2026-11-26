@@ -6,7 +6,7 @@ set -eu
 if [ "$(id -u)" -eq 0 ]; then as_daemon "$0"; fi
 umask 077
 BASE=$SNAP_COMMON/rabbitmq
-export HOME="$BASE"
+export HOME="$BASE" XDG_CONFIG_HOME="$BASE/.config"
 export RABBITMQ_HOME
 for RABBITMQ_HOME in "$SNAP"/usr/lib/rabbitmq/lib/rabbitmq_server-*; do :; done
 export RABBITMQ_NODENAME=euro-office@localhost
