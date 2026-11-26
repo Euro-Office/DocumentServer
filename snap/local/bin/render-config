@@ -31,6 +31,10 @@ ADDRESS=$(option address 127.0.0.1)
 case $PORT in *[!0-9]*) echo "port must be a number" >&2; exit 1 ;; esac
 case $WORKERS in 0 | *[!0-9]*) echo "workers must be a positive number" >&2; exit 1 ;; esac
 case $ADDRESS in *[!0-9.]*) echo "address must be an IPv4 address" >&2; exit 1 ;; esac
+# The address the connected snap uses: loopback when listening on all addresses.
+CONNECT_ADDRESS=$ADDRESS
+[ "$ADDRESS" != 0.0.0.0 ] || CONNECT_ADDRESS=127.0.0.1
+
 case $JWT_SECRET in *[!A-Za-z0-9_.-]*) echo "jwt.secret may only contain A-Z a-z 0-9 _ . -" >&2; exit 1 ;; esac
 [ "${#JWT_SECRET}" -ge 32 ] || { echo "jwt.secret needs at least 32 characters" >&2; exit 1; }
 
@@ -47,7 +51,7 @@ WORKERS_PER_CPU=$(awk -v w="$WORKERS" -v c="$(grep -c ^processor /proc/cpuinfo)"
 render() {
     sed -e "s|@JWT_SECRET@|$JWT_SECRET|g" -e "s|@LINK_SECRET@|$LINK_SECRET|g" \
         -e "s|@RABBIT_SECRET@|$RABBIT_SECRET|g" -e "s|@SESSION_SECRET@|$SESSION_SECRET|g" \
-        -e "s|@WORKERS_PER_CPU@|$WORKERS_PER_CPU|g" -e "s|@PORT@|$PORT|g" -e "s|@ADDRESS@|$ADDRESS|g" -e "s|@RUN@|$RUN|g" \
+        -e "s|@WORKERS_PER_CPU@|$WORKERS_PER_CPU|g" -e "s|@PORT@|$PORT|g" -e "s|@ADDRESS@|$ADDRESS|g" -e "s|@CONNECT_ADDRESS@|$CONNECT_ADDRESS|g" -e "s|@RUN@|$RUN|g" \
         -e "s|@SNAP@|/snap/$SNAP_INSTANCE_NAME/current|g" -e "s|@COMMON@|$SNAP_COMMON|g" \
         "$SNAP/config/$1" >"$2.new"
     if [ "${3:-}" ]; then chown "$3:$3" "$2.new"; fi

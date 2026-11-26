@@ -14,7 +14,7 @@ PostgreSQL and RabbitMQ. Build it with `snapcraft pack` from the root of the rep
 sudo snap connect nextcloud:euro-office euro-office-documentserver:nextcloud
 ```
 
-The slot shares one directory, read-only, with a `connection.json` containing the local URL and the JWT secret.
+The slot shares one directory, read-only, with a `connection.json` containing the server URL (on the `address` option, or 127.0.0.1 when that is 0.0.0.0) and the JWT secret.
 
 ## Use with any other Nextcloud
 
