@@ -104,7 +104,7 @@ parts:
         arm64) sum=$SHA256_ARM64 ;;
       esac
       curl -fsSL --retry 3 -o "$CRAFT_PART_SRC/ds.deb" \
-        "https://github.com/Euro-Office/DocumentServer/releases/download/v$RELEASE/euro-office-documentserver_$RELEASE-0_$CRAFT_ARCH_BUILD_FOR.deb"
+        "https://github.com/Euro-Office/DocumentServer/releases/download/v${RELEASE%-0}/euro-office-documentserver_${RELEASE}_$CRAFT_ARCH_BUILD_FOR.deb"
       echo "$sum  $CRAFT_PART_SRC/ds.deb" | sha256sum -c -
       craftctl set version="$RELEASE-$SNAP_REVISION"
     override-build: |
