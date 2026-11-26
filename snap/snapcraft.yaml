@@ -17,7 +17,7 @@ website: https://github.com/Euro-Office
 source-code: https://github.com/Euro-Office/DocumentServer
 issues: https://github.com/Euro-Office/DocumentServer/issues
 base: core24
-grade: devel
+grade: stable
 confinement: strict
 assumes: [snapd2.61]
 
