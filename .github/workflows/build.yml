@@ -557,6 +557,18 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      # Symbols of the stripped core binaries in the .deb (function names
+      # only, core is built without -g), for perf or heaptrack on the
+      # nightly and release images. The binaries match by build id.
+      - name: Upload debug symbols as artifact
+        if: matrix.brand.name == 'euro-office' && (inputs.nightly || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/'))
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dbgsym-${{ matrix.arch }}
+          path: build/deploy/packages/*.ddeb
+          if-no-files-found: warn
+          retention-days: 14
+
       # Lets a release/v* PR or a manual dispatch be tried out before tagging;
       # on tags publish-euro-office-release attaches them to the release.
       - name: Upload packages as artifact (euro-office)

@@ -160,6 +160,18 @@ The Docker image and dev Makefile handle ARM64 automatically:
 
 A multi-arch `:latest-dev` image (amd64 + arm64) is published to GHCR nightly, built from `main` with all submodules at their latest commit, so ARM64 users can `make pull` like everyone else — `make build` is only needed for offline work or to rebuild the image itself.
 
+#### Profiling core binaries
+
+The core binaries in the image are stripped. Nightly, tag and manually dispatched builds upload their symbols (function names, no line numbers) as the `dbgsym-<arch>` artifact, kept for 14 days. Take it from the run that built your image, e.g. the `chore/nightly-submodule-bump` run for `:nightly`:
+
+```sh
+gh run download <run-id> -R Euro-Office/DocumentServer -n dbgsym-amd64
+docker cp euro-office-documentserver-dbgsym_*.ddeb eo:/tmp/dbgsym.ddeb
+docker compose exec -T eo dpkg -i /tmp/dbgsym.ddeb
+```
+
+Install perf, gdb or heaptrack in the container with `apt-get`, they then resolve x2t frames. After `make core` the symbols no longer match. The `.rpm` is not stripped and needs no extra package.
+
 #### Error reporting (GlitchTip or Sentry)
 
 `docker compose --profile sentry up -d glitchtip glitchtip-db` starts a local [GlitchTip](https://glitchtip.com/) at http://localhost:8083. Register, create an organization and project, then put its DSN with the host replaced by `glitchtip:8000` into `develop/.env` as `EO_SENTRY_DSN=http://<key>@glitchtip:8000/<id>` and run `docker compose up -d eo`. The server reads it as `SENTRY_DSN` (stage 2 of #392); empty means disabled. For Sentry, set the DSN of a [sentry.io](https://sentry.io) Node.js project as `EO_SENTRY_DSN` instead and skip the profile; events then leave your machine.
