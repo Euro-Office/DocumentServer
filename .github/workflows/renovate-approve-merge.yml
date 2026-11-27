@@ -29,7 +29,7 @@ jobs:
       && github.event.sender.login == 'renovate[bot]'
       && startsWith(github.head_ref, 'renovate/')
       }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     permissions:
       pull-requests: read
 
