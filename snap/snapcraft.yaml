@@ -1,0 +1,186 @@
+# SPDX-FileCopyrightText: 2026 Euro-Office contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+
+name: euro-office-documentserver
+adopt-info: documentserver
+title: Euro-Office Document Server
+summary: Online editors for documents, spreadsheets, presentations and PDFs
+description: |
+  Euro-Office Document Server provides collaborative editors for platforms
+  that store the files, such as Nextcloud.
+
+  It listens on 127.0.0.1:8480 and can be connected to the Nextcloud snap:
+
+      sudo snap connect nextcloud:euro-office euro-office-documentserver:nextcloud
+license: AGPL-3.0-only
+website: https://github.com/Euro-Office
+source-code: https://github.com/Euro-Office/DocumentServer
+issues: https://github.com/Euro-Office/DocumentServer/issues
+base: core24
+grade: stable
+confinement: strict
+assumes: [snapd2.61]
+
+platforms:
+  amd64:
+  arm64:
+
+system-usernames:
+  _daemon_: shared
+
+environment:
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+  PATH: $SNAP/bin:$SNAP/usr/sbin:$SNAP/usr/bin:$SNAP/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+  LD_LIBRARY_PATH: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/usr/lib
+
+# The upstream package uses absolute paths, also inside the generated font list.
+layout:
+  /var/www/euro-office:
+    bind: $SNAP/var/www/euro-office
+  /etc/euro-office:
+    bind: $SNAP/etc/euro-office
+  /var/lib/euro-office:
+    bind: $SNAP_COMMON/lib
+  /var/log/euro-office:
+    bind: $SNAP_COMMON/log
+  /usr/lib/erlang:
+    bind: $SNAP/usr/lib/erlang
+
+plugs:
+  shared-memory:
+    private: true
+
+slots:
+  # Only the connection details (URL and JWT secret) are shared.
+  nextcloud:
+    interface: content
+    content: euro-office-connection
+    read:
+      - $SNAP_COMMON/connection
+
+apps:
+  postgresql:
+    command: bin/run-postgresql
+    daemon: simple
+    restart-condition: always
+    plugs: [network, network-bind, shared-memory]
+  rabbitmq:
+    command: bin/run-rabbitmq
+    daemon: simple
+    restart-condition: always
+    stop-timeout: 60s
+    plugs: [network, network-bind]
+  docservice:
+    command: bin/run-docservice
+    daemon: simple
+    restart-condition: always
+    after: [postgresql, rabbitmq]
+    plugs: [network, network-bind]
+  converter:
+    command: bin/run-converter
+    daemon: simple
+    restart-condition: always
+    after: [postgresql, rabbitmq]
+    plugs: [network, network-bind]
+  nginx:
+    command: bin/run-nginx
+    daemon: simple
+    restart-condition: always
+    after: [docservice]
+    plugs: [network, network-bind]
+
+parts:
+  documentserver:
+    plugin: nil
+    source: snap/local
+    build-packages: [curl, openssl]
+    stage-packages: [libstdc++6, libgcc-s1]
+    override-pull: |
+      craftctl default
+      . "$CRAFT_PART_SRC/release"
+      case "$CRAFT_ARCH_BUILD_FOR" in
+        amd64) sum=$SHA256_AMD64 ;;
+        arm64) sum=$SHA256_ARM64 ;;
+      esac
+      curl -fsSL --retry 3 -o "$CRAFT_PART_SRC/ds.deb" \
+        "https://github.com/Euro-Office/DocumentServer/releases/download/v${RELEASE%-0}/euro-office-documentserver_${RELEASE}_$CRAFT_ARCH_BUILD_FOR.deb"
+      echo "$sum  $CRAFT_PART_SRC/ds.deb" | sha256sum -c -
+      craftctl set version="$RELEASE-$SNAP_REVISION"
+    override-build: |
+      rm -rf unpack && mkdir unpack
+      dpkg-deb -x ds.deb unpack
+      mkdir -p "$CRAFT_PART_INSTALL/var/www" "$CRAFT_PART_INSTALL/etc" "$CRAFT_PART_INSTALL/nginx"
+      cp -a unpack/var/www/euro-office "$CRAFT_PART_INSTALL/var/www/"
+      mkdir -p "$CRAFT_PART_INSTALL/etc/euro-office"
+      cp -a unpack/etc/euro-office/documentserver "$CRAFT_PART_INSTALL/etc/euro-office/"
+
+      # Build the generated assets at the path they have at run time.
+      mkdir -p /var/www
+      ln -sfn "$CRAFT_PART_INSTALL/var/www/euro-office" /var/www/euro-office
+      D=/var/www/euro-office/documentserver
+      (
+        export LD_LIBRARY_PATH=$D/server/FileConverter/bin
+        "$D/server/tools/allfontsgen" --input="$D/core-fonts" \
+          --allfonts-web="$D/sdkjs/common/AllFonts.js" \
+          --allfonts="$D/server/FileConverter/bin/AllFonts.js" \
+          --images="$D/sdkjs/common/Images" \
+          --selection="$D/server/FileConverter/bin/font_selection.bin" \
+          --output-web="$D/fonts" --use-system=false --use-system-user-fonts=false
+        for args in "" "--postfix=ios --params=280,224" "--postfix=android --params=280,224"; do
+          "$D/server/tools/allthemesgen" --converter-dir="$D/server/FileConverter/bin" \
+            --src="$D/sdkjs/slide/themes" --output="$D/sdkjs/common/Images" $args
+        done
+        "$D/server/FileConverter/bin/x2t" -create-js-cache
+      )
+      tag=$(date +%s | openssl md5 | awk '{print $2}')
+      sed "s/{{HASH_POSTFIX}}/$tag/g" "$D/web-apps/apps/api/documents/api.js.tpl" > "$D/web-apps/apps/api/documents/api.js"
+      echo "set \$cache_tag \"$tag\";" > "$CRAFT_PART_INSTALL/nginx/ds-cache.conf"
+      rm /var/www/euro-office
+
+      # Behind a local proxy every client is 127.0.0.1, so do not let that address
+      # reach /internal and /info.
+      inc=unpack/etc/euro-office/documentserver/nginx/includes
+      sed '/^ *allow 127\.0\.0\.1;/d' "$inc/ds-docservice.conf" > "$CRAFT_PART_INSTALL/nginx/ds-docservice.conf"
+      [ "$(grep -c 'deny all;' "$CRAFT_PART_INSTALL/nginx/ds-docservice.conf")" -ge 2 ]
+      cp "$inc/ds-common.conf" "$inc/ds-mime.types.conf" "$CRAFT_PART_INSTALL/nginx/"
+      sed 's|server localhost:8000 |server unix:/var/snap/euro-office-documentserver/common/run/docservice.sock |' \
+        "$inc/http-common.conf" > "$CRAFT_PART_INSTALL/nginx/http-common.conf"
+      grep -q docservice.sock "$CRAFT_PART_INSTALL/nginx/http-common.conf"
+      chmod -R a+rX "$CRAFT_PART_INSTALL"
+    prime:
+      - -var/www/euro-office/documentserver-example
+      - -var/www/euro-office/documentserver/npm
+      - -var/www/euro-office/documentserver/server/AdminPanel
+      - -var/www/euro-office/documentserver/server/Metrics
+      - -var/www/euro-office/documentserver/server/tools
+      - -var/www/euro-office/documentserver/server/FileConverter/bin/docbuilder
+
+  services:
+    plugin: nil
+    stage-packages:
+      - curl
+      - nginx
+      - postgresql-16
+      - postgresql-client-16
+      - rabbitmq-server
+    prime:
+      - -usr/share/doc
+      - -usr/share/man
+      - -usr/share/locale
+      - -usr/share/perl*
+      - -usr/lib/*/perl*
+      - -usr/lib/llvm*
+      - -usr/lib/*/libLLVM*
+      - -usr/lib/*/libclang*
+      - -usr/lib/systemd
+      - -lib/systemd
+      - -etc/init.d
+      - -var/lib
+
+  scripts:
+    plugin: dump
+    source: snap/local
+    organize:
+      config: config
+    stage: [bin, config]

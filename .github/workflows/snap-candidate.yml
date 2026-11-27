@@ -1,0 +1,111 @@
+name: Snap candidate
+
+# Uploads the snaps built in the calling run to the candidate channel and opens
+# a call-for-testing issue. Called by snap-builds.yml and
+# snap-security-rebuild.yml.
+on:
+  workflow_call:
+    inputs:
+      version:
+        type: string
+        required: true
+      kind:
+        description: release or security-rebuild (which has a notices artifact)
+        type: string
+        required: true
+    secrets:
+      SNAPCRAFT_STORE_CREDENTIALS:
+        required: true
+
+permissions: {}
+
+env:
+  SNAP_NAME: euro-office-documentserver
+
+jobs:
+  candidate:
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read   # download the snaps
+      contents: read
+      issues: write   # open the issue
+    steps:
+      - name: Download the tested snaps
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: snap-*
+          merge-multiple: true
+
+      - name: Download the notices
+        if: inputs.kind == 'security-rebuild'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: notices
+
+      - name: Upload to candidate
+        id: upload
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          set -euo pipefail
+          sudo snap install snapcraft --classic
+          revisions=
+          for snap in ./*.snap; do
+            # Not latest/candidate: exported credentials are limited to bare
+            # channel names, the store rejects the other form.
+            output=$(snapcraft upload "$snap" --release=candidate)
+            echo "$output"
+            revision=$(grep -Po 'Revision \K[0-9]+' <<< "$output" | head -n1)
+            [ -n "$revision" ] || { echo "::error::No revision for $snap"; exit 1; }
+            revisions="${revisions:+$revisions,}$revision"
+          done
+          echo "revisions=$revisions" >> "$GITHUB_OUTPUT"
+
+      - name: Open the call-for-testing issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          KIND: ${{ inputs.kind }}
+          VERSION: ${{ inputs.version }}
+          REVISIONS: ${{ steps.upload.outputs.revisions }}
+        run: |
+          set -euo pipefail
+          gh label create call-for-testing --color FBCA04 --description "Snap candidate ready for testing" 2>/dev/null || true
+          labels=(--label call-for-testing)
+          title="Call for testing: snap $VERSION ($REVISIONS)"
+          intro="Snap $VERSION is in the candidate channel."
+          if [ "$KIND" = security-rebuild ]; then
+            gh label create security-rebuild --color B60205 --description "Snap rebuilt for Ubuntu security fixes" 2>/dev/null || true
+            labels+=(--label security-rebuild)
+            title="Security rebuild: snap $VERSION ($REVISIONS)"
+            intro="Snap $VERSION was rebuilt from the same commit, with these fixes in the bundled Ubuntu packages:
+
+          $(jq -r 'to_entries[] | "- `\(.key)`: \(.value | join(", "))"' notices.json)"
+          fi
+          cat > body.md <<EOF
+          $intro
+
+          Revisions (one per architecture): $REVISIONS
+
+          ## Test
+
+          \`\`\`
+          sudo snap install $SNAP_NAME --channel=candidate   # or: snap refresh
+          curl http://127.0.0.1:8480/healthcheck
+          sudo snap connect nextcloud:euro-office $SNAP_NAME:nextcloud
+          \`\`\`
+
+          Open, edit and save a document, then report the result here with the
+          architecture and the distribution.
+
+          ## Release
+
+          Somebody with write access comments:
+
+          \`\`\`
+          /promote $REVISIONS stable done
+          \`\`\`
+
+          Without \`done\` the issue stays open.
+          EOF
+          gh issue create --title "$title" "${labels[@]}" --body-file body.md

@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: 2026 Euro-Office contributors
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The packaged release, as the version of its deb: X.Y.Z-0 for the tag vX.Y.Z,
+# X.Y.Z-N for the patch build vX.Y.Z-N. The snap version is
+# <RELEASE>-<SNAP_REVISION>; only a new version is published. Reset
+# SNAP_REVISION to 1 with a new RELEASE.
+RELEASE=9.3.8-0
+SNAP_REVISION=1
+SHA256_AMD64=c22213cdaffafd6ac437f2138a174bad1472c8f659d9e833a1163cbb14114393
+SHA256_ARM64=c40f9c6b66af792a051a41182b484a3237be6d0d677313759f6f985c06519255

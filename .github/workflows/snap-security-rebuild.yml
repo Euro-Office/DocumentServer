@@ -1,0 +1,157 @@
+name: Snap security rebuild
+
+# Checks the stable snap for Ubuntu security notices every week, as the store
+# does. If there are fixes for the bundled packages, rebuilds the same version
+# from its own commit (never from main, which may hold unreleased work) and
+# offers it for testing like any other candidate. Waits while such an issue is
+# open. Does not cover the document server itself, only the Ubuntu packages.
+on:
+  schedule:
+    - cron: '17 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Only check and report
+        type: boolean
+        default: true
+      force:
+        description: Rebuild without notices
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: snap-security-rebuild
+  cancel-in-progress: false
+
+env:
+  SNAP_NAME: euro-office-documentserver
+
+jobs:
+  check:
+    if: vars.SNAP_STORE_PUBLISH == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read  # checkout
+      issues: read    # open rebuilds
+    outputs:
+      rebuild: ${{ steps.decide.outputs.rebuild }}
+      version: ${{ steps.stable.outputs.version }}
+      commit: ${{ steps.commit.outputs.commit }}
+    steps:
+      - name: Checkout (full history, to find the commit of the release)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Look up the stable snap
+        id: stable
+        run: |
+          set -euo pipefail
+          # A store outage must not look like "nothing released".
+          code=$(curl -sS --retry 5 -o info.json -w '%{http_code}' -H 'Snap-Device-Series: 16' \
+            "https://api.snapcraft.io/v2/snaps/info/$SNAP_NAME?fields=version")
+          case "$code" in
+            200 | 404) ;;
+            *) echo "::error::The store answered $code"; exit 1 ;;
+          esac
+          version=$(jq -r 'first(."channel-map"[]? | select(.channel.risk == "stable" and .channel.architecture == "amd64") | .version) // empty' info.json)
+          [ -n "$version" ] || echo "::notice::Nothing on stable."
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Check for security notices
+        if: steps.stable.outputs.version != ''
+        run: |
+          set -euo pipefail
+          sudo snap install review-tools
+          # Not left to review-tools: it keeps using a database that failed the
+          # checksum, and the two files can be out of step for a moment.
+          export USNDB="$RUNNER_TEMP/usn-database.json"
+          for attempt in 1 2 3 4 5; do
+            if curl -fsSL --retry 3 -o "$USNDB.sha256" https://usn.ubuntu.com/usn-db/database.json.sha256 &&
+              curl -fsSL --retry 3 -o "$USNDB" https://usn.ubuntu.com/usn-db/database.json &&
+              [ "$(sha256sum "$USNDB" | cut -d' ' -f1)" = "$(cut -d' ' -f1 "$USNDB.sha256")" ]; then
+              break
+            fi
+            [ "$attempt" != 5 ] || { echo "::error::No security notices database"; exit 1; }
+            sleep 60
+          done
+          dir=~/snap/review-tools/common
+          mkdir -p "$dir"
+          snap download "$SNAP_NAME" --channel=stable --basename=stable --target-directory="$dir"
+          cp "$USNDB" "$dir/usn.json"
+          USNDB="$dir/usn.json" review-tools.snap-check-notices "$dir/stable.snap" | tee raw.json
+          # {"<snap>": {"<revision>": {"<package>": ["USN-..."]}}}, or empty
+          jq '[.[]?[]?] | first // {}' raw.json > notices.json
+
+      - name: Find the commit of the release
+        id: commit
+        if: steps.stable.outputs.version != ''
+        env:
+          VERSION: ${{ steps.stable.outputs.version }}
+        run: |
+          set -euo pipefail
+          for commit in $(git log --format=%H -- snap/local/release); do
+            found=$(git show "$commit:snap/local/release" | (. /dev/stdin; echo "$RELEASE-$SNAP_REVISION"))
+            if [ "$found" = "$VERSION" ]; then
+              echo "commit=$commit" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "::error::No commit has version $VERSION"
+          exit 1
+
+      - name: Decide
+        id: decide
+        if: steps.stable.outputs.version != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          count=$(jq '[.[][]] | length' notices.json)
+          open=$(gh issue list --label security-rebuild --state open --json number --jq 'length')
+          rebuild=false
+          if [ "$open" -gt 0 ]; then
+            echo "::notice::A security rebuild is already waiting."
+          elif [ "$count" -gt 0 ] || [ "$FORCE" = true ]; then
+            rebuild=true
+          fi
+          echo "::notice::$count notice(s), rebuild: $rebuild, dry run: ${DRY_RUN:-false}"
+          if [ "$DRY_RUN" = true ]; then rebuild=false; fi
+          echo "rebuild=$rebuild" >> "$GITHUB_OUTPUT"
+
+      - name: Keep the notices
+        if: steps.decide.outputs.rebuild == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: notices
+          path: notices.json
+
+  build:
+    needs: check
+    if: needs.check.outputs.rebuild == 'true'
+    permissions:
+      actions: read   # required by the jobs that do not run here
+      contents: read  # checkout
+      issues: write   # required by the jobs that do not run here
+    uses: $/.github/workflows/snap-builds.yml
+    with:
+      ref: ${{ needs.check.outputs.commit }}
+
+  candidate:
+    needs: [check, build]
+    permissions:
+      actions: read   # download the snaps
+      contents: read
+      issues: write   # open the issue
+    uses: $/.github/workflows/snap-candidate.yml
+    with:
+      version: ${{ needs.check.outputs.version }}
+      kind: security-rebuild
+    secrets:
+      SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}

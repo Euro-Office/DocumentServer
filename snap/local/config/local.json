@@ -1,0 +1,25 @@
+{
+  "storage": {"fs": {"secretString": "@LINK_SECRET@"}},
+  "runtimeConfig": {"filePath": "@COMMON@/data/runtime.json"},
+  "license": {"license_file": "@COMMON@/data/license.lic"},
+  "rabbitmq": {"url": "amqp://documentserver:@RABBIT_SECRET@@127.0.0.1:8482"},
+  "aesEncrypt": {"secret": "@SESSION_SECRET@"},
+  "openpgpjs": {
+    "encrypt": {"passwords": ["@SESSION_SECRET@"]},
+    "decrypt": {"passwords": ["@SESSION_SECRET@"]}
+  },
+  "FileConverter": {"converter": {"maxprocesscount": @WORKERS_PER_CPU@, "signingKeyStorePath": "@COMMON@/data/signing-keystore.p12"}},
+  "services": {
+    "CoAuthoring": {
+      "server": {"port": "@RUN@/docservice.sock"},
+      "sql": {"type": "postgres", "dbHost": "@RUN@", "dbName": "documentserver", "dbUser": "_daemon_", "dbPass": ""},
+      "secret": {
+        "browser": {"string": "@JWT_SECRET@"},
+        "inbox": {"string": "@JWT_SECRET@"},
+        "outbox": {"string": "@JWT_SECRET@"},
+        "session": {"string": "@SESSION_SECRET@"}
+      },
+      "token": {"enable": {"browser": true, "request": {"inbox": true, "outbox": true}}}
+    }
+  }
+}

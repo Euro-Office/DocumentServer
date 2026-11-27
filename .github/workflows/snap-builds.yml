@@ -1,0 +1,140 @@
+name: Snap builds
+
+# Builds, reviews and tests the snap (both architectures). A push to main with a
+# new version in snap/local/release is also uploaded to the candidate channel,
+# which opens a call-for-testing issue. A comment there releases it to stable
+# (snap-promote.yml).
+#
+# Publishing is off until it is set up, see snap/README.md.
+on:
+  push:
+    branches: [main]
+    paths: &paths
+      - snap/**
+      - .github/workflows/snap-builds.yml
+  pull_request:
+    branches: [main]
+    paths: *paths
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit to build
+        type: string
+        required: true
+
+permissions: {}
+
+env:
+  SNAP_NAME: euro-office-documentserver
+
+jobs:
+  build:
+    name: Build and test (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read  # checkout
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      - name: Set up LXD
+        uses: canonical/setup-lxd@8c6a87bfb56aa48f3fb9b830baa18562d8bfd4ee # v1
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          sudo snap install snapcraft --classic
+          snapcraft pack
+
+      - name: Upload the snap
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: snap-${{ matrix.arch }}
+          path: '*.snap'
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Store review
+        run: |
+          set -euo pipefail
+          sudo snap install review-tools
+          # The only directory of the runner that review-tools can read.
+          dir=~/snap/review-tools/common
+          mkdir -p "$dir"
+          cp ./*.snap "$dir/"
+          review-tools.snap-review "$dir"/*.snap
+
+      - name: Smoke test
+        run: sudo snap/tests/smoke-test.sh ./*.snap
+
+  gate:
+    needs: build
+    # inputs.ref: a security rebuild publishes by itself
+    if: vars.SNAP_STORE_PUBLISH == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' && !inputs.ref
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read  # checkout
+    outputs:
+      publish: ${{ steps.check.outputs.publish }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Is this version newer than everything in the store?
+        id: check
+        run: |
+          set -euo pipefail
+          . snap/local/release
+          version="$RELEASE-$SNAP_REVISION"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # 404: nothing released yet. Any other error fails the job: better no
+          # release than an old one replacing a newer one.
+          code=$(curl -sS --retry 5 -o info.json -w '%{http_code}' -H 'Snap-Device-Series: 16' \
+            "https://api.snapcraft.io/v2/snaps/info/$SNAP_NAME?fields=version")
+          case "$code" in
+            200) newest=$(jq -r '."channel-map"[].version' info.json | sort -V | tail -n1) ;;
+            404) newest= ;;
+            *) echo "::error::The store answered $code"; exit 1 ;;
+          esac
+          tip=$(git ls-remote "https://github.com/$GITHUB_REPOSITORY" refs/heads/main | cut -f1)
+          publish=false
+          if [ "$tip" != "$GITHUB_SHA" ]; then
+            echo "::notice::Not the tip of main, not uploading."
+          elif [ "$version" = "$newest" ] ||
+            [ "$(printf '%s\n%s\n' "$newest" "$version" | sort -V | tail -n1)" != "$version" ]; then
+            echo "::notice::$version is not newer than $newest in the store, not uploading."
+          else
+            publish=true
+          fi
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
+  candidate:
+    needs: gate
+    if: needs.gate.outputs.publish == 'true'
+    permissions:
+      actions: read   # download the snaps
+      contents: read  # checkout
+      issues: write   # open the issue
+    uses: $/.github/workflows/snap-candidate.yml
+    with:
+      version: ${{ needs.gate.outputs.version }}
+      kind: release
+    secrets:
+      SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
