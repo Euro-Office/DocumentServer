@@ -42,45 +42,77 @@ case $AMQP_PROTO in
     ;;
 esac
 
-if [[ -n "$REDIS_SENTINEL_NODES" ]]; then
-  declare -a REDIS_SENTINEL_NODES_ALL=($REDIS_SENTINEL_NODES)
-  REDIS_SENTINEL_NODES_ARRAY=()
-  for node in "${REDIS_SENTINEL_NODES_ALL[@]}"; do
-    host="${node%%:*}"
-    port="${node##*:}"
-    REDIS_SENTINEL_NODES_ARRAY+=('{ "host": "'$host'", "port": '$port' }')
-  done
-  OLD_IFS="$IFS"
-  IFS=","
-  NODES=$(echo "${REDIS_SENTINEL_NODES_ARRAY[*]}")
-  IFS="$OLD_IFS"
-  REDIS_SENTINEL='[ '$NODES' ],'
-else
-  REDIS_SENTINEL='[ { "host": "'${REDIS_SERVER_HOST:-localhost}'", "port": '${REDIS_SERVER_PORT:-6379}' } ],'
-fi
-
-if [[ -n "$REDIS_CLUSTER_NODES" ]]; then
-  declare -a REDIS_CLUSTER_NODES_ALL=($REDIS_CLUSTER_NODES)
-  REDIS_CLUSTER_NODES_ARRAY=()
-  for node in "${REDIS_CLUSTER_NODES_ALL[@]}"; do
-    REDIS_CLUSTER_NODES_ARRAY+=('{ "url": "redis://'$node'" }')
-  done
-  OLD_IFS="$IFS"
-  IFS=","
-  NODES=$(echo "${REDIS_CLUSTER_NODES_ARRAY[*]}")
-  IFS="$OLD_IFS"
-  REDIS_CLUSTER='"rootNodes": [ '$NODES' ], "defaults": { "username": "'${REDIS_SERVER_USER:-default}'", "password": "'$REDIS_SERVER_PWD'" }'
-else
-  REDIS_CLUSTER=''
-fi
-
 # --------------------------------------------------------------------
 # Normalize boolean env vars. They end up raw inside NODE_CONFIG, where
-# anything but true/false is invalid JSON.
+# anything but true/false is invalid JSON. The Redis topology helper below
+# relies on these functions for its TLS flags.
 # --------------------------------------------------------------------
-. /usr/local/lib/euro-office/bool.sh
+BOOL_HELPER="${BOOL_HELPER:-$(dirname "$0")/../lib/bool.sh}"
+[ -r "$BOOL_HELPER" ] || BOOL_HELPER=/usr/local/lib/euro-office/bool.sh
+. "$BOOL_HELPER"
 require_bool JWT_ENABLED JWT_ENABLED_INBOX JWT_ENABLED_OUTBOX
 normalize_bool JWT_IN_BODY METRICS_ENABLED WOPI_ENABLED ALLOW_PRIVATE_IP_ADDRESS ALLOW_META_IP_ADDRESS
+
+# --------------------------------------------------------------------
+# Redis
+#
+# Environment values override the same settings in local.json, which
+# node-config loads from NODE_CONFIG_DIR (Helm extraConf mounts it there).
+# --------------------------------------------------------------------
+REDIS_TOPOLOGY_HELPER="${REDIS_TOPOLOGY_HELPER:-$(dirname "$0")/../redis-topology.sh}"
+[ -r "$REDIS_TOPOLOGY_HELPER" ] || REDIS_TOPOLOGY_HELPER=/usr/local/lib/euro-office/redis-topology.sh
+. "$REDIS_TOPOLOGY_HELPER"
+REDIS_LOCAL_CONFIG="${NODE_CONFIG_DIR:-/etc/$COMPANY_NAME/documentserver}/local.json"
+redis_topology_init
+REDIS_SENTINEL_OPTIONS=null
+if [[ "$REDIS_SENTINEL_REQUESTED" == true ]]; then
+  REDIS_SENTINEL_OPTIONS=$(redis_build_sentinel_options \
+    "$REDIS_SENTINEL_GROUP_NAME" "$REDIS_SENTINEL_NODES_JSON" \
+    "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PWD:-}" "${REDIS_SERVER_DB_NUM:-}" \
+    "$REDIS_SENTINEL_USER" "$REDIS_SENTINEL_PASS")
+fi
+REDIS_CLUSTER_OPTIONS=null
+if [[ -n "${REDIS_CLUSTER_NODES:-}" ]]; then
+  REDIS_CLUSTER_OPTIONS=$(redis_build_cluster_options "$REDIS_CLUSTER_NODES_JSON" \
+    "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PWD:-}")
+fi
+REDIS_OPTIONS=$(redis_build_base_options \
+  "${REDIS_SERVER_USER:-}" "${REDIS_SERVER_PWD:-}" "${REDIS_SERVER_DB_NUM:-}")
+REDIS_SECTION=$(printf '%s\n%s\n%s\n' "$REDIS_OPTIONS" "$REDIS_SENTINEL_OPTIONS" "$REDIS_CLUSTER_OPTIONS" |
+  redis_build_section "${REDIS_SERVER_HOST:-${REDIST_SERVER_HOST:-localhost}}" \
+    "${REDIS_SERVER_PORT:-${REDIST_SERVER_PORT:-6379}}" "${REDIS_CONNECTOR_NAME:-redis}")
+unset REDIS_OPTIONS REDIS_SENTINEL_OPTIONS REDIS_CLUSTER_OPTIONS
+
+# --------------------------------------------------------------------
+# Editor-data storage
+#
+# The server package defaults to editorDataMemory. Keep the storage keys out
+# of NODE_CONFIG unless an operator explicitly selects a backend, so the
+# orchestrated image preserves that default. Values become module names in
+# DocService and must therefore be plain basenames rather than paths or JSON.
+# --------------------------------------------------------------------
+EDITOR_STORAGE_CONFIG=""
+for storage_var in EDITOR_DATA_STORAGE EDITOR_STAT_STORAGE; do
+  storage_value="${!storage_var:-}"
+  if [[ -n "$storage_value" && ! "$storage_value" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    echo "$storage_var must be a plain module name (letters, digits, '_' or '-')." >&2
+    exit 1
+  fi
+done
+
+if [[ -n "${EDITOR_DATA_STORAGE:-}" || -n "${EDITOR_STAT_STORAGE:-}" ]]; then
+  # An omitted statistics backend follows the editor-data backend.
+  EDITOR_STAT_STORAGE_EFFECTIVE="${EDITOR_STAT_STORAGE:-${EDITOR_DATA_STORAGE:-}}"
+  EDITOR_STORAGE_CONFIG='"server": {'
+  if [[ -n "${EDITOR_DATA_STORAGE:-}" ]]; then
+    EDITOR_STORAGE_CONFIG+='"editorDataStorage": "'"$EDITOR_DATA_STORAGE"'"'
+  fi
+  if [[ -n "$EDITOR_STAT_STORAGE_EFFECTIVE" ]]; then
+    [[ "$EDITOR_STORAGE_CONFIG" == *'"editorDataStorage"'* ]] && EDITOR_STORAGE_CONFIG+=', '
+    EDITOR_STORAGE_CONFIG+='"editorStatStorage": "'"$EDITOR_STAT_STORAGE_EFFECTIVE"'"'
+  fi
+  EDITOR_STORAGE_CONFIG+='},'
+fi
 
 # --------------------------------------------------------------------
 # JWT
@@ -107,6 +139,8 @@ fi
 # --------------------------------------------------------------------
 # NODE_CONFIG (exported for Docs services)
 # --------------------------------------------------------------------
+NODE_CONFIG_OVERRIDE="${NODE_CONFIG:-}"
+[ -n "$NODE_CONFIG_OVERRIDE" ] || NODE_CONFIG_OVERRIDE='{}'
 export NODE_CONFIG='{
   "statsd": {
     "useMetrics": '${METRICS_ENABLED:-false}',
@@ -119,6 +153,7 @@ export NODE_CONFIG='{
   },
   "services": {
     "CoAuthoring": {
+      '${EDITOR_STORAGE_CONFIG}'
       "sql": {
         "type": "'${DB_TYPE:-postgres}'",
         "dbHost": "'${DB_HOST:-localhost}'",
@@ -127,25 +162,7 @@ export NODE_CONFIG='{
         "dbName": "'${DB_NAME:-${DB_USER}}'",
         "dbPass": "'${DB_PWD:-onlyoffice}'"
       },
-      "redis": {
-        "name": "'${REDIS_CONNECTOR_NAME:-redis}'",
-        "host": "'${REDIS_SERVER_HOST:-${REDIST_SERVER_HOST:-localhost}}'",
-        "port": '${REDIS_SERVER_PORT:-${REDIST_SERVER_PORT:-6379}}',
-        "options": {
-          "user": "'${REDIS_SERVER_USER:-default}'",
-          "password": "'${REDIS_SERVER_PWD}'",
-          "db": "'${REDIS_SERVER_DB_NUM:-0}'"
-        },
-        "optionsCluster": { '${REDIS_CLUSTER}' },
-        "iooptions": {
-          "sentinels": '${REDIS_SENTINEL}'
-          "name": "'${REDIS_SENTINEL_GROUP_NAME:-mymaster}'",
-          "sentinelPassword": "'${REDIS_SENTINEL_PWD}'",
-          "username": "'${REDIS_SERVER_USER:-default}'",
-          "password": "'${REDIS_SERVER_PWD}'",
-          "db": "'${REDIS_SERVER_DB_NUM:-0}'"
-        }
-      },
+      "redis": '${REDIS_SECTION}',
       "token": {
         "enable": {
           "browser": '${JWT_ENABLED:=true}',
@@ -239,6 +256,36 @@ export NODE_CONFIG='{
     "storageFolderName": "files"
   }
 }'
+
+# Validate each input separately without exposing configuration in jq diagnostics.
+if ! jq -es 'length == 1 and (.[0] | type) == "object"' <<<"$NODE_CONFIG" >/dev/null 2>&1; then
+  echo "Generated configuration must be a valid JSON object; check environment-derived settings." >&2
+  exit 1
+fi
+if ! jq -es 'length == 1 and (.[0] | type) == "object"' <<<"$NODE_CONFIG_OVERRIDE" >/dev/null 2>&1; then
+  echo "Supplied NODE_CONFIG must be a valid JSON object." >&2
+  exit 1
+fi
+
+# Explicit NODE_CONFIG values override generated defaults. The documents go to
+# jq on stdin: on its command line they would be readable by every process on
+# the node. See redis_merge_node_config for the Redis-specific steps.
+NODE_CONFIG=$(printf '%s\n%s\n' "$NODE_CONFIG" "$NODE_CONFIG_OVERRIDE" |
+  redis_merge_node_config "$REDIS_LOCAL_CONFIG")
+unset NODE_CONFIG_OVERRIDE REDIS_SECTION
+
+# Allow configuration generation to be tested without starting services. The
+# configuration contains secrets, so it goes to a private file, never to the
+# container log.
+if [[ "${ENTRYPOINT_CONFIG_ONLY:-false}" == "true" ]]; then
+  if [[ -n "${ENTRYPOINT_CONFIG_ONLY_OUTPUT:-}" ]]; then
+    (umask 077; set -C; printf '%s\n' "$NODE_CONFIG" > "$ENTRYPOINT_CONFIG_ONLY_OUTPUT")
+  else
+    echo 'ENTRYPOINT_CONFIG_ONLY: configuration generated but not saved;' \
+      'set ENTRYPOINT_CONFIG_ONLY_OUTPUT to a new file path to keep it.' >&2
+  fi
+  exit 0
+fi
 
 WORK_DIR="/var/www/$COMPANY_NAME/documentserver"
 BUILD_FONTS=false

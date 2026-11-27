@@ -83,7 +83,7 @@ Boolean settings such as `JWT_ENABLED`, `WOPI_ENABLED` or `EXAMPLE_ENABLED` acce
 * `true`, `yes`, `y`, `on`, `1` for true
 * `false`, `no`, `n`, `off`, `0` for false
 
-An empty value uses the default. Any other value is rejected for `JWT_ENABLED`, `JWT_ENABLED_INBOX` and `JWT_ENABLED_OUTBOX`: the container refuses to start rather than guess whether to authenticate. For all other flags it is logged as a warning and the default applies.
+An empty value uses the default. Any other value is rejected for `JWT_ENABLED`, `JWT_ENABLED_INBOX` and `JWT_ENABLED_OUTBOX`: the container refuses to start rather than guess whether to authenticate. The same applies to `REDIS_SERVER_TLS` and `REDIS_SENTINEL_TLS`, so a typo cannot turn Redis TLS off. For all other flags it is logged as a warning and the default applies.
 
 If the docker build stockes because of broken content in cache, for example with error:
 ```sh
