@@ -12,8 +12,7 @@ FROM fedora:43 AS ds-base
         APPLICATION_NAME=$COMPANY_NAME_LOW \
         DS_VERSION_HASH=$DS_VERSION_HASH \
         NODE_ENV=production-linux \
-        NODE_CONFIG_DIR=/etc/$COMPANY_NAME_LOW/documentserver \
-        PKG_NATIVE_CACHE_PATH=/tmp/.cache
+        NODE_CONFIG_DIR=/etc/$COMPANY_NAME_LOW/documentserver
 
     ARG OS_UPDATE_STAMP
     RUN dnf -y updateinfo list --security && \
@@ -165,6 +164,12 @@ FROM ds-base AS docs
     COPY --chown=ds:ds --from=ds-service \
         /var/www/$COMPANY_NAME_LOW/documentserver/sdkjs \
         /var/www/$COMPANY_NAME_LOW/documentserver/sdkjs
+    COPY --from=ds-service \
+        /var/www/$COMPANY_NAME_LOW/documentserver/server/node \
+        /var/www/$COMPANY_NAME_LOW/documentserver/server/node
+    COPY --from=ds-service \
+        /var/www/$COMPANY_NAME_LOW/documentserver/server/Common \
+        /var/www/$COMPANY_NAME_LOW/documentserver/server/Common
     COPY --from=ds-service \
         /var/www/$COMPANY_NAME_LOW/documentserver/server/DocService \
         /var/www/$COMPANY_NAME_LOW/documentserver/server/DocService

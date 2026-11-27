@@ -16,7 +16,7 @@ FROM finalubuntu AS develop
     RUN apt-get update && \
         curl -fsSL https://deb.nodesource.com/setup_26.x | bash - && \
         apt-get install -yq --no-install-recommends nodejs openjdk-21-jdk wget zip brotli && \
-        npm install -g @yao-pkg/pkg grunt-cli && \
+        npm install -g grunt-cli && \
         rm -rf /var/lib/apt/lists/*
 
     RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone && \

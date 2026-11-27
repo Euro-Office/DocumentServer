@@ -6,7 +6,6 @@ all: web-apps sdkjs core server #core/wasm
 # ARM64 platform accommodations
 IS_ARM64      := $(filter aarch64,$(shell uname -m))
 CC_PLATFORM   ?= $(if $(IS_ARM64),java,$(shell $(EO_DEV)/sdkjs/build/node_modules/google-closure-compiler-linux/compiler --version >/dev/null 2>&1 && echo "native,java" || echo "java"))
-PKG_TARGET    := linux-$(if $(IS_ARM64),arm64,x64)
 CORE_FLAGS    := -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS_DEBUG="-g -O0" -DCMAKE_C_FLAGS_DEBUG="-g -O0"
 SERVER_FLAGS  :=
 SDKJS_FLAGS   :=
@@ -180,35 +179,36 @@ core/wasm: build-font build-spell build-zlib build-hash build-draw
 ## SERVER BUILD
 ## -----------------
 
+# Copies all services (sources, node_modules, node) into the installed tree,
+# then restarts the one that was asked for.
 define build_server
-	@echo "Building $(1) with flags $(CFLAGS)"
-	cd $(1) && \
-	npm install && \
-	pkg . -t $(PKG_TARGET) --node-options="--max_old_space_size=4096" $(CFLAGS) -o $(2) && \
-	supervisorctl restart $(3)
+	$(EO_DEV)/server/.docker/install-runtime.sh $(EO_ROOT)/server && \
+	supervisorctl restart $(1)
 endef
 
 
 server: server/common server/docservice server/converter server/metrics server/adminp
 
 server/common:
+	for d in Common DocService FileConverter Metrics AdminPanel/server; do \
+		(cd $(EO_DEV)/server/$$d && npm install) || exit 1; \
+	done
 	cd $(EO_DEV)/server/Common && \
-	npm install && \
 	sed "s|\(const buildVersion = \).*|\1'${PRODUCT_VERSION}';|" -i sources/commondefines.js
 
 server/docservice: server/common
-	$(call build_server,$(EO_DEV)/server/DocService,${EO_ROOT}/server/DocService/docservice, docservice)
+	$(call build_server,docservice)
 
 server/converter: server/common
-	$(call build_server,$(EO_DEV)/server/FileConverter,${EO_ROOT}/server/FileConverter/converter, converter)
+	$(call build_server,converter)
 
 server/metrics: server/common
-	$(call build_server,$(EO_DEV)/server/Metrics,${EO_ROOT}/server/Metrics/metrics, metrics)
+	$(call build_server,metrics)
 
 server/adminp: server/common server/adminp/cli server/adminp/srv
 
 server/adminp/srv: server/common
-	$(call build_server,$(EO_DEV)/server/AdminPanel/server,${EO_ROOT}/server/AdminPanel/server/adminpanel, adminpanel)
+	$(call build_server,adminpanel)
 
 server/adminp/cli: server/common
 	@echo "Building server/adminpanel/client with flags $(CFLAGS)"
