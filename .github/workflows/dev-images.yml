@@ -27,7 +27,8 @@ env:
 jobs:
   build:
     name: Build (${{ matrix.arch }})
-    if: ${{ !github.event.deleted }}
+    # A private copy pushes nothing to the shared registry.
+    if: ${{ !github.event.deleted && !github.event.repository.private }}
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     permissions:
       contents: read    # checkout

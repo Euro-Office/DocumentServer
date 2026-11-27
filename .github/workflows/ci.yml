@@ -73,7 +73,10 @@ jobs:
   # build: full matrix, published as :nightly and :latest-dev once e2e and
   # the upgrade check pass. Pushes to main only build and test.
   plan:
-    runs-on: ubuntu-latest
+    # A private copy builds pull requests and manual runs only; its main just
+    # follows the public main. build needs this job.
+    if: ${{ github.event_name != 'push' || !github.event.repository.private }}
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     permissions:
       pull-requests: read
     outputs:
@@ -123,9 +126,9 @@ jobs:
   # newest one per leg is restored. Deletes the others of this ref, or the
   # caches outgrow their limit and GitHub evicts the ones still in use.
   prune-ccache:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: build
-    if: always()
+    if: ${{ always() && (github.event_name != 'push' || !github.event.repository.private) }}
     permissions:
       actions: write
     steps:
@@ -145,10 +148,11 @@ jobs:
   # Points release/v* PRs (opened by Euro-Office/release) to the test build.
   # Edits its previous comment on re-runs instead of adding a new one.
   pr-comment:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: build
     if: |
       github.event_name == 'pull_request' &&
+      !github.event.repository.private &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       startsWith(github.head_ref, 'release/')
     permissions:
@@ -175,10 +179,11 @@ jobs:
   # upgrade check. A failed nightly keeps the previous multi-arch tags; the
   # nightly-<arch> and latest-dev-<arch> tags are pushed by the build itself.
   publish-nightly-images:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: [plan, build, e2e, upgrade]
     if: |
       !cancelled() &&
+      !github.event.repository.private &&
       needs.plan.outputs.nightly == 'true' &&
       needs.e2e.result == 'success' &&
       needs.upgrade.result == 'success'
@@ -234,6 +239,7 @@ jobs:
     if: |
       !cancelled() &&
       needs.build.result == 'success' &&
+      !github.event.repository.private &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
     permissions:
@@ -258,6 +264,7 @@ jobs:
     if: |
       !cancelled() &&
       needs.build.result == 'success' &&
+      !github.event.repository.private &&
       (github.event_name != 'pull_request' ||
        github.event.pull_request.head.repo.full_name == github.repository)
     permissions:
@@ -358,9 +365,9 @@ jobs:
   # The one build check for branch protection: the build matrix differs
   # between PRs and full builds, so its per-leg checks cannot be required.
   ci-result:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && 'self-hosted' || 'ubuntu-latest' }}
     needs: [build, publish-nightly-images, e2e, upgrade]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && (github.event_name != 'push' || !github.event.repository.private) }}
     permissions: {}
     steps:
       - name: Check job results
