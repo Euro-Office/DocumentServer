@@ -54,6 +54,7 @@ RUN apt-get update && \
         postgresql postgresql-client redis-server rabbitmq-server \
         nginx sudo nginx-extras supervisor jq util-linux \
         netcat-openbsd xxd openssl tini && \
+    echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | debconf-set-selections && \
     apt-get install -yq \
         adduser ca-certificates certbot coreutils curl libasound2t64 \
         libcairo2 libcurl4t64 libcurl3t64-gnutls libgtk-3-0t64 libstdc++6 \
