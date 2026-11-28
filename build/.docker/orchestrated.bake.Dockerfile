@@ -194,9 +194,9 @@ FROM ds-base AS docs
     COPY --from=ds-service \
         /var/www/$COMPANY_NAME_LOW/documentserver/document-templates/new \
         /var/www/$COMPANY_NAME_LOW/documentserver/document-templates/new
-    #COPY --from=ds-service \
-    #    /var/www/$COMPANY_NAME_LOW/documentserver/document-formats \
-    #    /var/www/$COMPANY_NAME_LOW/documentserver/document-formats
+    COPY --from=ds-service \
+        /var/www/$COMPANY_NAME_LOW/documentserver/document-formats \
+        /var/www/$COMPANY_NAME_LOW/documentserver/document-formats
     COPY --chown=ds:ds --from=ds-service \
         /var/www/$COMPANY_NAME_LOW/documentserver-example/welcome \
         /var/www/$COMPANY_NAME_LOW/documentserver-example/welcome
