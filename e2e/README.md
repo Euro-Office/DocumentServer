@@ -23,10 +23,11 @@ e2e/
 │   ├── timeouts.ts            The editor wait timeouts and the per-test timeout derived from them
 │   ├── fixtures/              fixture.docx/.xlsx/.pptx/.pdf, and make-fixtures.py which writes them
 │   └── tests/
-│       ├── document/          create-, save-, edit-, open-, delete-document, document-editing
-│       ├── spreadsheet/       create-, save-, edit-, open-, delete-spreadsheet, spreadsheet-formula
-│       ├── presentation/      create-, save-, edit-, open-, delete-presentation, presentation-slides
+│       ├── document/          create-, save-, edit-, open-, delete-document, document-editing, users-menu
+│       ├── spreadsheet/       create-, save-, edit-, open-, delete-spreadsheet, spreadsheet-formula, users-menu
+│       ├── presentation/      create-, save-, edit-, open-, delete-presentation, presentation-slides, users-menu
 │       ├── pdf-form/          create-, save-, edit-, delete-pdf-form, open-pdf
+│       ├── pdf/               users-menu (a PDF without form fields, in the PDF editor)
 │       ├── mobile/            mobile-editor
 │       ├── example-page.spec.ts
 │       ├── final-save.spec.ts            Final save with several editors closed together, an early reopen and two tabs

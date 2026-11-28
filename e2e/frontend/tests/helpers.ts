@@ -63,10 +63,35 @@ export async function openNewEditor(page: Page, selector: string, urlExt: RegExp
  * Open a file that is already in the "Your documents" list, by name, and wait
  * until the editor is ready. This is the stored-file route (`?fileName=`), as
  * opposed to the create-new route (`?fileExt=`) that openNewEditor takes.
+ * `userId` picks the user of the example app (`uid-1`, `uid-2`, ...), so that
+ * two contexts can open one file as two co-authors.
  */
-export async function openStoredEditor(page: Page, fileName: string, urlExt: RegExp) {
+export async function openStoredEditor(
+  page: Page,
+  fileName: string,
+  urlExt: RegExp,
+  userId?: string,
+) {
   await page.goto('/example/');
+  if (userId) await page.locator('#user').selectOption(userId);
   return openEditorFromLink(page, storedFileLinkSelector(fileName), urlExt);
+}
+
+/**
+ * Open a stored file as another user of the example app, in a browser context
+ * of its own: a co-author of the first editor. Close the context when done.
+ */
+export async function openCoAuthorEditor(
+  browser: Browser,
+  fileName: string,
+  urlExt: RegExp,
+  userId: string,
+) {
+  const context = await browser.newContext({
+    baseURL: process.env.E2E_BASE_URL ?? DEFAULT_BASE_URL,
+  });
+  const editor = await openStoredEditor(await context.newPage(), fileName, urlExt, userId);
+  return { context, ...editor };
 }
 
 /**
@@ -141,7 +166,11 @@ const SAMPLE_MIME: Record<string, string> = {
  * purpose: this is fixture setup for the deletion tests, and driving the upload
  * UI would make them fail for reasons that have nothing to do with deleting.
  */
-export async function uploadStoredFile(page: Page, fileName: string): Promise<string> {
+export async function uploadStoredFile(
+  page: Page,
+  fileName: string,
+  content?: Buffer,
+): Promise<string> {
   const ext = fileName.split('.').pop() ?? '';
   const mimeType = SAMPLE_MIME[ext];
   if (!mimeType) {
@@ -149,6 +178,9 @@ export async function uploadStoredFile(page: Page, fileName: string): Promise<st
       `No sample document for ".${ext}" — expected one of ${Object.keys(SAMPLE_MIME)}`,
     );
   }
+
+  // `content` replaces the sample, for a test that needs a file of its own.
+  if (content) return postUpload(page, fileName, mimeType, content);
 
   const samplePath = `/example/assets/document-templates/sample/sample.${ext}`;
   const sample = await page.request.get(samplePath);
@@ -485,6 +517,23 @@ export async function reopenEditor(page: Page, editorUrl: string) {
 /** The undo toolbar button, present in every desktop editor. */
 export const undoButton = (frame: ReturnType<Page['frameLocator']>) =>
   frame.locator('#slot-btn-undo button').first();
+
+/** Open the users menu in the editor header, unless it is open, and return the entry of a user. */
+export async function openUsersMenu(frame: ReturnType<Page['frameLocator']>, userName: string) {
+  const entry = frame.locator('.cousers-list li', { hasText: userName });
+  if (!(await frame.locator('.cousers-menu').isVisible())) {
+    await frame.locator('#tlb-box-users .btn-users').click();
+  }
+  return entry;
+}
+
+/** Open the users menu in the editor header and click a co-author by name. */
+export async function clickUserInUsersMenu(
+  frame: ReturnType<Page['frameLocator']>,
+  userName: string,
+) {
+  await (await openUsersMenu(frame, userName)).click();
+}
 
 /**
  * Read the whole text of the open document: Select All, ask the automation API
